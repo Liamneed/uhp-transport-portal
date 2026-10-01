@@ -95,19 +95,57 @@ function runMigrations() {
     if (applied.get(filename)) continue;
 
     const sql = fs.readFileSync(
-      path.join(MIGRATIONS_DIR, filename),
+      path.join(
+        MIGRATIONS_DIR,
+        filename
+      ),
       'utf8'
     );
 
+    const needsForeignKeysOff =
+      /^\s*--\s*uhp-migration:\s*foreign-keys-off\b/im
+        .test(sql);
+
+    if (needsForeignKeysOff) {
+      db.exec(
+        'PRAGMA foreign_keys = OFF;'
+      );
+    }
+
     db.exec('BEGIN');
+
     try {
       db.exec(sql);
+
+      if (needsForeignKeysOff) {
+        const violations =
+          db.prepare(
+            'PRAGMA foreign_key_check'
+          ).all();
+
+        if (violations.length > 0) {
+          throw new Error(
+            `Migration ${filename} produced foreign key violations`
+          );
+        }
+      }
+
       record.run(filename);
+
       db.exec('COMMIT');
-      console.log(`Applied migration: ${filename}`);
+
+      console.log(
+        `Applied migration: ${filename}`
+      );
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
+    } finally {
+      if (needsForeignKeysOff) {
+        db.exec(
+          'PRAGMA foreign_keys = ON;'
+        );
+      }
     }
   }
 }
@@ -2520,16 +2558,16 @@ function listOperationalBookings() {
 
     FROM bookings b
 
-    JOIN budgets bu
+    LEFT JOIN budgets bu
       ON bu.id = b.budget_id
 
-    JOIN reason_codes rc
+    LEFT JOIN reason_codes rc
       ON rc.id = b.reason_code_id
 
-    JOIN users holder
+    LEFT JOIN users holder
       ON holder.id = b.budget_holder_user_id
 
-    JOIN users creator
+    LEFT JOIN users creator
       ON creator.id = b.created_by_user_id
 
     LEFT JOIN departments d
@@ -2919,6 +2957,9 @@ function getBookingById(bookingId) {
     SELECT
       b.id,
       b.public_reference AS publicReference,
+      b.autocab_booking_id AS autocabBookingId,
+      b.autocab_reference AS autocabReference,
+      b.source,
       b.operational_status AS operationalStatus,
       b.financial_status AS financialStatus,
       b.requested_pickup_at AS requestedPickupAt,
@@ -2945,10 +2986,10 @@ function getBookingById(bookingId) {
       d.name AS department,
       b.created_at AS createdAt
     FROM bookings b
-    JOIN budgets bu ON bu.id = b.budget_id
-    JOIN reason_codes rc ON rc.id = b.reason_code_id
-    JOIN users holder ON holder.id = b.budget_holder_user_id
-    JOIN users creator ON creator.id = b.created_by_user_id
+    LEFT JOIN budgets bu ON bu.id = b.budget_id
+    LEFT JOIN reason_codes rc ON rc.id = b.reason_code_id
+    LEFT JOIN users holder ON holder.id = b.budget_holder_user_id
+    LEFT JOIN users creator ON creator.id = b.created_by_user_id
     LEFT JOIN departments d ON d.id = b.department_id
     WHERE b.id = ?
   `).get(bookingId);
