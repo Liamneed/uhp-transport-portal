@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   LayoutDashboard,
@@ -45,13 +45,6 @@ const roleNav = {
     ['Christmas', CarFront]
   ]
 };
-
-const demoUsers = [
-  { name: 'Sarah Jones', email: 'sarah.jones@example.nhs.uk', dept: 'Patient Flow', role: 'Budget Holder', budgets: '410023, 410027', status: 'Active' },
-  { name: 'Mark Brown', email: 'mark.brown@example.nhs.uk', dept: 'Radiology', role: 'Booker', budgets: '420114', status: 'Active' },
-  { name: 'Helen Carter', email: 'helen.carter@example.nhs.uk', dept: 'Finance', role: 'Finance', budgets: 'All', status: 'Invited' },
-  { name: 'James White', email: 'james.white@example.nhs.uk', dept: 'Discharge', role: 'Booker', budgets: '410023', status: 'Suspended' }
-];
 
 function App() {
   const [role, setRole] = useState('uhp_admin');
@@ -101,46 +94,232 @@ function App() {
 }
 
 function UsersPage() {
+  const [users, setUsers] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [query, setQuery] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError('');
+
+      try {
+        const [usersResponse, departmentsResponse] = await Promise.all([
+          fetch('http://localhost:3001/api/users'),
+          fetch('http://localhost:3001/api/departments')
+        ]);
+
+        if (!usersResponse.ok || !departmentsResponse.ok) {
+          throw new Error('Unable to load administration data');
+        }
+
+        const usersData = await usersResponse.json();
+        const departmentsData = await departmentsResponse.json();
+
+        if (!cancelled) {
+          setUsers(usersData.users ?? []);
+          setDepartments(departmentsData.departments ?? []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Unable to load users'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const stats = useMemo(() => {
+    return {
+      active: users.filter((u) => u.status === 'active').length,
+      invited: users.filter((u) => u.status === 'invited').length,
+      budgetHolders: users.filter((u) =>
+        String(u.roles || '').toLowerCase().includes('budget holder')
+      ).length,
+      suspended: users.filter((u) => u.status === 'suspended').length
+    };
+  }, [users]);
+
+  const filteredUsers = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return users.filter((user) => {
+      const matchesQuery =
+        !normalizedQuery ||
+        [
+          user.firstName,
+          user.lastName,
+          user.email,
+          user.department,
+          user.roles,
+          user.budgets
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(normalizedQuery);
+
+      const matchesDepartment =
+        departmentFilter === 'all' ||
+        String(user.departmentId) === departmentFilter;
+
+      const matchesStatus =
+        statusFilter === 'all' ||
+        user.status === statusFilter;
+
+      return matchesQuery && matchesDepartment && matchesStatus;
+    });
+  }, [users, query, departmentFilter, statusFilter]);
+
   return (
     <>
       <div className="page-heading">
-        <div><h1>Users</h1><p>Manage hospital access without exposing complex permission settings.</p></div>
-        <button className="primary"><Plus size={18}/> Add User</button>
+        <div>
+          <h1>Users</h1>
+          <p>Manage hospital access without exposing complex permission settings.</p>
+        </div>
+        <button className="primary">
+          <Plus size={18}/>
+          Add User
+        </button>
       </div>
 
       <div className="stats-grid">
-        <Stat icon={<UsersRound/>} label="Active Users" value="48" />
-        <Stat icon={<Clock3/>} label="Invited" value="5" />
-        <Stat icon={<CheckCircle2/>} label="Budget Holders" value="12" />
-        <Stat icon={<AlertTriangle/>} label="Suspended" value="2" />
+        <Stat icon={<UsersRound/>} label="Active Users" value={stats.active} />
+        <Stat icon={<Clock3/>} label="Invited" value={stats.invited} />
+        <Stat icon={<CheckCircle2/>} label="Budget Holders" value={stats.budgetHolders} />
+        <Stat icon={<AlertTriangle/>} label="Suspended" value={stats.suspended} />
       </div>
 
       <div className="card">
         <div className="toolbar">
-          <div className="search compact"><Search size={17}/><input placeholder="Search users..."/></div>
-          <select><option>All departments</option><option>Patient Flow</option><option>Radiology</option></select>
-          <select><option>All statuses</option><option>Active</option><option>Invited</option><option>Suspended</option></select>
+          <div className="search compact">
+            <Search size={17}/>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search users..."
+            />
+          </div>
+
+          <select
+            value={departmentFilter}
+            onChange={(e) => setDepartmentFilter(e.target.value)}
+          >
+            <option value="all">All departments</option>
+            {departments.map((department) => (
+              <option key={department.id} value={String(department.id)}>
+                {department.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="invited">Invited</option>
+            <option value="suspended">Suspended</option>
+            <option value="archived">Archived</option>
+          </select>
         </div>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>User</th><th>Department</th><th>Role</th><th>Budget Access</th><th>Status</th><th></th></tr></thead>
-            <tbody>
-              {demoUsers.map((u) => (
-                <tr key={u.email}>
-                  <td><strong>{u.name}</strong><small>{u.email}</small></td>
-                  <td>{u.dept}</td>
-                  <td>{u.role}</td>
-                  <td>{u.budgets}</td>
-                  <td><span className={`badge ${u.status.toLowerCase()}`}>{u.status}</span></td>
-                  <td><button className="icon-btn"><MoreHorizontal size={18}/></button></td>
+
+        {loading && (
+          <div className="state-panel">
+            Loading users...
+          </div>
+        )}
+
+        {!loading && error && (
+          <div className="state-panel error">
+            <strong>Unable to load users.</strong>
+            <span>{error}</span>
+            <small>Make sure the local API is running with npm run dev:api.</small>
+          </div>
+        )}
+
+        {!loading && !error && (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Department</th>
+                  <th>Role</th>
+                  <th>Budget Access</th>
+                  <th>Status</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filteredUsers.map((user) => (
+                  <tr key={user.id}>
+                    <td>
+                      <strong>{user.firstName} {user.lastName}</strong>
+                      <small>{user.email}</small>
+                    </td>
+                    <td>{user.department || '—'}</td>
+                    <td>{user.roles || '—'}</td>
+                    <td>{user.budgets || '—'}</td>
+                    <td>
+                      <span className={`badge ${user.status}`}>
+                        {formatStatus(user.status)}
+                      </span>
+                    </td>
+                    <td>
+                      <button className="icon-btn" aria-label={`Actions for ${user.firstName} ${user.lastName}`}>
+                        <MoreHorizontal size={18}/>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+
+                {filteredUsers.length === 0 && (
+                  <tr>
+                    <td colSpan="6">
+                      <div className="empty-table">
+                        No users match the current filters.
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </>
   );
+}
+
+function formatStatus(status) {
+  if (!status) return 'Unknown';
+
+  return status
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function Stat({icon, label, value}) {
