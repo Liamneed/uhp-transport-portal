@@ -451,6 +451,66 @@ function buildExpiredSessionCookie() {
   return parts.join('; ');
 }
 
+function requireAutocabWebhookSecret(
+  req
+) {
+  const configuredSecret =
+    String(
+      process.env
+        .AUTOCAB_WEBHOOK_SECRET ||
+      ''
+    );
+
+  if (!configuredSecret) {
+    const error = new Error(
+      'Autocab webhook integration is not configured'
+    );
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const providedSecret =
+    String(
+      req.headers[
+        'x-autocab-webhook-secret'
+      ] || ''
+    );
+
+  if (!providedSecret) {
+    const error = new Error(
+      'Autocab webhook authentication required'
+    );
+    error.statusCode = 401;
+    throw error;
+  }
+
+  const configuredHash =
+    hashSessionToken(
+      configuredSecret
+    );
+
+  const providedHash =
+    hashSessionToken(
+      providedSecret
+    );
+
+  if (
+    !safeHashEqual(
+      configuredHash,
+      providedHash
+    )
+  ) {
+    const error = new Error(
+      'Autocab webhook authentication failed'
+    );
+    error.statusCode = 401;
+    throw error;
+  }
+
+  return true;
+}
+
+
 function getAuthUserById(userId) {
   const user = db.prepare(`
     SELECT
@@ -3407,51 +3467,429 @@ function amendPortalBooking(
 }
 
 
-function ingestBookingFare(
-  bookingId,
-  actorUserId,
-  payload = {}
+function findAutocabLinkedBooking(
+  autocabBookingId,
+  autocabReference
 ) {
   if (
-    !Number.isInteger(bookingId) ||
-    bookingId < 1
+    !autocabBookingId &&
+    !autocabReference
   ) {
     const error = new Error(
-      'A valid booking id is required'
+      'autocabBookingId or autocabReference is required'
     );
     error.statusCode = 400;
     throw error;
   }
 
-  const booking = db.prepare(`
+  const matches = db.prepare(`
     SELECT
       id,
       public_reference AS publicReference,
+      autocab_booking_id AS autocabBookingId,
+      autocab_reference AS autocabReference,
       operational_status AS operationalStatus,
-      financial_status AS financialStatus
-    FROM bookings
-    WHERE id = ?
-  `).get(bookingId);
+      financial_status AS financialStatus,
+      completed_at AS completedAt
 
-  if (!booking) {
+    FROM bookings
+
+    WHERE (
+      ? IS NOT NULL
+      AND autocab_booking_id = ?
+    )
+    OR (
+      ? IS NOT NULL
+      AND autocab_reference = ?
+    )
+
+    ORDER BY id
+  `).all(
+    autocabBookingId,
+    autocabBookingId,
+    autocabReference,
+    autocabReference
+  );
+
+  if (matches.length === 0) {
     const error = new Error(
-      'Booking not found'
+      'No portal booking matches the supplied Autocab identifiers'
     );
     error.statusCode = 404;
     throw error;
   }
 
-  if (
-    booking.operationalStatus !==
-      'completed'
-  ) {
+  if (matches.length > 1) {
     const error = new Error(
-      'Fare data can only be posted to completed bookings'
+      'Autocab identifiers resolve to different portal bookings'
     );
     error.statusCode = 409;
     throw error;
   }
 
+  const booking =
+    matches[0];
+
+  if (
+    autocabBookingId &&
+    booking.autocabBookingId &&
+    booking.autocabBookingId !==
+      autocabBookingId
+  ) {
+    const error = new Error(
+      'Autocab booking id conflicts with the linked portal booking'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (
+    autocabReference &&
+    booking.autocabReference &&
+    booking.autocabReference !==
+      autocabReference
+  ) {
+    const error = new Error(
+      'Autocab reference conflicts with the linked portal booking'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return booking;
+}
+
+
+function handleAutocabCompletedWebhook(
+  payload = {}
+) {
+  const autocabBookingId =
+    payload.autocabBookingId === null ||
+    payload.autocabBookingId ===
+      undefined
+      ? null
+      : String(
+          payload.autocabBookingId
+        ).trim() || null;
+
+  const autocabReference =
+    payload.autocabReference === null ||
+    payload.autocabReference ===
+      undefined
+      ? null
+      : String(
+          payload.autocabReference
+        ).trim() || null;
+
+  const completedAt =
+    payload.completedAt === null ||
+    payload.completedAt ===
+      undefined
+      ? null
+      : String(
+          payload.completedAt
+        ).trim() || null;
+
+  if (
+    completedAt &&
+    Number.isNaN(
+      Date.parse(completedAt)
+    )
+  ) {
+    const error = new Error(
+      'completedAt must be a valid date/time'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  /*
+    Validate and normalize financial
+    data before changing the booking's
+    operational state.
+  */
+  const normalisedFare =
+    normaliseBookingFarePayload(
+      {
+        ...payload,
+        externalReference:
+          payload.externalReference ??
+          autocabReference ??
+          autocabBookingId
+      },
+      {
+        forcedSource: 'autocab',
+        rawPayloadOverride: payload
+      }
+    );
+
+  const booking =
+    findAutocabLinkedBooking(
+      autocabBookingId,
+      autocabReference
+    );
+
+  const existingFinancial =
+    db.prepare(`
+      SELECT
+        gross_amount_pence AS grossAmountPence,
+        net_amount_pence AS netAmountPence,
+        vat_amount_pence AS vatAmountPence,
+        currency,
+        source,
+        external_reference AS externalReference,
+        received_at AS receivedAt,
+        updated_by_user_id AS updatedByUserId,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+
+      FROM booking_financials
+
+      WHERE booking_id = ?
+    `).get(booking.id);
+
+  const identicalFare =
+    existingFinancial &&
+    existingFinancial.grossAmountPence ===
+      normalisedFare.grossAmountPence &&
+    existingFinancial.netAmountPence ===
+      normalisedFare.netAmountPence &&
+    existingFinancial.vatAmountPence ===
+      normalisedFare.vatAmountPence &&
+    existingFinancial.currency === 'GBP' &&
+    existingFinancial.source ===
+      'autocab' &&
+    (
+      existingFinancial
+        .externalReference ||
+      null
+    ) === (
+      normalisedFare
+        .externalReference ||
+      null
+    );
+
+  const alreadyCompleted =
+    booking.operationalStatus ===
+      'completed';
+
+  /*
+    A genuine webhook retry with the
+    same normalized fare is a no-op.
+  */
+  if (
+    alreadyCompleted &&
+    identicalFare
+  ) {
+    return {
+      duplicate: true,
+      booking: {
+        id: booking.id,
+        publicReference:
+          booking.publicReference,
+        operationalStatus:
+          booking.operationalStatus,
+        financialStatus:
+          booking.financialStatus,
+        completedAt:
+          booking.completedAt
+      },
+      financial: {
+        bookingId:
+          booking.id,
+        ...existingFinancial
+      }
+    };
+  }
+
+  /*
+    Completion and identifier linkage
+    are committed first. Fare ingestion
+    follows as a controlled second step.
+    If fare persistence ever fails, a
+    webhook retry can safely resume.
+  */
+  if (!alreadyCompleted) {
+    db.exec('BEGIN');
+
+    try {
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status =
+            'completed',
+
+          completed_at =
+            COALESCE(
+              ?,
+              completed_at,
+              CURRENT_TIMESTAMP
+            ),
+
+          autocab_booking_id =
+            COALESCE(
+              autocab_booking_id,
+              ?
+            ),
+
+          autocab_reference =
+            COALESCE(
+              autocab_reference,
+              ?
+            ),
+
+          updated_at =
+            CURRENT_TIMESTAMP
+
+        WHERE id = ?
+      `).run(
+        completedAt
+          ? new Date(
+              completedAt
+            ).toISOString()
+          : null,
+        autocabBookingId,
+        autocabReference,
+        booking.id
+      );
+
+      db.prepare(`
+        INSERT INTO booking_events
+          (
+            booking_id,
+            event_type,
+            event_source,
+            old_status,
+            new_status,
+            notes,
+            raw_payload
+          )
+        VALUES (
+          ?,
+          'booking_completed',
+          'autocab',
+          ?,
+          'completed',
+          'Booking completed by Autocab callback',
+          ?
+        )
+      `).run(
+        booking.id,
+        booking.operationalStatus,
+        JSON.stringify(payload)
+      );
+
+      writeAudit({
+        action:
+          'STATUS_CHANGE',
+        entityType:
+          'booking',
+        entityId:
+          booking.id,
+        fieldName:
+          'operational_status',
+        oldValue:
+          booking.operationalStatus,
+        newValue:
+          'completed',
+        source:
+          'autocab'
+      });
+
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  } else if (
+    (
+      autocabBookingId &&
+      !booking.autocabBookingId
+    ) ||
+    (
+      autocabReference &&
+      !booking.autocabReference
+    )
+  ) {
+    db.prepare(`
+      UPDATE bookings
+      SET
+        autocab_booking_id =
+          COALESCE(
+            autocab_booking_id,
+            ?
+          ),
+        autocab_reference =
+          COALESCE(
+            autocab_reference,
+            ?
+          ),
+        updated_at =
+          CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      autocabBookingId,
+      autocabReference,
+      booking.id
+    );
+  }
+
+  const result =
+    ingestBookingFare(
+      booking.id,
+      null,
+      {
+        grossAmountPence:
+          normalisedFare
+            .grossAmountPence,
+
+        netAmountPence:
+          normalisedFare
+            .netAmountPence,
+
+        vatAmountPence:
+          normalisedFare
+            .vatAmountPence,
+
+        source:
+          'autocab',
+
+        externalReference:
+          normalisedFare
+            .externalReference,
+
+        rawPayload:
+          payload
+      }
+    );
+
+  const completedBooking =
+    db.prepare(`
+      SELECT
+        completed_at AS completedAt
+      FROM bookings
+      WHERE id = ?
+    `).get(booking.id);
+
+  return {
+    duplicate: false,
+    booking: {
+      ...result.booking,
+      completedAt:
+        completedBooking
+          ?.completedAt ||
+        null
+    },
+    financial:
+      result.financial
+  };
+}
+
+
+function normaliseBookingFarePayload(
+  payload = {},
+  options = {}
+) {
   const grossAmountPence =
     payload.grossAmountPence;
 
@@ -3531,7 +3969,9 @@ function ingestBookingFare(
   }
 
   const source = String(
-    payload.source || ''
+    options.forcedSource ??
+    payload.source ??
+    ''
   ).trim().toLowerCase();
 
   if (
@@ -3560,6 +4000,17 @@ function ingestBookingFare(
   let rawPayload = null;
 
   if (
+    options.rawPayloadOverride !==
+      undefined
+  ) {
+    rawPayload =
+      typeof options.rawPayloadOverride ===
+        'string'
+        ? options.rawPayloadOverride
+        : JSON.stringify(
+            options.rawPayloadOverride
+          );
+  } else if (
     payload.rawPayload !== null &&
     payload.rawPayload !== undefined
   ) {
@@ -3571,6 +4022,73 @@ function ingestBookingFare(
             payload.rawPayload
           );
   }
+
+  return {
+    grossAmountPence,
+    netAmountPence,
+    vatAmountPence,
+    source,
+    externalReference,
+    rawPayload
+  };
+}
+
+
+function ingestBookingFare(
+  bookingId,
+  actorUserId,
+  payload = {}
+) {
+  if (
+    !Number.isInteger(bookingId) ||
+    bookingId < 1
+  ) {
+    const error = new Error(
+      'A valid booking id is required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const booking = db.prepare(`
+    SELECT
+      id,
+      public_reference AS publicReference,
+      operational_status AS operationalStatus,
+      financial_status AS financialStatus
+    FROM bookings
+    WHERE id = ?
+  `).get(bookingId);
+
+  if (!booking) {
+    const error = new Error(
+      'Booking not found'
+    );
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    booking.operationalStatus !==
+      'completed'
+  ) {
+    const error = new Error(
+      'Fare data can only be posted to completed bookings'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const {
+    grossAmountPence,
+    netAmountPence,
+    vatAmountPence,
+    source,
+    externalReference,
+    rawPayload
+  } = normaliseBookingFarePayload(
+    payload
+  );
 
   const existing =
     db.prepare(`
@@ -4655,6 +5173,30 @@ const server = http.createServer(async (req, res) => {
         service: 'uhp-transport-api',
         database: path.basename(DB_PATH)
       });
+    }
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/integrations/autocab/completed'
+    ) {
+      requireAutocabWebhookSecret(
+        req
+      );
+
+      const payload =
+        await readJson(req);
+
+      const result =
+        handleAutocabCompletedWebhook(
+          payload
+        );
+
+      return sendJson(
+        res,
+        200,
+        result
+      );
     }
 
     /*
