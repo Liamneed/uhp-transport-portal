@@ -597,6 +597,90 @@ function requireAnyRole(
   return auth;
 }
 
+
+function enforceApiAccess(
+  req,
+  url
+) {
+  const pathname = url.pathname;
+
+  /*
+    Public endpoints are handled before
+    this guard is called.
+  */
+
+  if (
+    pathname.startsWith(
+      '/api/control/'
+    )
+  ) {
+    return requireAnyRole(
+      req,
+      [
+        'nac_controller',
+        'nac_admin'
+      ]
+    );
+  }
+
+  if (
+    pathname === '/api/users' ||
+    pathname.startsWith(
+      '/api/users/'
+    ) ||
+    pathname === '/api/roles'
+  ) {
+    return requireAnyRole(
+      req,
+      ['uhp_admin']
+    );
+  }
+
+  if (
+    pathname === '/api/budgets' ||
+    pathname.startsWith(
+      '/api/budgets/'
+    ) ||
+    pathname ===
+      '/api/reason-codes' ||
+    pathname.startsWith(
+      '/api/reason-codes/'
+    )
+  ) {
+    if (req.method === 'GET') {
+      return requireAuth(req);
+    }
+
+    return requireAnyRole(
+      req,
+      ['uhp_admin']
+    );
+  }
+
+  if (
+    pathname ===
+      '/api/departments'
+  ) {
+    return requireAuth(req);
+  }
+
+  if (
+    pathname ===
+      '/api/booking-options' ||
+    pathname ===
+      '/api/my-bookings' ||
+    pathname ===
+      '/api/bookings' ||
+    pathname.startsWith(
+      '/api/bookings/'
+    )
+  ) {
+    return requireAuth(req);
+  }
+
+  return null;
+}
+
 function requestLoginCode(
   email,
   req
@@ -3805,6 +3889,12 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    /*
+      From this point onward, API access
+      is authenticated and role checked.
+    */
+    enforceApiAccess(req, url);
+
     if (req.method === 'GET' && url.pathname === '/api/users') {
       return sendJson(res, 200, {
         users: listUsers()
@@ -3836,32 +3926,23 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/booking-options') {
-      const userId = Number(url.searchParams.get('userId'));
-
-      if (!Number.isInteger(userId) || userId < 1) {
-        const error = new Error('A valid userId is required');
-        error.statusCode = 400;
-        throw error;
-      }
+      const auth = requireAuth(req);
 
       return sendJson(
         res,
         200,
-        getBookingOptions(userId)
+        getBookingOptions(auth.user.id)
       );
     }
 
     if (req.method === 'GET' && url.pathname === '/api/my-bookings') {
-      const userId = Number(url.searchParams.get('userId'));
-
-      if (!Number.isInteger(userId) || userId < 1) {
-        const error = new Error('A valid userId is required');
-        error.statusCode = 400;
-        throw error;
-      }
+      const auth = requireAuth(req);
 
       return sendJson(res, 200, {
-        bookings: listBookingsForUser(userId)
+        bookings:
+          listBookingsForUser(
+            auth.user.id
+          )
       });
     }
 
@@ -3891,44 +3972,38 @@ const server = http.createServer(async (req, res) => {
 
     // owned-booking-detail route
     if (req.method === 'GET' && bookingAmendMatch) {
-      const bookingId = Number(bookingAmendMatch[1]);
-      const userId = Number(
-        url.searchParams.get('userId')
-      );
+      const bookingId =
+        Number(bookingAmendMatch[1]);
 
-      if (!Number.isInteger(userId) || userId < 1) {
-        const error = new Error(
-          'A valid userId is required'
-        );
-        error.statusCode = 400;
-        throw error;
-      }
+      const auth =
+        requireAuth(req);
 
       return sendJson(res, 200, {
-        booking: getOwnedBookingDetails(
-          bookingId,
-          userId
-        )
+        booking:
+          getOwnedBookingDetails(
+            bookingId,
+            auth.user.id
+          )
       });
     }
 
     // booking-amend route
     if (req.method === 'PATCH' && bookingAmendMatch) {
-      const payload = await readJson(req);
-      const bookingId = Number(bookingAmendMatch[1]);
-      const userId = Number(payload.userId);
+      const payload =
+        await readJson(req);
 
-      if (!Number.isInteger(userId) || userId < 1) {
-        const error = new Error('A valid userId is required');
-        error.statusCode = 400;
-        throw error;
-      }
+      const bookingId =
+        Number(bookingAmendMatch[1]);
 
-      const booking = amendPortalBooking(
-        bookingId,
-        userId,
-        payload
-      );
+      const auth =
+        requireAuth(req);
+
+      const booking =
+        amendPortalBooking(
+          bookingId,
+          auth.user.id,
+          payload
+        );
 
       return sendJson(res, 200, {
         booking
@@ -3940,21 +4015,21 @@ const server = http.createServer(async (req, res) => {
     );
 
     if (req.method === 'POST' && bookingCancelMatch) {
-      const payload = await readJson(req);
-      const bookingId = Number(bookingCancelMatch[1]);
-      const userId = Number(payload.userId);
+      const payload =
+        await readJson(req);
 
-      if (!Number.isInteger(userId) || userId < 1) {
-        const error = new Error('A valid userId is required');
-        error.statusCode = 400;
-        throw error;
-      }
+      const bookingId =
+        Number(bookingCancelMatch[1]);
 
-      const booking = cancelPortalBooking(
-        bookingId,
-        userId,
-        payload
-      );
+      const auth =
+        requireAuth(req);
+
+      const booking =
+        cancelPortalBooking(
+          bookingId,
+          auth.user.id,
+          payload
+        );
 
       return sendJson(res, 200, {
         booking
@@ -3962,8 +4037,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/bookings') {
-      const payload = await readJson(req);
-      const booking = createPortalBooking(payload);
+      const payload =
+        await readJson(req);
+
+      const auth =
+        requireAuth(req);
+
+      /*
+        Never trust identity supplied by
+        the browser. The authenticated
+        session is authoritative.
+      */
+      payload.userId =
+        auth.user.id;
+
+      payload.createdByUserId =
+        auth.user.id;
+
+      const booking =
+        createPortalBooking(payload);
 
       return sendJson(res, 201, {
         booking

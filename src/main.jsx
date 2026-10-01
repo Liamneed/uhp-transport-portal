@@ -19,91 +19,596 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const roleNav = {
+const API_BASE =
+  'http://localhost:3001';
+
+async function apiFetch(
+  input,
+  options = {}
+) {
+  return window.fetch(
+    input,
+    {
+      ...options,
+      credentials: 'include'
+    }
+  );
+}
+
+const navDefinitions = {
   uhp_admin: [
-    ['Dashboard', LayoutDashboard],
-    ['Users', UserRoundCog],
-    ['Budgets', WalletCards],
-    ['Reason Codes', Tags],
-    ['Reports', BarChart3]
+    ['admin-dashboard', 'Dashboard', LayoutDashboard],
+    ['admin-users', 'Users', UserRoundCog],
+    ['admin-budgets', 'Budgets', WalletCards],
+    ['admin-reasons', 'Reason Codes', Tags],
+    ['admin-reports', 'Reports', BarChart3]
   ],
+
   booker: [
-    ['Dashboard', LayoutDashboard],
-    ['Book UHP Transport', CarFront],
-    ['My Bookings', CalendarDays]
+    ['booker-dashboard', 'Dashboard', LayoutDashboard],
+    ['book-transport', 'Book UHP Transport', CarFront],
+    ['my-bookings', 'My Bookings', CalendarDays]
   ],
+
   budget_holder: [
-    ['Dashboard', LayoutDashboard],
-    ['Bookings', CalendarDays],
-    ['Invoices', WalletCards],
-    ['Reports', BarChart3]
+    ['holder-dashboard', 'Dashboard', LayoutDashboard],
+    ['holder-bookings', 'Bookings', CalendarDays],
+    ['holder-invoices', 'Invoices', WalletCards],
+    ['holder-reports', 'Reports', BarChart3]
   ],
-  nac: [
-    ['Control', LayoutDashboard],
-    ['Bookings', CalendarDays],
-    ['Exceptions', AlertTriangle],
-    ['Christmas', CarFront]
+
+  department_manager: [
+    ['manager-dashboard', 'Dashboard', LayoutDashboard],
+    ['manager-bookings', 'Bookings', CalendarDays],
+    ['manager-reports', 'Reports', BarChart3]
+  ],
+
+  finance: [
+    ['finance-dashboard', 'Dashboard', LayoutDashboard],
+    ['finance-invoices', 'Invoices', WalletCards],
+    ['finance-reports', 'Reports', BarChart3]
+  ],
+
+  nac_controller: [
+    ['nac-control', 'Control', LayoutDashboard],
+    ['nac-bookings', 'Bookings', CalendarDays],
+    ['nac-exceptions', 'Exceptions', AlertTriangle],
+    ['nac-christmas', 'Christmas', CarFront]
+  ],
+
+  nac_admin: [
+    ['nac-control', 'Control', LayoutDashboard],
+    ['nac-bookings', 'Bookings', CalendarDays],
+    ['nac-exceptions', 'Exceptions', AlertTriangle],
+    ['nac-christmas', 'Christmas', CarFront]
   ]
 };
 
-function App() {
-  const [role, setRole] = useState('uhp_admin');
-  const [active, setActive] = useState('Users');
-  const nav = roleNav[role];
+function navigationForUser(user) {
+  const seen = new Set();
+  const items = [];
 
-  const switchRole = (nextRole) => {
-    setRole(nextRole);
-    setActive(roleNav[nextRole][0][0]);
-  };
+  for (const role of user?.roles ?? []) {
+    for (
+      const item of
+      navDefinitions[role.code] ?? []
+    ) {
+      const [key] = item;
+
+      if (seen.has(key)) continue;
+
+      seen.add(key);
+      items.push(item);
+    }
+  }
+
+  return items;
+}
+
+function initialsForUser(user) {
+  const first =
+    String(user?.firstName || '')
+      .trim()
+      .charAt(0);
+
+  const last =
+    String(user?.lastName || '')
+      .trim()
+      .charAt(0);
+
+  return `${first}${last}`.toUpperCase() || 'U';
+}
+
+function roleSummary(user) {
+  const names =
+    (user?.roles ?? [])
+      .map((role) => role.name)
+      .filter(Boolean);
+
+  return names.join(' · ') || 'Portal User';
+}
+
+function LoginPage({
+  onAuthenticated
+}) {
+  const [step, setStep] =
+    useState('email');
+
+  const [email, setEmail] =
+    useState('');
+
+  const [challengeId, setChallengeId] =
+    useState('');
+
+  const [code, setCode] =
+    useState('');
+
+  const [sending, setSending] =
+    useState(false);
+
+  const [error, setError] =
+    useState('');
+
+  async function requestCode(event) {
+    event.preventDefault();
+
+    setSending(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/auth/request-code`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body: JSON.stringify({
+              email
+            })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          'Unable to send verification code'
+        );
+      }
+
+      setChallengeId(
+        data.challengeId
+      );
+
+      setEmail(data.email);
+      setStep('code');
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to sign in'
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function verifyCode(event) {
+    event.preventDefault();
+
+    setSending(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/auth/verify-code`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body: JSON.stringify({
+              challengeId,
+              code
+            })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          'Unable to verify code'
+        );
+      }
+
+      onAuthenticated(
+        data.user
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to verify code'
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-panel">
+        <div className="auth-brand">
+          <strong>UHP</strong>
+          <span>Transport Portal</span>
+        </div>
+
+        <div className="auth-card">
+          <div className="auth-heading">
+            <span className="auth-kicker">
+              Secure access
+            </span>
+
+            <h1>
+              {step === 'email'
+                ? 'Sign in to the transport portal'
+                : 'Enter your verification code'}
+            </h1>
+
+            <p>
+              {step === 'email'
+                ? 'Use the email address registered against your UHP Transport Portal account.'
+                : `We sent a 6-digit sign-in code to ${email}.`}
+            </p>
+          </div>
+
+          {error && (
+            <div className="notice error">
+              {error}
+            </div>
+          )}
+
+          {step === 'email' ? (
+            <form
+              className="auth-form"
+              onSubmit={requestCode}
+            >
+              <label>
+                Email address
+
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) =>
+                    setEmail(
+                      event.target.value
+                    )
+                  }
+                  placeholder="name@example.nhs.uk"
+                  autoComplete="email"
+                  required
+                  autoFocus
+                />
+              </label>
+
+              <button
+                className="primary-button auth-submit"
+                disabled={sending}
+              >
+                {sending
+                  ? 'Sending...'
+                  : 'Send verification code'}
+              </button>
+            </form>
+          ) : (
+            <form
+              className="auth-form"
+              onSubmit={verifyCode}
+            >
+              <label>
+                6-digit verification code
+
+                <input
+                  className="auth-code-input"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength="6"
+                  pattern="[0-9]{6}"
+                  value={code}
+                  onChange={(event) =>
+                    setCode(
+                      event.target.value
+                        .replace(/\D/g, '')
+                        .slice(0, 6)
+                    )
+                  }
+                  placeholder="000000"
+                  required
+                  autoFocus
+                />
+              </label>
+
+              <button
+                className="primary-button auth-submit"
+                disabled={
+                  sending ||
+                  code.length !== 6
+                }
+              >
+                {sending
+                  ? 'Checking...'
+                  : 'Sign in'}
+              </button>
+
+              <button
+                type="button"
+                className="auth-back-button"
+                onClick={() => {
+                  setStep('email');
+                  setCode('');
+                  setChallengeId('');
+                  setError('');
+                }}
+                disabled={sending}
+              >
+                Use a different email
+              </button>
+            </form>
+          )}
+
+          <div className="auth-security-note">
+            Passwordless access · Verification
+            codes expire after 10 minutes.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [currentUser, setCurrentUser] =
+    useState(null);
+
+  const [checkingSession, setCheckingSession] =
+    useState(true);
+
+  const [active, setActive] =
+    useState('');
+
+  const nav =
+    useMemo(
+      () =>
+        navigationForUser(currentUser),
+      [currentUser]
+    );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreSession() {
+      try {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/auth/me`
+          );
+
+        if (!response.ok) {
+          if (!cancelled) {
+            setCurrentUser(null);
+          }
+
+          return;
+        }
+
+        const data =
+          await response.json();
+
+        if (!cancelled) {
+          setCurrentUser(data.user);
+        }
+      } catch {
+        if (!cancelled) {
+          setCurrentUser(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingSession(false);
+        }
+      }
+    }
+
+    restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setActive('');
+      return;
+    }
+
+    const available =
+      navigationForUser(currentUser);
+
+    if (
+      !available.some(
+        ([key]) => key === active
+      )
+    ) {
+      setActive(
+        available[0]?.[0] || ''
+      );
+    }
+  }, [currentUser, active]);
+
+  async function logout() {
+    try {
+      await apiFetch(
+        `${API_BASE}/api/auth/logout`,
+        {
+          method: 'POST'
+        }
+      );
+    } finally {
+      setCurrentUser(null);
+      setActive('');
+    }
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-loading">
+          Checking secure session...
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <LoginPage
+        onAuthenticated={
+          setCurrentUser
+        }
+      />
+    );
+  }
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><strong>UHP</strong><span>Transport Portal</span></div>
-        <div className="role-switch">
-          <label>Preview role</label>
-          <select value={role} onChange={(e) => switchRole(e.target.value)}>
-            <option value="uhp_admin">UHP Admin</option>
-            <option value="booker">Booker</option>
-            <option value="budget_holder">Budget Holder</option>
-            <option value="nac">Need-A-Cab</option>
-          </select>
+        <div className="brand">
+          <strong>UHP</strong>
+          <span>Transport Portal</span>
         </div>
+
+        <div className="signed-in-summary">
+          <small>Signed in as</small>
+
+          <strong>
+            {currentUser.firstName}{' '}
+            {currentUser.lastName}
+          </strong>
+
+          <span>
+            {roleSummary(currentUser)}
+          </span>
+        </div>
+
         <nav>
-          {nav.map(([label, Icon]) => (
-            <button key={label} className={active === label ? 'nav-item active' : 'nav-item'} onClick={() => setActive(label)}>
-              <Icon size={19} />
-              <span>{label}</span>
-            </button>
-          ))}
+          {nav.map(
+            ([key, label, Icon]) => (
+              <button
+                key={key}
+                className={
+                  active === key
+                    ? 'nav-item active'
+                    : 'nav-item'
+                }
+                onClick={() =>
+                  setActive(key)
+                }
+              >
+                <Icon size={19}/>
+                <span>{label}</span>
+              </button>
+            )
+          )}
         </nav>
       </aside>
 
       <main className="main">
         <header className="topbar">
-          <div className="search"><Search size={18}/><input placeholder="Search users, budgets, bookings..." /></div>
-          <div className="top-actions"><Bell size={20}/><div className="avatar">UA</div><div><strong>UHP Admin</strong><small>Hospital Administration</small></div></div>
+          <div className="search">
+            <Search size={18}/>
+
+            <input
+              placeholder="Search users, budgets, bookings..."
+            />
+          </div>
+
+          <div className="top-actions">
+            <Bell size={20}/>
+
+            <div className="avatar">
+              {initialsForUser(
+                currentUser
+              )}
+            </div>
+
+            <div className="signed-in-user">
+              <strong>
+                {currentUser.firstName}{' '}
+                {currentUser.lastName}
+              </strong>
+
+              <small>
+                {currentUser.department ||
+                  roleSummary(
+                    currentUser
+                  )}
+              </small>
+            </div>
+
+            <button
+              type="button"
+              className="logout-button"
+              onClick={logout}
+            >
+              Sign out
+            </button>
+          </div>
         </header>
 
         <section className="content">
-          {role === 'uhp_admin' && active === 'Users' ? (
+          {active === 'admin-users' ? (
             <UsersPage/>
-          ) : role === 'uhp_admin' && active === 'Budgets' ? (
+          ) : active === 'admin-budgets' ? (
             <BudgetsPage/>
-          ) : role === 'uhp_admin' && active === 'Reason Codes' ? (
+          ) : active === 'admin-reasons' ? (
             <ReasonCodesPage/>
-          ) : role === 'booker' && active === 'Book UHP Transport' ? (
-            <BookTransportPage/>
-          ) : role === 'booker' && active === 'My Bookings' ? (
-            <MyBookingsPage/>
-          ) : role === 'nac' && active === 'Control' ? (
+          ) : active === 'book-transport' ? (
+            <BookTransportPage
+              currentUser={currentUser}
+            />
+          ) : active === 'my-bookings' ? (
+            <MyBookingsPage
+              currentUser={currentUser}
+            />
+          ) : active === 'nac-control' ? (
             <NacControlPage/>
-          ) : role === 'nac' && active === 'Bookings' ? (
+          ) : active === 'nac-bookings' ? (
             <NacBookingsPage/>
-          ) : role === 'nac' && active === 'Exceptions' ? (
-            <NacBookingsPage exceptionsOnly/>
+          ) : active === 'nac-exceptions' ? (
+            <NacBookingsPage
+              exceptionsOnly
+            />
           ) : (
-            <Placeholder role={role} active={active}/>
+            <Placeholder
+              role="authenticated"
+              active={
+                nav.find(
+                  ([key]) =>
+                    key === active
+                )?.[1] ||
+                'Dashboard'
+              }
+            />
           )}
         </section>
       </main>
@@ -148,10 +653,10 @@ function UsersPage() {
         budgetsResponse,
         rolesResponse
       ] = await Promise.all([
-        fetch('http://localhost:3001/api/users'),
-        fetch('http://localhost:3001/api/departments'),
-        fetch('http://localhost:3001/api/budgets'),
-        fetch('http://localhost:3001/api/roles')
+        apiFetch('http://localhost:3001/api/users'),
+        apiFetch('http://localhost:3001/api/departments'),
+        apiFetch('http://localhost:3001/api/budgets'),
+        apiFetch('http://localhost:3001/api/roles')
       ]);
 
       if (
@@ -260,7 +765,7 @@ function UsersPage() {
     setNotice('');
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         'http://localhost:3001/api/users',
         {
           method: 'POST',
@@ -319,7 +824,7 @@ function UsersPage() {
     setNotice('');
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `http://localhost:3001/api/users/${user.id}/status`,
         {
           method: 'PATCH',
@@ -739,10 +1244,10 @@ function NacControlPage() {
     try {
       const [summaryResponse, bookingsResponse] =
         await Promise.all([
-          fetch(
+          apiFetch(
             'http://localhost:3001/api/control/summary'
           ),
-          fetch(
+          apiFetch(
             'http://localhost:3001/api/control/bookings'
           )
         ]);
@@ -1008,13 +1513,13 @@ function NacBookingsPage({
         departmentResponse,
         budgetResponse
       ] = await Promise.all([
-        fetch(
+        apiFetch(
           'http://localhost:3001/api/control/bookings'
         ),
-        fetch(
+        apiFetch(
           'http://localhost:3001/api/departments'
         ),
-        fetch(
+        apiFetch(
           'http://localhost:3001/api/budgets'
         )
       ]);
@@ -1668,8 +2173,8 @@ function NacBookingsPage({
   );
 }
 
-function MyBookingsPage() {
-  const bookingUserId = 1;
+function MyBookingsPage({ currentUser }) {
+  const bookingUserId = currentUser.id;
 
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1697,7 +2202,7 @@ function MyBookingsPage() {
     setError('');
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `http://localhost:3001/api/my-bookings?userId=${bookingUserId}`
       );
 
@@ -1805,10 +2310,10 @@ function MyBookingsPage() {
     try {
       const [bookingResponse, optionsResponse] =
         await Promise.all([
-          fetch(
+          apiFetch(
             `http://localhost:3001/api/bookings/${bookingId}?userId=${bookingUserId}`
           ),
-          fetch(
+          apiFetch(
             `http://localhost:3001/api/booking-options?userId=${bookingUserId}`
           )
         ]);
@@ -1975,7 +2480,7 @@ function MyBookingsPage() {
     setNotice('');
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `http://localhost:3001/api/bookings/${editingBooking.id}`,
         {
           method: 'PATCH',
@@ -2084,7 +2589,7 @@ function MyBookingsPage() {
     setNotice('');
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `http://localhost:3001/api/bookings/${cancelBooking.id}/cancel`,
         {
           method: 'POST',
@@ -2902,8 +3407,8 @@ function MyBookingsPage() {
   );
 }
 
-function BookTransportPage() {
-  const bookingUserId = 1;
+function BookTransportPage({ currentUser }) {
+  const bookingUserId = currentUser.id;
 
   const initialForm = {
     pickupDate: '',
@@ -2941,7 +3446,7 @@ function BookTransportPage() {
     setError('');
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `http://localhost:3001/api/booking-options?userId=${bookingUserId}`
       );
 
@@ -3033,7 +3538,7 @@ function BookTransportPage() {
         );
       }
 
-      const response = await fetch(
+      const response = await apiFetch(
         'http://localhost:3001/api/bookings',
         {
           method: 'POST',
@@ -3685,9 +4190,9 @@ function BudgetsPage() {
         departmentsResponse,
         usersResponse
       ] = await Promise.all([
-        fetch('http://localhost:3001/api/budgets'),
-        fetch('http://localhost:3001/api/departments'),
-        fetch('http://localhost:3001/api/users')
+        apiFetch('http://localhost:3001/api/budgets'),
+        apiFetch('http://localhost:3001/api/departments'),
+        apiFetch('http://localhost:3001/api/users')
       ]);
 
       if (
@@ -3804,7 +4309,7 @@ function BudgetsPage() {
           : null
       };
 
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: isEditing ? 'PATCH' : 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -3866,7 +4371,7 @@ function BudgetsPage() {
     setNotice('');
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `http://localhost:3001/api/budgets/${budget.id}/status`,
         {
           method: 'PATCH',
@@ -4274,7 +4779,7 @@ function ReasonCodesPage() {
     setError('');
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         'http://localhost:3001/api/reason-codes'
       );
 
@@ -4361,7 +4866,7 @@ function ReasonCodesPage() {
     try {
       const isEditing = Boolean(editingReason);
 
-      const response = await fetch(
+      const response = await apiFetch(
         isEditing
           ? `http://localhost:3001/api/reason-codes/${editingReason.id}`
           : 'http://localhost:3001/api/reason-codes',
@@ -4435,7 +4940,7 @@ function ReasonCodesPage() {
     setNotice('');
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `http://localhost:3001/api/reason-codes/${reason.id}/status`,
         {
           method: 'PATCH',
