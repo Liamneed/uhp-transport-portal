@@ -1605,3 +1605,362 @@ button:disabled {
 .invoice-ready-table td > small {
   margin-top: 3px;
 }
+
+
+/* Coding review */
+
+.coding-review-count {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 10px 14px;
+  border: 1px solid #e0e7ee;
+  border-radius: 11px;
+  background: #fff;
+  color: #6f7e91;
+}
+
+.coding-review-count strong {
+  font-size: 22px;
+  color: #a66500;
+}
+
+.coding-review-count span {
+  font-size: 13px;
+}
+
+.coding-review-layout {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.coding-review-queue {
+  padding: 0;
+  overflow: hidden;
+  position: sticky;
+  top: 92px;
+}
+
+.coding-review-queue .coding-review-card-heading {
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid #e7edf2;
+}
+
+.coding-review-card-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.coding-review-card-heading h2 {
+  margin: 3px 0 4px;
+  color: #30455e;
+  font-size: 19px;
+}
+
+.coding-review-card-heading p {
+  margin: 0;
+  color: #7a899b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.coding-review-kicker {
+  display: block;
+  color: #8b98a8;
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .045em;
+}
+
+.coding-review-list {
+  max-height: calc(100vh - 285px);
+  overflow-y: auto;
+}
+
+.coding-review-list-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 15px 17px;
+  border: 0;
+  border-bottom: 1px solid #edf1f5;
+  background: #fff;
+  text-align: left;
+  color: #52647a;
+}
+
+.coding-review-list-item:last-child {
+  border-bottom: 0;
+}
+
+.coding-review-list-item:hover {
+  background: #f7fafc;
+}
+
+.coding-review-list-item.active {
+  background: #eef6fd;
+  box-shadow: inset 3px 0 0 #1768a8;
+}
+
+.coding-review-list-item > span,
+.coding-review-list-item > small {
+  color: #78879a;
+}
+
+.coding-review-list-item > small {
+  line-height: 1.35;
+}
+
+.coding-review-list-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.coding-review-list-top strong {
+  color: #30465f;
+}
+
+.coding-required-chip {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #fff2d8;
+  color: #996300 !important;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.coding-review-main {
+  display: grid;
+  gap: 18px;
+}
+
+.coding-review-booking,
+.coding-source-card,
+.coding-correction-card {
+  padding: 21px;
+}
+
+.coding-autocab-id {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 9px 11px;
+  border: 1px solid #e0e7ee;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.coding-autocab-id small {
+  color: #8895a5;
+}
+
+.coding-autocab-id strong {
+  color: #3b5067;
+}
+
+.coding-journey-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.coding-journey-grid > div,
+.coding-source-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 13px;
+  border: 1px solid #e3e9ef;
+  border-radius: 10px;
+  background: #fafcfd;
+}
+
+.coding-journey-grid small,
+.coding-source-grid small,
+.coding-vias > small,
+.coding-raw-reference small {
+  color: #8491a1;
+}
+
+.coding-journey-grid strong,
+.coding-source-grid strong,
+.coding-raw-reference strong {
+  color: #364b62;
+}
+
+.coding-vias {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 12px 13px;
+  border: 1px solid #e3e9ef;
+  border-radius: 10px;
+}
+
+.coding-vias span {
+  color: #52667d;
+  font-size: 13px;
+}
+
+.coding-raw-reference {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 13px;
+  padding: 13px;
+  border-radius: 10px;
+  background: #f4f6f8;
+  overflow-wrap: anywhere;
+}
+
+.coding-source-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.coding-validation {
+  align-self: flex-start;
+  margin-top: 3px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.coding-validation.valid {
+  background: #e9f8f0;
+  color: #16814b;
+}
+
+.coding-validation.invalid {
+  background: #fdeaea;
+  color: #a93f3f;
+}
+
+.coding-validation.neutral {
+  background: #eef1f4;
+  color: #68778a;
+}
+
+.coding-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 14px;
+}
+
+.coding-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #42536a;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.coding-form-grid select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d9e2eb;
+  border-radius: 9px;
+  padding: 10px 11px;
+  background: #fff;
+  color: #26384f;
+}
+
+.coding-approval-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 17px;
+  padding: 12px 13px;
+  border: 1px solid #eed9a9;
+  border-radius: 10px;
+  background: #fff9ec;
+  color: #806119;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.coding-approval-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.coding-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 17px;
+}
+
+.coding-review-empty {
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #6f7f91;
+  text-align: center;
+}
+
+.coding-review-empty svg {
+  color: #2b8a5c;
+}
+
+.coding-review-empty strong {
+  color: #385068;
+  font-size: 18px;
+}
+
+@media (max-width: 1100px) {
+  .coding-review-layout {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+
+  .coding-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .coding-source-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 800px) {
+  .coding-review-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .coding-review-queue {
+    position: static;
+  }
+
+  .coding-review-list {
+    max-height: 320px;
+  }
+
+  .coding-journey-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .coding-review-card-heading {
+    flex-direction: column;
+  }
+
+  .coding-autocab-id {
+    align-items: flex-start;
+  }
+}

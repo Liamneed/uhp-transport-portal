@@ -43,6 +43,7 @@ const navDefinitions = {
     ['admin-users', 'Users', UserRoundCog],
     ['admin-budgets', 'Budgets', WalletCards],
     ['admin-reasons', 'Reason Codes', Tags],
+    ['coding-review', 'Coding Review', AlertTriangle],
     ['admin-reports', 'Reports', BarChart3]
   ],
 
@@ -82,6 +83,7 @@ const navDefinitions = {
     ['nac-control', 'Control', LayoutDashboard],
     ['nac-bookings', 'Bookings', CalendarDays],
     ['nac-exceptions', 'Exceptions', AlertTriangle],
+    ['coding-review', 'Coding Review', AlertTriangle],
     ['nac-christmas', 'Christmas', CarFront]
   ]
 };
@@ -607,6 +609,8 @@ function App() {
             <NacBookingsPage
               exceptionsOnly
             />
+          ) : active === 'coding-review' ? (
+            <CodingReviewPage/>
           ) : (
             <Placeholder
               role={roleSummary(currentUser)}
@@ -2565,6 +2569,805 @@ function BudgetInvoicesPage() {
     </>
   );
 }
+
+
+
+function CodingReviewPage() {
+  const [bookings, setBookings] =
+    useState([]);
+
+  const [options, setOptions] =
+    useState({
+      reasonCodes: [],
+      budgets: []
+    });
+
+  const [selectedBookingId, setSelectedBookingId] =
+    useState(null);
+
+  const [form, setForm] =
+    useState({
+      reasonCodeId: '',
+      budgetId: '',
+      budgetHolderUserId: ''
+    });
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [error, setError] =
+    useState('');
+
+  const [notice, setNotice] =
+    useState('');
+
+
+  async function loadCodingReview(
+    preferredBookingId = null
+  ) {
+    setLoading(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/coding-review`
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          'Unable to load coding review'
+        );
+      }
+
+      const nextBookings =
+        data.bookings ?? [];
+
+      setBookings(
+        nextBookings
+      );
+
+      setOptions({
+        reasonCodes:
+          data.options?.reasonCodes ?? [],
+
+        budgets:
+          data.options?.budgets ?? []
+      });
+
+      const stillExists =
+        preferredBookingId &&
+        nextBookings.some(
+          (booking) =>
+            booking.id ===
+              preferredBookingId
+        );
+
+      const nextSelectedId =
+        stillExists
+          ? preferredBookingId
+          : nextBookings[0]?.id ??
+            null;
+
+      setSelectedBookingId(
+        nextSelectedId
+      );
+
+      setForm({
+        reasonCodeId: '',
+        budgetId: '',
+        budgetHolderUserId: ''
+      });
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load coding review'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  useEffect(() => {
+    loadCodingReview();
+  }, []);
+
+
+  const selectedBooking =
+    useMemo(
+      () =>
+        bookings.find(
+          (booking) =>
+            booking.id ===
+              selectedBookingId
+        ) || null,
+      [
+        bookings,
+        selectedBookingId
+      ]
+    );
+
+
+  const selectedBudget =
+    useMemo(
+      () =>
+        options.budgets.find(
+          (budget) =>
+            String(budget.id) ===
+              String(form.budgetId)
+        ) || null,
+      [
+        options.budgets,
+        form.budgetId
+      ]
+    );
+
+
+  const availableHolders =
+    selectedBudget?.holders ?? [];
+
+
+  function selectBooking(bookingId) {
+    setSelectedBookingId(
+      bookingId
+    );
+
+    setForm({
+      reasonCodeId: '',
+      budgetId: '',
+      budgetHolderUserId: ''
+    });
+
+    setError('');
+    setNotice('');
+  }
+
+
+  function codingStatusLabel(status) {
+    if (!status) {
+      return 'Not provided';
+    }
+
+    return formatStatus(status);
+  }
+
+
+  function codingStatusClass(status) {
+    if (status === 'valid') {
+      return 'valid';
+    }
+
+    if (
+      status === 'missing' ||
+      status === 'invalid' ||
+      status === 'mismatch'
+    ) {
+      return 'invalid';
+    }
+
+    return 'neutral';
+  }
+
+
+  async function approveCoding(event) {
+    event.preventDefault();
+
+    if (
+      !selectedBooking ||
+      !form.reasonCodeId ||
+      !form.budgetId ||
+      !form.budgetHolderUserId
+    ) {
+      setError(
+        'Select a reason code, budget and budget holder before approving.'
+      );
+
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/coding-review/${selectedBooking.id}/approve`,
+          {
+            method: 'POST',
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify({
+                reasonCodeId:
+                  Number(
+                    form.reasonCodeId
+                  ),
+
+                budgetId:
+                  Number(
+                    form.budgetId
+                  ),
+
+                budgetHolderUserId:
+                  Number(
+                    form.budgetHolderUserId
+                  )
+              })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          'Unable to approve coding'
+        );
+      }
+
+      const approvedReference =
+        selectedBooking.publicReference;
+
+      setNotice(
+        `${approvedReference} coding has been approved.`
+      );
+
+      await loadCodingReview();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to approve coding'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading coding review...
+      </div>
+    );
+  }
+
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>Coding Review</h1>
+
+          <p>
+            Review UHP bookings where the
+            operator-supplied financial coding
+            could not be validated.
+          </p>
+        </div>
+
+        <div className="coding-review-count">
+          <strong>
+            {bookings.length}
+          </strong>
+
+          <span>
+            awaiting review
+          </span>
+        </div>
+      </div>
+
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+
+      {notice && (
+        <div className="notice success">
+          {notice}
+        </div>
+      )}
+
+
+      {!bookings.length ? (
+        <div className="card coding-review-empty">
+          <CheckCircle2 size={36}/>
+
+          <strong>
+            No coding exceptions
+          </strong>
+
+          <span>
+            All imported UHP bookings currently
+            have valid financial coding.
+          </span>
+        </div>
+      ) : (
+        <div className="coding-review-layout">
+          <div className="card coding-review-queue">
+            <div className="coding-review-card-heading">
+              <div>
+                <h2>
+                  Awaiting Review
+                </h2>
+
+                <p>
+                  Select a booking to inspect the
+                  original Autocab coding.
+                </p>
+              </div>
+            </div>
+
+
+            <div className="coding-review-list">
+              {bookings.map(
+                (booking) => {
+                  const active =
+                    booking.id ===
+                      selectedBookingId;
+
+                  return (
+                    <button
+                      type="button"
+                      key={booking.id}
+                      className={
+                        active
+                          ? 'coding-review-list-item active'
+                          : 'coding-review-list-item'
+                      }
+                      onClick={() =>
+                        selectBooking(
+                          booking.id
+                        )
+                      }
+                    >
+                      <div className="coding-review-list-top">
+                        <strong>
+                          {booking.publicReference}
+                        </strong>
+
+                        <span className="coding-required-chip">
+                          Coding Required
+                        </span>
+                      </div>
+
+                      <span>
+                        {formatPickup(
+                          booking.requestedPickupAt
+                        )}
+                      </span>
+
+                      <small>
+                        {booking.passengerName}
+                      </small>
+
+                      <small>
+                        {booking.pickupAddress}
+                        {' → '}
+                        {booking.destinationAddress}
+                      </small>
+                    </button>
+                  );
+                }
+              )}
+            </div>
+          </div>
+
+
+          {selectedBooking && (
+            <div className="coding-review-main">
+              <div className="card coding-review-booking">
+                <div className="coding-review-card-heading">
+                  <div>
+                    <span className="coding-review-kicker">
+                      Booking
+                    </span>
+
+                    <h2>
+                      {selectedBooking.publicReference}
+                    </h2>
+
+                    <p>
+                      {selectedBooking.passengerName}
+                      {' · '}
+                      {formatPickup(
+                        selectedBooking.requestedPickupAt
+                      )}
+                    </p>
+                  </div>
+
+                  {selectedBooking.autocabBookingId && (
+                    <div className="coding-autocab-id">
+                      <small>
+                        Autocab Booking
+                      </small>
+
+                      <strong>
+                        {selectedBooking.autocabBookingId}
+                      </strong>
+                    </div>
+                  )}
+                </div>
+
+
+                <div className="coding-journey-grid">
+                  <div>
+                    <small>
+                      Pickup
+                    </small>
+
+                    <strong>
+                      {selectedBooking.pickupAddress}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>
+                      Destination
+                    </small>
+
+                    <strong>
+                      {selectedBooking.destinationAddress}
+                    </strong>
+                  </div>
+                </div>
+
+
+                {selectedBooking.stops?.length > 2 && (
+                  <div className="coding-vias">
+                    <small>
+                      Vias
+                    </small>
+
+                    {selectedBooking.stops
+                      .filter(
+                        (stop) =>
+                          stop.stopType ===
+                            'via'
+                      )
+                      .map(
+                        (stop) => (
+                          <span
+                            key={
+                              `${selectedBooking.id}-${stop.sequenceNumber}`
+                            }
+                          >
+                            {stop.address}
+                          </span>
+                        )
+                      )}
+                  </div>
+                )}
+              </div>
+
+
+              <div className="card coding-source-card">
+                <div className="coding-review-card-heading">
+                  <div>
+                    <span className="coding-review-kicker">
+                      Original Autocab coding
+                    </span>
+
+                    <h2>
+                      Validation Result
+                    </h2>
+
+                    <p>
+                      The original values are
+                      retained for audit purposes
+                      and are not overwritten.
+                    </p>
+                  </div>
+                </div>
+
+
+                <div className="coding-raw-reference">
+                  <small>
+                    Raw OurReference
+                  </small>
+
+                  <strong>
+                    {selectedBooking.rawReference ||
+                      selectedBooking.autocabReference ||
+                      '—'}
+                  </strong>
+                </div>
+
+
+                <div className="coding-source-grid">
+                  <div>
+                    <small>
+                      Reason Code
+                    </small>
+
+                    <strong>
+                      {selectedBooking.parsedReasonCode ||
+                        '—'}
+                    </strong>
+
+                    <span
+                      className={
+                        `coding-validation ${codingStatusClass(
+                          selectedBooking.reasonStatus
+                        )}`
+                      }
+                    >
+                      {codingStatusLabel(
+                        selectedBooking.reasonStatus
+                      )}
+                    </span>
+                  </div>
+
+
+                  <div>
+                    <small>
+                      Budget
+                    </small>
+
+                    <strong>
+                      {selectedBooking.parsedBudgetNumber ||
+                        '—'}
+                    </strong>
+
+                    <span
+                      className={
+                        `coding-validation ${codingStatusClass(
+                          selectedBooking.budgetStatus
+                        )}`
+                      }
+                    >
+                      {codingStatusLabel(
+                        selectedBooking.budgetStatus
+                      )}
+                    </span>
+                  </div>
+
+
+                  <div>
+                    <small>
+                      Budget Holder
+                    </small>
+
+                    <strong>
+                      {selectedBooking.parsedBudgetHolder ||
+                        '—'}
+                    </strong>
+
+                    <span
+                      className={
+                        `coding-validation ${codingStatusClass(
+                          selectedBooking.holderStatus
+                        )}`
+                      }
+                    >
+                      {codingStatusLabel(
+                        selectedBooking.holderStatus
+                      )}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+
+              <form
+                className="card coding-correction-card"
+                onSubmit={approveCoding}
+              >
+                <div className="coding-review-card-heading">
+                  <div>
+                    <span className="coding-review-kicker">
+                      Correct coding
+                    </span>
+
+                    <h2>
+                      Apply Valid Master Data
+                    </h2>
+
+                    <p>
+                      Select existing approved UHP
+                      reference data. This does not
+                      create new budgets, reason
+                      codes or holders.
+                    </p>
+                  </div>
+                </div>
+
+
+                <div className="coding-form-grid">
+                  <label>
+                    Reason Code
+
+                    <select
+                      required
+                      value={
+                        form.reasonCodeId
+                      }
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          reasonCodeId:
+                            event.target.value
+                        })
+                      }
+                    >
+                      <option value="">
+                        Select reason code...
+                      </option>
+
+                      {options.reasonCodes.map(
+                        (reason) => (
+                          <option
+                            key={reason.id}
+                            value={reason.id}
+                          >
+                            {reason.code}
+                            {' — '}
+                            {reason.description}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+
+
+                  <label>
+                    Budget
+
+                    <select
+                      required
+                      value={
+                        form.budgetId
+                      }
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          budgetId:
+                            event.target.value,
+                          budgetHolderUserId:
+                            ''
+                        })
+                      }
+                    >
+                      <option value="">
+                        Select budget...
+                      </option>
+
+                      {options.budgets.map(
+                        (budget) => (
+                          <option
+                            key={budget.id}
+                            value={budget.id}
+                          >
+                            {budget.budgetNumber}
+                            {' — '}
+                            {budget.name}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+
+
+                  <label>
+                    Budget Holder
+
+                    <select
+                      required
+                      disabled={
+                        !form.budgetId ||
+                        !availableHolders.length
+                      }
+                      value={
+                        form.budgetHolderUserId
+                      }
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          budgetHolderUserId:
+                            event.target.value
+                        })
+                      }
+                    >
+                      <option value="">
+                        {!form.budgetId
+                          ? 'Select a budget first...'
+                          : availableHolders.length
+                            ? 'Select budget holder...'
+                            : 'No active holder assigned'}
+                      </option>
+
+                      {availableHolders.map(
+                        (holder) => (
+                          <option
+                            key={
+                              `${selectedBudget.id}-${holder.id}-${holder.assignmentType}`
+                            }
+                            value={holder.id}
+                          >
+                            {holder.name}
+                            {' — '}
+                            {formatStatus(
+                              holder.assignmentType
+                            )}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </label>
+                </div>
+
+
+                {form.budgetId &&
+                  !availableHolders.length && (
+                    <div className="inline-warning">
+                      The selected budget has no
+                      active primary or deputy
+                      budget holder. Update the
+                      budget assignment before
+                      approving this booking.
+                    </div>
+                  )}
+
+
+                <div className="coding-approval-note">
+                  <AlertTriangle size={18}/>
+
+                  <span>
+                    Approval changes the booking
+                    from <strong>Coding Required</strong>
+                    {' '}to <strong>Authorised</strong>
+                    {' '}and records the approving
+                    user in the audit trail.
+                  </span>
+                </div>
+
+
+                <div className="coding-review-actions">
+                  <button
+                    type="submit"
+                    className="primary"
+                    disabled={
+                      saving ||
+                      !form.reasonCodeId ||
+                      !form.budgetId ||
+                      !form.budgetHolderUserId
+                    }
+                  >
+                    <CheckCircle2 size={17}/>
+
+                    {saving
+                      ? 'Approving...'
+                      : 'Approve Coding'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 
 
 function MyBookingsPage({
