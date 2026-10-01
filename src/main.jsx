@@ -29,7 +29,7 @@ const roleNav = {
   ],
   booker: [
     ['Dashboard', LayoutDashboard],
-    ['Book Transport', CarFront],
+    ['Book UHP Transport', CarFront],
     ['My Bookings', CalendarDays]
   ],
   budget_holder: [
@@ -690,7 +690,33 @@ function Stat({icon, label, value}) {
 }
 
 function Placeholder({role, active}) {
-  return <div className="placeholder card"><h1>{active}</h1><p>This screen is reserved in the MVP shell. Current role: <strong>{role.replaceAll('_',' ')}</strong>.</p><p>The next implementation step is UHP administration data entry, followed by the Book Transport workflow.</p></div>;
+  const isBooking = active === 'Book UHP Transport';
+
+  return (
+    <div className="placeholder card">
+      <h1>{active}</h1>
+
+      {isBooking ? (
+        <>
+          <p>
+            For authorised UHP-funded transport only.
+          </p>
+          <p>
+            Cash bookings remain outside this portal and continue through the normal Need-A-Cab booking channels.
+          </p>
+        </>
+      ) : (
+        <>
+          <p>
+            This screen is reserved in the MVP shell. Current role: <strong>{role.replaceAll('_',' ')}</strong>.
+          </p>
+          <p>
+            The next implementation step is UHP administration data entry, followed by the UHP account booking workflow.
+          </p>
+        </>
+      )}
+    </div>
+  );
 }
 
 createRoot(document.getElementById('root')).render(<App/>);
