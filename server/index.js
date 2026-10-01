@@ -3526,6 +3526,139 @@ function amendPortalBooking(
 }
 
 
+const AUTOCAB_WEBHOOK_EVENTS = {
+  created: {
+    eventType: 'booking_created',
+    category: 'booking'
+  },
+
+  modified: {
+    eventType: 'booking_modified',
+    category: 'booking'
+  },
+
+  accept: {
+    eventType: 'booking_dispatch_accepted',
+    category: 'booking'
+  },
+
+  arrived: {
+    eventType: 'booking_arrived',
+    category: 'booking'
+  },
+
+  pob: {
+    eventType: 'passenger_on_board',
+    category: 'booking'
+  },
+
+  late: {
+    eventType: 'booking_running_late',
+    category: 'booking'
+  },
+
+  complete: {
+    eventType: 'booking_complete',
+    category: 'booking'
+  },
+
+  cancelled: {
+    eventType: 'booking_cancelled',
+    category: 'booking'
+  },
+
+  nofare: {
+    eventType: 'no_fare',
+    category: 'booking'
+  },
+
+  invoice_created: {
+    eventType: 'invoice_created',
+    category: 'finance'
+  },
+
+  credit_note: {
+    eventType: 'credit_note_issued',
+    category: 'finance'
+  },
+
+  vehicle_position: {
+    eventType: 'vehicle_position_changed',
+    category: 'fleet'
+  },
+
+  vehicle_data: {
+    eventType: 'vehicle_data_changed',
+    category: 'fleet'
+  },
+
+  vehicle_tracks: {
+    eventType: 'vehicle_tracks_changed',
+    category: 'fleet'
+  }
+};
+
+function captureAutocabWebhook(
+  routeSuffix,
+  payload
+) {
+  const definition =
+    AUTOCAB_WEBHOOK_EVENTS[
+      routeSuffix
+    ];
+
+  if (!definition) {
+    const error = new Error(
+      'Unsupported Autocab webhook event'
+    );
+
+    error.statusCode = 404;
+
+    throw error;
+  }
+
+  const result =
+    db.prepare(`
+      INSERT INTO integration_events
+        (
+          provider,
+          direction,
+          event_type,
+          route_suffix,
+          category,
+          payload_json,
+          processing_status
+        )
+      VALUES (
+        'autocab',
+        'inbound',
+        ?,
+        ?,
+        ?,
+        ?,
+        'received'
+      )
+    `).run(
+      definition.eventType,
+      routeSuffix,
+      definition.category,
+      JSON.stringify(payload)
+    );
+
+  return {
+    received: true,
+    eventId:
+      Number(
+        result.lastInsertRowid
+      ),
+    eventType:
+      definition.eventType,
+    category:
+      definition.category
+  };
+}
+
+
 function findAutocabLinkedBooking(
   autocabBookingId,
   autocabReference
@@ -5401,6 +5534,40 @@ const server = http.createServer(async (req, res) => {
         }
       );
     }
+
+    const autocabWebhookMatch =
+      url.pathname.match(
+        /^\/api\/integrations\/autocab\/([a-z_]+)$/
+      );
+
+    if (
+      req.method === 'POST' &&
+      autocabWebhookMatch &&
+      Object.prototype.hasOwnProperty.call(
+        AUTOCAB_WEBHOOK_EVENTS,
+        autocabWebhookMatch[1]
+      )
+    ) {
+      requireAutocabWebhookSecret(
+        req
+      );
+
+      const payload =
+        await readJson(req);
+
+      const result =
+        captureAutocabWebhook(
+          autocabWebhookMatch[1],
+          payload
+        );
+
+      return sendJson(
+        res,
+        200,
+        result
+      );
+    }
+
 
     if (
       req.method === 'POST' &&
