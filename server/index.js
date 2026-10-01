@@ -767,6 +767,21 @@ function enforceApiAccess(
   */
 
   if (
+    pathname === '/api/coding-review' ||
+    pathname.startsWith(
+      '/api/coding-review/'
+    )
+  ) {
+    return requireAnyRole(
+      req,
+      [
+        'uhp_admin',
+        'nac_admin'
+      ]
+    );
+  }
+
+  if (
     pathname.startsWith(
       '/api/control/'
     )
@@ -2501,6 +2516,624 @@ function getBookingOptions(userId) {
   };
 }
 
+
+
+function listCodingReviewBookings() {
+  const bookings =
+    db.prepare(`
+      SELECT
+        b.id,
+        b.public_reference AS publicReference,
+        b.autocab_booking_id AS autocabBookingId,
+        b.autocab_reference AS autocabReference,
+        b.source,
+        b.operational_status AS operationalStatus,
+        b.financial_status AS financialStatus,
+        b.requested_pickup_at AS requestedPickupAt,
+        b.passenger_name AS passengerName,
+        b.passenger_mobile AS passengerMobile,
+        b.passenger_count AS passengerCount,
+        b.pickup_address AS pickupAddress,
+        b.destination_address AS destinationAddress,
+        b.driver_notes AS driverNotes,
+        b.internal_notes AS internalNotes,
+        b.created_at AS createdAt,
+
+        r.raw_reference AS rawReference,
+        r.parsed_reason_code AS parsedReasonCode,
+        r.parsed_budget_number AS parsedBudgetNumber,
+        r.parsed_budget_holder AS parsedBudgetHolder,
+        r.status AS reconciliationStatus,
+        r.reason_status AS reasonStatus,
+        r.budget_status AS budgetStatus,
+        r.holder_status AS holderStatus,
+        r.checked_at AS codingCheckedAt
+
+      FROM bookings b
+
+      LEFT JOIN booking_coding_reconciliation r
+        ON r.booking_id = b.id
+
+      WHERE b.financial_status =
+        'coding_required'
+
+      ORDER BY
+        b.requested_pickup_at,
+        b.id
+    `).all();
+
+  const stopsStatement =
+    db.prepare(`
+      SELECT
+        sequence_number AS sequenceNumber,
+        stop_type AS stopType,
+        address,
+        postcode,
+        notes
+      FROM booking_stops
+      WHERE booking_id = ?
+      ORDER BY sequence_number
+    `);
+
+  return bookings.map(
+    (booking) => ({
+      ...booking,
+      stops:
+        stopsStatement.all(
+          booking.id
+        )
+    })
+  );
+}
+
+
+function listCodingReviewOptions() {
+  const reasonCodes =
+    db.prepare(`
+      SELECT
+        id,
+        code,
+        description
+      FROM reason_codes
+      WHERE status = 'active'
+        AND (
+          effective_from IS NULL OR
+          effective_from <= date('now')
+        )
+        AND (
+          effective_to IS NULL OR
+          effective_to >= date('now')
+        )
+      ORDER BY code
+    `).all();
+
+  const budgets =
+    db.prepare(`
+      SELECT
+        b.id,
+        b.budget_number AS budgetNumber,
+        b.name,
+        b.department_id AS departmentId,
+        d.name AS department
+      FROM budgets b
+      LEFT JOIN departments d
+        ON d.id = b.department_id
+      WHERE b.status = 'active'
+        AND (
+          b.effective_from IS NULL OR
+          b.effective_from <= date('now')
+        )
+        AND (
+          b.effective_to IS NULL OR
+          b.effective_to >= date('now')
+        )
+      ORDER BY b.budget_number
+    `).all();
+
+  const holdersStatement =
+    db.prepare(`
+      SELECT
+        u.id,
+        u.first_name AS firstName,
+        u.last_name AS lastName,
+        ba.assignment_type AS assignmentType
+      FROM budget_assignments ba
+      JOIN users u
+        ON u.id = ba.user_id
+      WHERE ba.budget_id = ?
+        AND ba.assignment_type IN (
+          'primary_holder',
+          'deputy_holder'
+        )
+        AND ba.is_active = 1
+        AND (
+          ba.valid_from IS NULL OR
+          ba.valid_from <= date('now')
+        )
+        AND (
+          ba.valid_to IS NULL OR
+          ba.valid_to >= date('now')
+        )
+        AND u.status = 'active'
+      ORDER BY
+        CASE ba.assignment_type
+          WHEN 'primary_holder' THEN 0
+          ELSE 1
+        END,
+        u.last_name,
+        u.first_name
+    `);
+
+  return {
+    reasonCodes,
+    budgets:
+      budgets.map(
+        (budget) => ({
+          ...budget,
+          holders:
+            holdersStatement.all(
+              budget.id
+            ).map(
+              (holder) => ({
+                ...holder,
+                name:
+                  `${holder.firstName} ${holder.lastName}`
+              })
+            )
+        })
+      )
+  };
+}
+
+
+function approveBookingCoding(
+  bookingId,
+  userId,
+  payload = {}
+) {
+  if (
+    !Number.isInteger(bookingId) ||
+    bookingId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid booking id is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const budgetId =
+    Number(payload.budgetId);
+
+  const reasonCodeId =
+    Number(payload.reasonCodeId);
+
+  const budgetHolderUserId =
+    Number(payload.budgetHolderUserId);
+
+  if (
+    !Number.isInteger(budgetId) ||
+    budgetId < 1 ||
+    !Number.isInteger(reasonCodeId) ||
+    reasonCodeId < 1 ||
+    !Number.isInteger(
+      budgetHolderUserId
+    ) ||
+    budgetHolderUserId < 1
+  ) {
+    const error =
+      new Error(
+        'Budget, reason code and budget holder are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const booking =
+    db.prepare(`
+      SELECT
+        id,
+        public_reference
+          AS publicReference,
+        autocab_booking_id
+          AS autocabBookingId,
+        autocab_reference
+          AS autocabReference,
+        financial_status
+          AS financialStatus
+      FROM bookings
+      WHERE id = ?
+    `).get(
+      bookingId
+    );
+
+  if (!booking) {
+    const error =
+      new Error(
+        'Booking not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    booking.financialStatus !==
+      'coding_required'
+  ) {
+    const error =
+      new Error(
+        'This booking is not awaiting coding review'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const reasonCode =
+    db.prepare(`
+      SELECT
+        id,
+        code,
+        description
+      FROM reason_codes
+      WHERE id = ?
+        AND status = 'active'
+        AND (
+          effective_from IS NULL OR
+          effective_from <= date('now')
+        )
+        AND (
+          effective_to IS NULL OR
+          effective_to >= date('now')
+        )
+    `).get(
+      reasonCodeId
+    );
+
+  if (!reasonCode) {
+    const error =
+      new Error(
+        'The selected reason code is not active'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const budget =
+    db.prepare(`
+      SELECT
+        b.id,
+        b.budget_number
+          AS budgetNumber,
+        b.name,
+        b.department_id
+          AS departmentId,
+        d.name
+          AS departmentName
+      FROM budgets b
+      LEFT JOIN departments d
+        ON d.id = b.department_id
+      WHERE b.id = ?
+        AND b.status = 'active'
+        AND (
+          b.effective_from IS NULL OR
+          b.effective_from <= date('now')
+        )
+        AND (
+          b.effective_to IS NULL OR
+          b.effective_to >= date('now')
+        )
+    `).get(
+      budgetId
+    );
+
+  if (!budget) {
+    const error =
+      new Error(
+        'The selected budget is not active'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const holder =
+    db.prepare(`
+      SELECT
+        u.id,
+        u.first_name AS firstName,
+        u.last_name AS lastName,
+        ba.assignment_type
+          AS assignmentType
+      FROM budget_assignments ba
+      JOIN users u
+        ON u.id = ba.user_id
+      WHERE ba.budget_id = ?
+        AND ba.user_id = ?
+        AND ba.assignment_type IN (
+          'primary_holder',
+          'deputy_holder'
+        )
+        AND ba.is_active = 1
+        AND (
+          ba.valid_from IS NULL OR
+          ba.valid_from <= date('now')
+        )
+        AND (
+          ba.valid_to IS NULL OR
+          ba.valid_to >= date('now')
+        )
+        AND u.status = 'active'
+      ORDER BY
+        CASE ba.assignment_type
+          WHEN 'primary_holder' THEN 0
+          ELSE 1
+        END,
+        ba.id DESC
+      LIMIT 1
+    `).get(
+      budgetId,
+      budgetHolderUserId
+    );
+
+  if (!holder) {
+    const error =
+      new Error(
+        'The selected budget holder is not actively assigned to this budget'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const reconciliation =
+    db.prepare(`
+      SELECT
+        raw_reference AS rawReference,
+        parsed_reason_code
+          AS parsedReasonCode,
+        parsed_budget_number
+          AS parsedBudgetNumber,
+        parsed_budget_holder
+          AS parsedBudgetHolder,
+        status,
+        reason_status AS reasonStatus,
+        budget_status AS budgetStatus,
+        holder_status AS holderStatus
+      FROM booking_coding_reconciliation
+      WHERE booking_id = ?
+    `).get(
+      bookingId
+    ) || null;
+
+  const portalSettings =
+    db.prepare(`
+      SELECT
+        autocab_customer_id
+          AS autocabCustomerId
+      FROM portal_settings
+      WHERE id = 1
+    `).get();
+
+  const holderName =
+    `${holder.firstName} ${holder.lastName}`;
+
+  const oldState = {
+    financialStatus:
+      booking.financialStatus,
+    reconciliation
+  };
+
+  const newState = {
+    financialStatus:
+      'authorised',
+    budgetId:
+      budget.id,
+    budgetNumber:
+      budget.budgetNumber,
+    reasonCodeId:
+      reasonCode.id,
+    reasonCode:
+      reasonCode.code,
+    budgetHolderUserId:
+      holder.id,
+    budgetHolder:
+      holderName,
+    departmentId:
+      budget.departmentId || null
+  };
+
+  db.exec('BEGIN');
+
+  try {
+    const update =
+      db.prepare(`
+        UPDATE bookings
+        SET
+          budget_id = ?,
+          reason_code_id = ?,
+          budget_holder_user_id = ?,
+          department_id = ?,
+          financial_status =
+            'authorised',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND financial_status =
+            'coding_required'
+      `).run(
+        budget.id,
+        reasonCode.id,
+        holder.id,
+        budget.departmentId || null,
+        bookingId
+      );
+
+    if (update.changes !== 1) {
+      const error =
+        new Error(
+          'This booking coding status has already changed'
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    db.prepare(`
+      INSERT INTO booking_account_snapshot
+        (
+          booking_id,
+          customer_id,
+          budget_id,
+          budget_number,
+          budget_name,
+          reason_code_id,
+          reason_code,
+          reason_description,
+          budget_holder_user_id,
+          budget_holder_name,
+          department_id,
+          department_name,
+          captured_at
+        )
+      VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        CURRENT_TIMESTAMP
+      )
+
+      ON CONFLICT(booking_id)
+      DO UPDATE SET
+        customer_id =
+          excluded.customer_id,
+        budget_id =
+          excluded.budget_id,
+        budget_number =
+          excluded.budget_number,
+        budget_name =
+          excluded.budget_name,
+        reason_code_id =
+          excluded.reason_code_id,
+        reason_code =
+          excluded.reason_code,
+        reason_description =
+          excluded.reason_description,
+        budget_holder_user_id =
+          excluded.budget_holder_user_id,
+        budget_holder_name =
+          excluded.budget_holder_name,
+        department_id =
+          excluded.department_id,
+        department_name =
+          excluded.department_name,
+        captured_at =
+          CURRENT_TIMESTAMP
+    `).run(
+      bookingId,
+      portalSettings?.autocabCustomerId ||
+        null,
+      budget.id,
+      budget.budgetNumber,
+      budget.name,
+      reasonCode.id,
+      reasonCode.code,
+      reasonCode.description,
+      holder.id,
+      holderName,
+      budget.departmentId || null,
+      budget.departmentName || null
+    );
+
+    db.prepare(`
+      INSERT INTO booking_events
+        (
+          booking_id,
+          event_type,
+          event_source,
+          old_status,
+          new_status,
+          user_id,
+          notes,
+          raw_payload
+        )
+      VALUES (
+        ?,
+        'coding_approved',
+        'portal',
+        'coding_required',
+        'authorised',
+        ?,
+        ?,
+        ?
+      )
+    `).run(
+      bookingId,
+      userId,
+      'Financial coding approved after manual review',
+      JSON.stringify({
+        old:
+          oldState,
+        new:
+          newState
+      })
+    );
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType: 'booking',
+      entityId: bookingId,
+      fieldName:
+        'financial_coding',
+      oldValue:
+        JSON.stringify(
+          oldState
+        ),
+      newValue:
+        JSON.stringify(
+          newState
+        ),
+      source: 'portal',
+      actorUserId: userId
+    });
+
+    writeAudit({
+      action:
+        'STATUS_CHANGE',
+      entityType:
+        'booking',
+      entityId:
+        bookingId,
+      fieldName:
+        'financial_status',
+      oldValue:
+        'coding_required',
+      newValue:
+        'authorised',
+      source:
+        'portal',
+      actorUserId:
+        userId
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      booking:
+        getBookingById(
+          bookingId
+        ),
+      coding:
+        newState
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 
 function listOperationalBookings() {
@@ -6963,6 +7596,75 @@ const server = http.createServer(async (req, res) => {
           )
       });
     }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/coding-review'
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          [
+            'uhp_admin',
+            'nac_admin'
+          ]
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          bookings:
+            listCodingReviewBookings(),
+          options:
+            listCodingReviewOptions(),
+          user:
+            auth.user
+        }
+      );
+    }
+
+    const codingReviewApproveMatch =
+      url.pathname.match(
+        /^\/api\/coding-review\/(\d+)\/approve$/
+      );
+
+    if (
+      req.method === 'POST' &&
+      codingReviewApproveMatch
+    ) {
+      const payload =
+        await readJson(req);
+
+      const bookingId =
+        Number(
+          codingReviewApproveMatch[1]
+        );
+
+      const auth =
+        requireAnyRole(
+          req,
+          [
+            'uhp_admin',
+            'nac_admin'
+          ]
+        );
+
+      const result =
+        approveBookingCoding(
+          bookingId,
+          auth.user.id,
+          payload
+        );
+
+      return sendJson(
+        res,
+        200,
+        result
+      );
+    }
+
 
     if (
       req.method === 'GET' &&
