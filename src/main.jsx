@@ -93,7 +93,7 @@ function App() {
         </header>
 
         <section className="content">
-          {role === 'uhp_admin' && active === 'Users' ? <UsersPage/> : <Placeholder role={role} active={active}/>} 
+          {role === 'uhp_admin' && active === 'Users' ? <UsersPage/> : <Placeholder role={role} active={active}/>}
         </section>
       </main>
     </div>
