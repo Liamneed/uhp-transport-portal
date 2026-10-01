@@ -94,6 +94,8 @@ function App() {
             <ReasonCodesPage/>
           ) : role === 'booker' && active === 'Book UHP Transport' ? (
             <BookTransportPage/>
+          ) : role === 'booker' && active === 'My Bookings' ? (
+            <MyBookingsPage/>
           ) : (
             <Placeholder role={role} active={active}/>
           )}
@@ -687,6 +689,453 @@ function UsersPage() {
 }
 
 
+
+
+function MyBookingsPage() {
+  const bookingUserId = 1;
+
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [expandedId, setExpandedId] = useState(null);
+
+  async function loadBookings() {
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/my-bookings?userId=${bookingUserId}`
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || 'Unable to load bookings'
+        );
+      }
+
+      setBookings(data.bookings ?? []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load bookings'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadBookings();
+  }, []);
+
+  const filteredBookings = useMemo(() => {
+    const term = query.trim().toLowerCase();
+
+    return bookings.filter((booking) => {
+      const matchesStatus =
+        statusFilter === 'all' ||
+        booking.operationalStatus === statusFilter;
+
+      const matchesQuery =
+        !term ||
+        [
+          booking.publicReference,
+          booking.passengerName,
+          booking.pickupAddress,
+          booking.destinationAddress,
+          booking.budgetNumber,
+          booking.reasonCode,
+          booking.reasonDescription
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .includes(term);
+
+      return matchesStatus && matchesQuery;
+    });
+  }, [bookings, query, statusFilter]);
+
+  const stats = useMemo(() => ({
+    total: bookings.length,
+    draft: bookings.filter(
+      (booking) =>
+        booking.operationalStatus === 'draft'
+    ).length,
+    booked: bookings.filter(
+      (booking) =>
+        booking.operationalStatus === 'booked' ||
+        booking.operationalStatus === 'confirmed'
+    ).length,
+    completed: bookings.filter(
+      (booking) =>
+        booking.operationalStatus === 'completed'
+    ).length
+  }), [bookings]);
+
+  function formatPickup(value) {
+    if (!value) return '—';
+
+    return value
+      .replace('T', ' ')
+      .slice(0, 16);
+  }
+
+  function friendlyBookingStatus(status) {
+    const map = {
+      draft: 'Request Recorded',
+      submitting: 'Sending to Dispatch',
+      booked: 'Booked',
+      confirmed: 'Confirmed',
+      driver_allocated: 'Driver Allocated',
+      driver_en_route: 'Driver En Route',
+      driver_arrived: 'Driver Arrived',
+      passenger_on_board: 'Passenger On Board',
+      completed: 'Completed',
+      cancelled: 'Cancelled',
+      no_show: 'No Show',
+      failed: 'Needs Attention',
+      requires_review: 'Needs Review'
+    };
+
+    return map[status] || formatStatus(status);
+  }
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading bookings...
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>My Bookings</h1>
+          <p>
+            View UHP transport requests you have created.
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="stats-grid">
+        <Stat
+          icon={<CalendarDays/>}
+          label="Total"
+          value={stats.total}
+        />
+
+        <Stat
+          icon={<Clock3/>}
+          label="Request Recorded"
+          value={stats.draft}
+        />
+
+        <Stat
+          icon={<CheckCircle2/>}
+          label="Booked / Confirmed"
+          value={stats.booked}
+        />
+
+        <Stat
+          icon={<UsersRound/>}
+          label="Completed"
+          value={stats.completed}
+        />
+      </div>
+
+      <div className="card">
+        <div className="toolbar">
+          <div className="search compact">
+            <Search size={17}/>
+
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search bookings..."
+            />
+          </div>
+
+          <select
+            value={statusFilter}
+            onChange={(e) =>
+              setStatusFilter(e.target.value)
+            }
+          >
+            <option value="all">
+              All statuses
+            </option>
+
+            <option value="draft">
+              Request Recorded
+            </option>
+
+            <option value="booked">
+              Booked
+            </option>
+
+            <option value="confirmed">
+              Confirmed
+            </option>
+
+            <option value="completed">
+              Completed
+            </option>
+
+            <option value="cancelled">
+              Cancelled
+            </option>
+          </select>
+        </div>
+
+        {filteredBookings.length === 0 ? (
+          <div className="empty-bookings">
+            <CalendarDays size={30}/>
+
+            <strong>No bookings found</strong>
+
+            <span>
+              New UHP transport requests will appear here.
+            </span>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="bookings-table">
+              <thead>
+                <tr>
+                  <th>Date / Time</th>
+                  <th>Reference</th>
+                  <th>Passenger</th>
+                  <th>Journey</th>
+                  <th>Budget</th>
+                  <th>Reason</th>
+                  <th>Status</th>
+                  <th/>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredBookings.map((booking) => {
+                  const isExpanded =
+                    expandedId === booking.id;
+
+                  const viaStops =
+                    booking.stops?.filter(
+                      (stop) =>
+                        stop.stopType === 'via'
+                    ) ?? [];
+
+                  return (
+                    <React.Fragment key={booking.id}>
+                      <tr>
+                        <td>
+                          <strong>
+                            {formatPickup(
+                              booking.requestedPickupAt
+                            )}
+                          </strong>
+
+                          <small>
+                            Created {booking.createdAt}
+                          </small>
+                        </td>
+
+                        <td>
+                          <strong>
+                            {booking.publicReference}
+                          </strong>
+                        </td>
+
+                        <td>
+                          <strong>
+                            {booking.passengerName}
+                          </strong>
+
+                          <small>
+                            {booking.passengerMobile}
+                          </small>
+                        </td>
+
+                        <td className="journey-cell">
+                          <strong>
+                            {booking.pickupAddress}
+                          </strong>
+
+                          <small>
+                            to {booking.destinationAddress}
+                          </small>
+                        </td>
+
+                        <td>
+                          <strong>
+                            {booking.budgetNumber}
+                          </strong>
+
+                          <small>
+                            {booking.budgetName}
+                          </small>
+                        </td>
+
+                        <td>
+                          <strong>
+                            {booking.reasonCode}
+                          </strong>
+
+                          <small>
+                            {booking.reasonDescription}
+                          </small>
+                        </td>
+
+                        <td>
+                          <span
+                            className={`badge ${booking.operationalStatus}`}
+                          >
+                            {friendlyBookingStatus(
+                              booking.operationalStatus
+                            )}
+                          </span>
+                        </td>
+
+                        <td>
+                          <button
+                            type="button"
+                            className="text-action"
+                            onClick={() =>
+                              setExpandedId(
+                                isExpanded
+                                  ? null
+                                  : booking.id
+                              )
+                            }
+                          >
+                            {isExpanded
+                              ? 'Hide'
+                              : 'Details'}
+                          </button>
+                        </td>
+                      </tr>
+
+                      {isExpanded && (
+                        <tr className="booking-detail-row">
+                          <td colSpan="8">
+                            <div className="booking-detail-panel">
+                              <div className="booking-detail-grid">
+                                <div>
+                                  <small>
+                                    Passenger Count
+                                  </small>
+
+                                  <strong>
+                                    {booking.passengerCount}
+                                  </strong>
+                                </div>
+
+                                <div>
+                                  <small>
+                                    Budget Holder
+                                  </small>
+
+                                  <strong>
+                                    {booking.budgetHolder}
+                                  </strong>
+                                </div>
+
+                                <div>
+                                  <small>
+                                    Financial Status
+                                  </small>
+
+                                  <strong>
+                                    {formatStatus(
+                                      booking.financialStatus
+                                    )}
+                                  </strong>
+                                </div>
+
+                                <div>
+                                  <small>
+                                    Driver Notes
+                                  </small>
+
+                                  <strong>
+                                    {booking.driverNotes || '—'}
+                                  </strong>
+                                </div>
+                              </div>
+
+                              <div className="booking-route-detail">
+                                <h4>Journey</h4>
+
+                                {booking.stops?.map(
+                                  (stop) => (
+                                    <div
+                                      className="detail-stop"
+                                      key={
+                                        `${booking.id}-${stop.sequenceNumber}`
+                                      }
+                                    >
+                                      <span
+                                        className={`detail-stop-dot ${stop.stopType}`}
+                                      />
+
+                                      <div>
+                                        <small>
+                                          {stop.stopType === 'pickup'
+                                            ? 'Pickup'
+                                            : stop.stopType === 'destination'
+                                              ? 'Destination'
+                                              : `Via ${stop.sequenceNumber}`}
+                                        </small>
+
+                                        <strong>
+                                          {stop.address}
+                                        </strong>
+
+                                        {stop.postcode && (
+                                          <span>
+                                            {stop.postcode}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
+                                )}
+
+                                {viaStops.length === 0 && (
+                                  <small className="no-vias">
+                                    Direct journey — no vias.
+                                  </small>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
 
 function BookTransportPage() {
   const bookingUserId = 1;

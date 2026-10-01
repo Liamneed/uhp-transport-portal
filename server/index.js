@@ -1503,6 +1503,85 @@ function getBookingOptions(userId) {
   };
 }
 
+
+function listBookingsForUser(userId) {
+  const user = db.prepare(`
+    SELECT
+      id,
+      status
+    FROM users
+    WHERE id = ?
+  `).get(userId);
+
+  if (!user || user.status !== 'active') {
+    const error = new Error(
+      'Booking user must be an active portal user'
+    );
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const bookings = db.prepare(`
+    SELECT
+      b.id,
+      b.public_reference AS publicReference,
+      b.operational_status AS operationalStatus,
+      b.financial_status AS financialStatus,
+      b.requested_pickup_at AS requestedPickupAt,
+      b.passenger_name AS passengerName,
+      b.passenger_mobile AS passengerMobile,
+      b.passenger_count AS passengerCount,
+      b.pickup_address AS pickupAddress,
+      b.pickup_postcode AS pickupPostcode,
+      b.destination_address AS destinationAddress,
+      b.destination_postcode AS destinationPostcode,
+      b.driver_notes AS driverNotes,
+      b.created_at AS createdAt,
+
+      bu.budget_number AS budgetNumber,
+      bu.name AS budgetName,
+
+      rc.code AS reasonCode,
+      rc.description AS reasonDescription,
+
+      holder.first_name || ' ' || holder.last_name AS budgetHolder
+
+    FROM bookings b
+
+    JOIN budgets bu
+      ON bu.id = b.budget_id
+
+    JOIN reason_codes rc
+      ON rc.id = b.reason_code_id
+
+    JOIN users holder
+      ON holder.id = b.budget_holder_user_id
+
+    WHERE b.created_by_user_id = ?
+
+    ORDER BY
+      datetime(b.requested_pickup_at) DESC,
+      b.id DESC
+  `).all(userId);
+
+  const stopsStatement = db.prepare(`
+    SELECT
+      sequence_number AS sequenceNumber,
+      stop_type AS stopType,
+      address,
+      postcode,
+      notes
+    FROM booking_stops
+    WHERE booking_id = ?
+    ORDER BY sequence_number
+  `);
+
+  return bookings.map((booking) => ({
+    ...booking,
+    stops: stopsStatement.all(booking.id)
+  }));
+}
+
 function getBookingById(bookingId) {
   return db.prepare(`
     SELECT
@@ -2091,6 +2170,20 @@ const server = http.createServer(async (req, res) => {
         200,
         getBookingOptions(userId)
       );
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/my-bookings') {
+      const userId = Number(url.searchParams.get('userId'));
+
+      if (!Number.isInteger(userId) || userId < 1) {
+        const error = new Error('A valid userId is required');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return sendJson(res, 200, {
+        bookings: listBookingsForUser(userId)
+      });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/bookings') {
