@@ -1316,6 +1316,7 @@ function NacControlPage() {
     [bookings]
   );
 
+
   if (loading) {
     return (
       <div className="card state-panel">
@@ -2208,6 +2209,18 @@ function MyBookingsPage({
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
 
+  const [financialActionId, setFinancialActionId] =
+    useState(null);
+
+  const [disputeBooking, setDisputeBooking] =
+    useState(null);
+
+  const [disputeReason, setDisputeReason] =
+    useState('');
+
+  const [financialActionError, setFinancialActionError] =
+    useState('');
+
   async function loadBookings() {
     setLoading(true);
     setError('');
@@ -2646,6 +2659,129 @@ function MyBookingsPage({
     }
   }
 
+  async function approveFinancialBooking(
+    booking
+  ) {
+    setFinancialActionId(booking.id);
+    setFinancialActionError('');
+    setError('');
+    setNotice('');
+
+    try {
+      const response = await apiFetch(
+        `${API_BASE}/api/bookings/${booking.id}/approve`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          'Unable to approve booking'
+        );
+      }
+
+      await loadBookings();
+
+      setNotice(
+        `${booking.publicReference} has been approved for invoice.`
+      );
+
+      setExpandedId(booking.id);
+    } catch (err) {
+      setFinancialActionError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to approve booking'
+      );
+    } finally {
+      setFinancialActionId(null);
+    }
+  }
+
+  function openDisputeFinancialBooking(
+    booking
+  ) {
+    setDisputeBooking(booking);
+    setDisputeReason('');
+    setFinancialActionError('');
+    setError('');
+    setNotice('');
+  }
+
+  function closeDisputeFinancialBooking() {
+    if (financialActionId) return;
+
+    setDisputeBooking(null);
+    setDisputeReason('');
+  }
+
+  async function submitFinancialDispute(
+    event
+  ) {
+    event.preventDefault();
+
+    if (!disputeBooking) return;
+
+    setFinancialActionId(
+      disputeBooking.id
+    );
+
+    setFinancialActionError('');
+    setError('');
+    setNotice('');
+
+    try {
+      const response = await apiFetch(
+        `${API_BASE}/api/bookings/${disputeBooking.id}/dispute`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            reason: disputeReason
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          'Unable to dispute booking'
+        );
+      }
+
+      const reference =
+        disputeBooking.publicReference;
+
+      setDisputeBooking(null);
+      setDisputeReason('');
+
+      await loadBookings();
+
+      setNotice(
+        `${reference} has been marked as disputed.`
+      );
+    } catch (err) {
+      setFinancialActionError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to dispute booking'
+      );
+    } finally {
+      setFinancialActionId(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="card state-panel">
@@ -2681,6 +2817,12 @@ function MyBookingsPage({
       {notice && (
         <div className="notice success">
           {notice}
+        </div>
+      )}
+
+      {financialActionError && (
+        <div className="notice error">
+          {financialActionError}
         </div>
       )}
 
@@ -2997,6 +3139,59 @@ function MyBookingsPage({
                                   )}
                                 </div>
 
+                                {budgetScope &&
+                                  booking.operationalStatus === 'completed' &&
+                                  booking.financialStatus === 'pending_review' && (
+                                    <div className="financial-review-actions">
+                                      <div className="financial-review-copy">
+                                        <strong>
+                                          Financial review required
+                                        </strong>
+
+                                        <span>
+                                          Confirm this completed journey is correct before it proceeds to invoicing, or dispute it for review.
+                                        </span>
+                                      </div>
+
+                                      <div className="financial-review-buttons">
+                                        <button
+                                          type="button"
+                                          className="secondary"
+                                          disabled={
+                                            financialActionId ===
+                                            booking.id
+                                          }
+                                          onClick={() =>
+                                            openDisputeFinancialBooking(
+                                              booking
+                                            )
+                                          }
+                                        >
+                                          Dispute
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          className="financial-approve-button"
+                                          disabled={
+                                            financialActionId ===
+                                            booking.id
+                                          }
+                                          onClick={() =>
+                                            approveFinancialBooking(
+                                              booking
+                                            )
+                                          }
+                                        >
+                                          {financialActionId ===
+                                          booking.id
+                                            ? 'Processing...'
+                                            : 'Approve for Invoice'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                )}
+
                                 {canManage && (
                                   <div className="booking-actions">
                                     <button
@@ -3045,6 +3240,99 @@ function MyBookingsPage({
           </div>
         )}
       </div>
+
+      {disputeBooking && (
+        <div className="modal-backdrop">
+          <div className="modal-card modal-card-small">
+            <div className="modal-header">
+              <div>
+                <h2>Dispute Booking</h2>
+
+                <p>
+                  {disputeBooking.publicReference}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={
+                  closeDisputeFinancialBooking
+                }
+                disabled={
+                  financialActionId ===
+                  disputeBooking.id
+                }
+              >
+                ×
+              </button>
+            </div>
+
+            <form
+              onSubmit={
+                submitFinancialDispute
+              }
+            >
+              <div className="cancel-warning">
+                This booking will be held from invoicing until the dispute has been reviewed.
+              </div>
+
+              <label>
+                Dispute reason
+
+                <textarea
+                  rows="5"
+                  value={disputeReason}
+                  onChange={(event) =>
+                    setDisputeReason(
+                      event.target.value
+                    )
+                  }
+                  placeholder="Explain what needs to be reviewed..."
+                  required
+                />
+              </label>
+
+              {financialActionError && (
+                <div className="notice error">
+                  {financialActionError}
+                </div>
+              )}
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={
+                    closeDisputeFinancialBooking
+                  }
+                  disabled={
+                    financialActionId ===
+                    disputeBooking.id
+                  }
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="danger-button"
+                  disabled={
+                    financialActionId ===
+                      disputeBooking.id ||
+                    !disputeReason.trim()
+                  }
+                >
+                  {financialActionId ===
+                  disputeBooking.id
+                    ? 'Submitting...'
+                    : 'Submit Dispute'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {editingBooking && editForm && (
         <div className="modal-backdrop">

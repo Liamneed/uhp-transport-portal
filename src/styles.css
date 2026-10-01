@@ -1493,3 +1493,80 @@ button:disabled {
     display: none;
   }
 }
+
+
+.financial-review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #d9e8df;
+  border-radius: 10px;
+  background: #f7fbf8;
+}
+
+.financial-review-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.financial-review-copy strong {
+  color: #325b46;
+  font-size: 13px;
+}
+
+.financial-review-copy span {
+  color: #748578;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.financial-review-buttons {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.financial-approve-button {
+  min-height: 40px;
+  padding: 9px 15px;
+  border: 0;
+  border-radius: 9px;
+  background: #20734c;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.financial-approve-button:hover {
+  background: #185d3c;
+}
+
+.financial-approve-button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.modal-card-small textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+@media (max-width: 700px) {
+  .financial-review-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .financial-review-buttons {
+    flex-direction: column;
+  }
+
+  .financial-review-buttons button {
+    width: 100%;
+  }
+}

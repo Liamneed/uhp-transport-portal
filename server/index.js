@@ -1319,11 +1319,13 @@ function writeAudit({
   fieldName = null,
   oldValue = null,
   newValue = null,
-  source = 'uhp_admin'
+  source = 'uhp_admin',
+  actorUserId = null
 }) {
   db.prepare(`
     INSERT INTO audit_log
       (
+        actor_user_id,
         action,
         entity_type,
         entity_id,
@@ -1332,8 +1334,9 @@ function writeAudit({
         new_value,
         source
       )
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
+    actorUserId,
     action,
     entityType,
     String(entityId),
@@ -3371,6 +3374,205 @@ function amendPortalBooking(
   }
 }
 
+
+function updateBudgetBookingFinancialStatus(
+  bookingId,
+  userId,
+  action,
+  payload = {}
+) {
+  const booking = db.prepare(`
+    SELECT
+      id,
+      public_reference AS publicReference,
+      budget_id AS budgetId,
+      operational_status AS operationalStatus,
+      financial_status AS financialStatus
+    FROM bookings
+    WHERE id = ?
+  `).get(bookingId);
+
+  if (!booking) {
+    const error = new Error('Booking not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    booking.operationalStatus !== 'completed'
+  ) {
+    const error = new Error(
+      'Only completed bookings can be financially reviewed'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (
+    booking.financialStatus !== 'pending_review'
+  ) {
+    const error = new Error(
+      'This booking is not awaiting financial review'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const permission = db.prepare(`
+    SELECT
+      can_approve AS canApprove,
+      can_dispute AS canDispute
+
+    FROM user_budget_access
+
+    WHERE user_id = ?
+      AND budget_id = ?
+      AND can_view = 1
+
+      AND (
+        valid_from IS NULL OR
+        valid_from <= date('now')
+      )
+
+      AND (
+        valid_to IS NULL OR
+        valid_to >= date('now')
+      )
+
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(
+    userId,
+    booking.budgetId
+  );
+
+  if (!permission) {
+    const error = new Error(
+      'You are not authorised to review this booking'
+    );
+    error.statusCode = 403;
+    throw error;
+  }
+
+  let nextStatus;
+  let eventType;
+  let notes;
+
+  if (action === 'approve') {
+    if (!permission.canApprove) {
+      const error = new Error(
+        'You are not authorised to approve this budget'
+      );
+      error.statusCode = 403;
+      throw error;
+    }
+
+    nextStatus = 'approved_for_invoice';
+    eventType = 'financial_approved';
+    notes =
+      'Approved for invoice by budget holder';
+  } else if (action === 'dispute') {
+    if (!permission.canDispute) {
+      const error = new Error(
+        'You are not authorised to dispute this budget'
+      );
+      error.statusCode = 403;
+      throw error;
+    }
+
+    const reason = String(
+      payload.reason || ''
+    ).trim();
+
+    if (!reason) {
+      const error = new Error(
+        'Dispute reason is required'
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    nextStatus = 'disputed';
+    eventType = 'financial_disputed';
+    notes = reason;
+  } else {
+    const error = new Error(
+      'Financial action is not valid'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    const result = db.prepare(`
+      UPDATE bookings
+      SET
+        financial_status = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND financial_status = 'pending_review'
+    `).run(
+      nextStatus,
+      bookingId
+    );
+
+    if (result.changes !== 1) {
+      const error = new Error(
+        'This booking financial status has already changed'
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    db.prepare(`
+      INSERT INTO booking_events
+        (
+          booking_id,
+          event_type,
+          event_source,
+          old_status,
+          new_status,
+          user_id,
+          notes
+        )
+      VALUES (?, ?, 'portal', ?, ?, ?, ?)
+    `).run(
+      bookingId,
+      eventType,
+      booking.financialStatus,
+      nextStatus,
+      userId,
+      notes
+    );
+
+    writeAudit({
+      action: 'STATUS_CHANGE',
+      entityType: 'booking',
+      entityId: bookingId,
+      fieldName: 'financial_status',
+      oldValue: booking.financialStatus,
+      newValue: nextStatus,
+      source: 'portal',
+      actorUserId: userId
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      id: booking.id,
+      publicReference:
+        booking.publicReference,
+      financialStatus: nextStatus
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
 function cancelPortalBooking(
   bookingId,
   userId,
@@ -4106,6 +4308,68 @@ const server = http.createServer(async (req, res) => {
     const bookingAmendMatch = url.pathname.match(
       /^\/api\/bookings\/(\d+)$/
     );
+
+    const bookingApproveMatch =
+      url.pathname.match(
+        /^\/api\/bookings\/(\d+)\/approve$/
+      );
+
+    if (
+      req.method === 'POST' &&
+      bookingApproveMatch
+    ) {
+      const bookingId =
+        Number(bookingApproveMatch[1]);
+
+      const auth = requireAnyRole(
+        req,
+        ['budget_holder']
+      );
+
+      const booking =
+        updateBudgetBookingFinancialStatus(
+          bookingId,
+          auth.user.id,
+          'approve'
+        );
+
+      return sendJson(res, 200, {
+        booking
+      });
+    }
+
+    const bookingDisputeMatch =
+      url.pathname.match(
+        /^\/api\/bookings\/(\d+)\/dispute$/
+      );
+
+    if (
+      req.method === 'POST' &&
+      bookingDisputeMatch
+    ) {
+      const payload =
+        await readJson(req);
+
+      const bookingId =
+        Number(bookingDisputeMatch[1]);
+
+      const auth = requireAnyRole(
+        req,
+        ['budget_holder']
+      );
+
+      const booking =
+        updateBudgetBookingFinancialStatus(
+          bookingId,
+          auth.user.id,
+          'dispute',
+          payload
+        );
+
+      return sendJson(res, 200, {
+        booking
+      });
+    }
 
     // owned-booking-detail route
     if (req.method === 'GET' && bookingAmendMatch) {
