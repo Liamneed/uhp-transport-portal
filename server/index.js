@@ -3,6 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import {
+  createHash,
+  randomBytes,
+  randomInt,
+  scryptSync,
+  timingSafeEqual
+} from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -291,18 +298,755 @@ function seedReferenceData() {
 runMigrations();
 seedReferenceData();
 
-function sendJson(res, statusCode, payload) {
+function sendJson(
+  res,
+  statusCode,
+  payload,
+  extraHeaders = {}
+) {
   const body = JSON.stringify(payload);
 
   res.writeHead(statusCode, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': 'http://localhost:5173',
-    'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Cache-Control': 'no-store'
+    'Content-Type':
+      'application/json; charset=utf-8',
+
+    'Access-Control-Allow-Origin':
+      'http://localhost:5173',
+
+    'Access-Control-Allow-Methods':
+      'GET,POST,PATCH,OPTIONS',
+
+    'Access-Control-Allow-Headers':
+      'Content-Type',
+
+    'Access-Control-Allow-Credentials':
+      'true',
+
+    'Cache-Control':
+      'no-store',
+
+    ...extraHeaders
   });
 
   res.end(body);
+}
+
+function parseCookies(req) {
+  const header = String(
+    req.headers.cookie || ''
+  );
+
+  if (!header) return {};
+
+  return header
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((cookies, part) => {
+      const index = part.indexOf('=');
+
+      if (index === -1) {
+        return cookies;
+      }
+
+      const key =
+        part.slice(0, index).trim();
+
+      const value =
+        part.slice(index + 1).trim();
+
+      cookies[key] =
+        decodeURIComponent(value);
+
+      return cookies;
+    }, {});
+}
+
+function hashSessionToken(token) {
+  return createHash('sha256')
+    .update(token)
+    .digest('hex');
+}
+
+function hashOtp(code, salt) {
+  return scryptSync(
+    String(code),
+    salt,
+    32
+  ).toString('hex');
+}
+
+function safeHashEqual(left, right) {
+  try {
+    const leftBuffer =
+      Buffer.from(left, 'hex');
+
+    const rightBuffer =
+      Buffer.from(right, 'hex');
+
+    if (
+      leftBuffer.length !==
+      rightBuffer.length
+    ) {
+      return false;
+    }
+
+    return timingSafeEqual(
+      leftBuffer,
+      rightBuffer
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getRequestIp(req) {
+  const forwarded =
+    String(
+      req.headers['x-forwarded-for'] || ''
+    )
+      .split(',')[0]
+      .trim();
+
+  return (
+    forwarded ||
+    req.socket.remoteAddress ||
+    null
+  );
+}
+
+function buildSessionCookie(token) {
+  const parts = [
+    `uhp_session=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=28800'
+  ];
+
+  if (
+    process.env.NODE_ENV === 'production'
+  ) {
+    parts.push('Secure');
+  }
+
+  return parts.join('; ');
+}
+
+function buildExpiredSessionCookie() {
+  const parts = [
+    'uhp_session=',
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=0'
+  ];
+
+  if (
+    process.env.NODE_ENV === 'production'
+  ) {
+    parts.push('Secure');
+  }
+
+  return parts.join('; ');
+}
+
+function getAuthUserById(userId) {
+  const user = db.prepare(`
+    SELECT
+      u.id,
+      u.first_name AS firstName,
+      u.last_name AS lastName,
+      u.email,
+      u.mobile,
+      u.status,
+      u.department_id AS departmentId,
+      d.name AS department,
+      u.job_title AS jobTitle,
+      u.email_verified_at AS emailVerifiedAt,
+      u.last_login_at AS lastLoginAt
+    FROM users u
+    LEFT JOIN departments d
+      ON d.id = u.department_id
+    WHERE u.id = ?
+  `).get(userId);
+
+  if (!user) return null;
+
+  const roles = db.prepare(`
+    SELECT
+      r.id,
+      r.code,
+      r.name
+    FROM user_roles ur
+    JOIN roles r
+      ON r.id = ur.role_id
+    WHERE ur.user_id = ?
+    ORDER BY r.id
+  `).all(userId);
+
+  return {
+    ...user,
+    roles
+  };
+}
+
+function getAuthSession(req) {
+  const cookies = parseCookies(req);
+
+  const token =
+    cookies.uhp_session;
+
+  if (!token) {
+    return null;
+  }
+
+  const sessionHash =
+    hashSessionToken(token);
+
+  const session = db.prepare(`
+    SELECT
+      id,
+      user_id AS userId,
+      expires_at AS expiresAt
+    FROM auth_sessions
+    WHERE session_hash = ?
+      AND revoked_at IS NULL
+      AND expires_at > CURRENT_TIMESTAMP
+    LIMIT 1
+  `).get(sessionHash);
+
+  if (!session) {
+    return null;
+  }
+
+  const user =
+    getAuthUserById(session.userId);
+
+  if (
+    !user ||
+    user.status !== 'active'
+  ) {
+    return null;
+  }
+
+  db.prepare(`
+    UPDATE auth_sessions
+    SET last_seen_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(session.id);
+
+  return {
+    sessionId: session.id,
+    user
+  };
+}
+
+function requireAuth(req) {
+  const auth = getAuthSession(req);
+
+  if (!auth) {
+    const error = new Error(
+      'Authentication required'
+    );
+
+    error.statusCode = 401;
+
+    throw error;
+  }
+
+  return auth;
+}
+
+function userHasAnyRole(
+  user,
+  allowedRoles
+) {
+  const roleCodes = new Set(
+    user.roles.map(
+      (role) => role.code
+    )
+  );
+
+  return allowedRoles.some(
+    (role) => roleCodes.has(role)
+  );
+}
+
+function requireAnyRole(
+  req,
+  allowedRoles
+) {
+  const auth = requireAuth(req);
+
+  if (
+    !userHasAnyRole(
+      auth.user,
+      allowedRoles
+    )
+  ) {
+    const error = new Error(
+      'You do not have permission to access this resource'
+    );
+
+    error.statusCode = 403;
+
+    throw error;
+  }
+
+  return auth;
+}
+
+function requestLoginCode(
+  email,
+  req
+) {
+  const normalisedEmail =
+    String(email || '')
+      .trim()
+      .toLowerCase();
+
+  if (
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+      normalisedEmail
+    )
+  ) {
+    const error = new Error(
+      'Enter a valid email address'
+    );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const user = db.prepare(`
+    SELECT
+      id,
+      first_name AS firstName,
+      last_name AS lastName,
+      email,
+      status
+    FROM users
+    WHERE email = ? COLLATE NOCASE
+  `).get(normalisedEmail);
+
+  if (!user) {
+    const error = new Error(
+      'No portal account exists for this email address'
+    );
+
+    error.statusCode = 404;
+
+    throw error;
+  }
+
+  if (user.status === 'suspended') {
+    const error = new Error(
+      'This portal account is suspended'
+    );
+
+    error.statusCode = 403;
+
+    throw error;
+  }
+
+  if (user.status === 'archived') {
+    const error = new Error(
+      'This portal account is no longer active'
+    );
+
+    error.statusCode = 403;
+
+    throw error;
+  }
+
+  if (
+    !['active', 'invited'].includes(
+      user.status
+    )
+  ) {
+    const error = new Error(
+      'This account cannot sign in'
+    );
+
+    error.statusCode = 403;
+
+    throw error;
+  }
+
+  db.prepare(`
+    UPDATE auth_login_challenges
+    SET consumed_at = CURRENT_TIMESTAMP
+    WHERE user_id = ?
+      AND consumed_at IS NULL
+  `).run(user.id);
+
+  db.prepare(`
+    DELETE FROM auth_login_challenges
+    WHERE expires_at <= CURRENT_TIMESTAMP
+  `).run();
+
+  db.prepare(`
+    DELETE FROM auth_sessions
+    WHERE expires_at <= CURRENT_TIMESTAMP
+       OR (
+         revoked_at IS NOT NULL
+         AND revoked_at <= datetime(
+           'now',
+           '-7 days'
+         )
+       )
+  `).run();
+
+  const challengeId =
+    randomBytes(24).toString('hex');
+
+  const code =
+    String(
+      randomInt(0, 1000000)
+    ).padStart(6, '0');
+
+  const salt =
+    randomBytes(16).toString('hex');
+
+  const codeHash =
+    hashOtp(code, salt);
+
+  db.prepare(`
+    INSERT INTO auth_login_challenges
+      (
+        id,
+        user_id,
+        email,
+        code_hash,
+        code_salt,
+        attempts,
+        max_attempts,
+        expires_at
+      )
+    VALUES (
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      0,
+      5,
+      datetime(
+        'now',
+        '+10 minutes'
+      )
+    )
+  `).run(
+    challengeId,
+    user.id,
+    user.email,
+    codeHash,
+    salt
+  );
+
+  /*
+    Development delivery only.
+
+    The OTP is deliberately NOT returned
+    through the HTTP API.
+
+    Email delivery will replace this log
+    before deployment.
+  */
+  console.log(
+    `[AUTH DEV] OTP for ${user.email}: ${code} challenge=${challengeId}`
+  );
+
+  return {
+    challengeId,
+    email: user.email,
+    expiresInSeconds: 600
+  };
+}
+
+function verifyLoginCode(
+  challengeId,
+  code,
+  req
+) {
+  const cleanChallengeId =
+    String(challengeId || '').trim();
+
+  const cleanCode =
+    String(code || '')
+      .replace(/\D/g, '');
+
+  if (
+    !cleanChallengeId ||
+    cleanCode.length !== 6
+  ) {
+    const error = new Error(
+      'Enter the 6-digit verification code'
+    );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const challenge = db.prepare(`
+    SELECT
+      id,
+      user_id AS userId,
+      email,
+      code_hash AS codeHash,
+      code_salt AS codeSalt,
+      attempts,
+      max_attempts AS maxAttempts,
+      expires_at AS expiresAt,
+      consumed_at AS consumedAt
+    FROM auth_login_challenges
+    WHERE id = ?
+  `).get(cleanChallengeId);
+
+  if (
+    !challenge ||
+    challenge.consumedAt
+  ) {
+    const error = new Error(
+      'This verification code is no longer valid'
+    );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const expiryCheck = db.prepare(`
+    SELECT
+      CASE
+        WHEN ? > CURRENT_TIMESTAMP
+        THEN 1
+        ELSE 0
+      END AS valid
+  `).get(challenge.expiresAt);
+
+  if (!expiryCheck?.valid) {
+    db.prepare(`
+      UPDATE auth_login_challenges
+      SET consumed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(challenge.id);
+
+    const error = new Error(
+      'This verification code has expired'
+    );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  if (
+    challenge.attempts >=
+    challenge.maxAttempts
+  ) {
+    const error = new Error(
+      'Too many incorrect attempts'
+    );
+
+    error.statusCode = 429;
+
+    throw error;
+  }
+
+  const suppliedHash =
+    hashOtp(
+      cleanCode,
+      challenge.codeSalt
+    );
+
+  if (
+    !safeHashEqual(
+      challenge.codeHash,
+      suppliedHash
+    )
+  ) {
+    const nextAttempts =
+      challenge.attempts + 1;
+
+    db.prepare(`
+      UPDATE auth_login_challenges
+      SET
+        attempts = ?,
+        consumed_at = CASE
+          WHEN ? >= max_attempts
+          THEN CURRENT_TIMESTAMP
+          ELSE consumed_at
+        END
+      WHERE id = ?
+    `).run(
+      nextAttempts,
+      nextAttempts,
+      challenge.id
+    );
+
+    const error = new Error(
+      nextAttempts >=
+        challenge.maxAttempts
+        ? 'Too many incorrect attempts'
+        : 'The verification code is incorrect'
+    );
+
+    error.statusCode =
+      nextAttempts >=
+        challenge.maxAttempts
+        ? 429
+        : 400;
+
+    throw error;
+  }
+
+  const user = db.prepare(`
+    SELECT
+      id,
+      status
+    FROM users
+    WHERE id = ?
+  `).get(challenge.userId);
+
+  if (!user) {
+    const error = new Error(
+      'Portal account not found'
+    );
+
+    error.statusCode = 404;
+
+    throw error;
+  }
+
+  if (
+    !['active', 'invited'].includes(
+      user.status
+    )
+  ) {
+    const error = new Error(
+      'This account cannot sign in'
+    );
+
+    error.statusCode = 403;
+
+    throw error;
+  }
+
+  const rawSessionToken =
+    randomBytes(32).toString('hex');
+
+  const sessionHash =
+    hashSessionToken(
+      rawSessionToken
+    );
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE auth_login_challenges
+      SET consumed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(challenge.id);
+
+    db.prepare(`
+      UPDATE users
+      SET
+        status = CASE
+          WHEN status = 'invited'
+          THEN 'active'
+          ELSE status
+        END,
+
+        email_verified_at =
+          COALESCE(
+            email_verified_at,
+            CURRENT_TIMESTAMP
+          ),
+
+        activated_at =
+          CASE
+            WHEN status = 'invited'
+            THEN COALESCE(
+              activated_at,
+              CURRENT_TIMESTAMP
+            )
+            ELSE activated_at
+          END,
+
+        last_login_at =
+          CURRENT_TIMESTAMP,
+
+        updated_at =
+          CURRENT_TIMESTAMP
+
+      WHERE id = ?
+    `).run(user.id);
+
+    db.prepare(`
+      INSERT INTO auth_sessions
+        (
+          session_hash,
+          user_id,
+          expires_at,
+          last_seen_at,
+          ip_address,
+          user_agent
+        )
+      VALUES (
+        ?,
+        ?,
+        datetime(
+          'now',
+          '+8 hours'
+        ),
+        CURRENT_TIMESTAMP,
+        ?,
+        ?
+      )
+    `).run(
+      sessionHash,
+      user.id,
+      getRequestIp(req),
+      String(
+        req.headers['user-agent'] || ''
+      ) || null
+    );
+
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  return {
+    token: rawSessionToken,
+    user: getAuthUserById(user.id)
+  };
+}
+
+function logoutAuthSession(req) {
+  const cookies = parseCookies(req);
+
+  const token =
+    cookies.uhp_session;
+
+  if (!token) {
+    return;
+  }
+
+  db.prepare(`
+    UPDATE auth_sessions
+    SET revoked_at = CURRENT_TIMESTAMP
+    WHERE session_hash = ?
+      AND revoked_at IS NULL
+  `).run(
+    hashSessionToken(token)
+  );
 }
 
 function listUsers() {
@@ -2951,7 +3695,9 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': 'http://localhost:5173',
       'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Credentials': 'true',
+      'Cache-Control': 'no-store'
     });
     return res.end();
   }
@@ -2959,6 +3705,98 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
 
   try {
+    if (
+      req.method === 'POST' &&
+      url.pathname === '/api/auth/request-code'
+    ) {
+      const payload = await readJson(req);
+
+      const challenge =
+        requestLoginCode(
+          payload.email,
+          req
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          ok: true,
+          challengeId:
+            challenge.challengeId,
+          email:
+            challenge.email,
+          expiresInSeconds:
+            challenge.expiresInSeconds
+        }
+      );
+    }
+
+    if (
+      req.method === 'POST' &&
+      url.pathname === '/api/auth/verify-code'
+    ) {
+      const payload = await readJson(req);
+
+      const result =
+        verifyLoginCode(
+          payload.challengeId,
+          payload.code,
+          req
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          authenticated: true,
+          user: result.user
+        },
+        {
+          'Set-Cookie':
+            buildSessionCookie(
+              result.token
+            )
+        }
+      );
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname === '/api/auth/me'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      return sendJson(
+        res,
+        200,
+        {
+          authenticated: true,
+          user: auth.user
+        }
+      );
+    }
+
+    if (
+      req.method === 'POST' &&
+      url.pathname === '/api/auth/logout'
+    ) {
+      logoutAuthSession(req);
+
+      return sendJson(
+        res,
+        200,
+        {
+          authenticated: false
+        },
+        {
+          'Set-Cookie':
+            buildExpiredSessionCookie()
+        }
+      );
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/health') {
       return sendJson(res, 200, {
         ok: true,
