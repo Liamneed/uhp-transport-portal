@@ -3987,6 +3987,789 @@ function captureAutocabVehicleTracks(
 }
 
 
+function normaliseCodingName(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+
+function parseAutocabOurReference(
+  rawReference
+) {
+  const raw =
+    normaliseAutocabScalar(
+      rawReference
+    );
+
+  if (!raw) {
+    return {
+      rawReference: null,
+      reasonCode: null,
+      budgetNumber: null,
+      budgetHolder: null,
+      formatValid: false
+    };
+  }
+
+  const parts =
+    raw
+      .split('/')
+      .map((part) => part.trim());
+
+  if (
+    parts.length !== 3 ||
+    parts.some((part) => !part)
+  ) {
+    return {
+      rawReference: raw,
+      reasonCode:
+        parts[0] || null,
+      budgetNumber:
+        parts[1] || null,
+      budgetHolder:
+        parts.slice(2).join('/') || null,
+      formatValid: false
+    };
+  }
+
+  return {
+    rawReference: raw,
+    reasonCode: parts[0],
+    budgetNumber: parts[1],
+    budgetHolder: parts[2],
+    formatValid: true
+  };
+}
+
+
+function evaluateAutocabBookingCoding(
+  rawReference
+) {
+  const parsed =
+    parseAutocabOurReference(
+      rawReference
+    );
+
+  const result = {
+    ...parsed,
+
+    status:
+      parsed.rawReference
+        ? 'invalid'
+        : 'missing',
+
+    reasonStatus:
+      parsed.reasonCode
+        ? 'not_checked'
+        : 'missing',
+
+    budgetStatus:
+      parsed.budgetNumber
+        ? 'not_checked'
+        : 'missing',
+
+    holderStatus:
+      parsed.budgetHolder
+        ? 'not_checked'
+        : 'missing',
+
+    reasonCodeId: null,
+    budgetId: null,
+    budgetHolderUserId: null,
+    departmentId: null,
+
+    budget: null,
+    reasonCodeRecord: null,
+    budgetHolderRecord: null
+  };
+
+  if (!parsed.formatValid) {
+    result.status =
+      parsed.rawReference
+        ? 'invalid'
+        : 'missing';
+
+    return result;
+  }
+
+  const reasonCode =
+    db.prepare(`
+      SELECT
+        id,
+        code,
+        description,
+        status
+      FROM reason_codes
+      WHERE code = ? COLLATE NOCASE
+        AND status = 'active'
+        AND (
+          effective_from IS NULL OR
+          effective_from <= date('now')
+        )
+        AND (
+          effective_to IS NULL OR
+          effective_to >= date('now')
+        )
+      LIMIT 1
+    `).get(
+      parsed.reasonCode
+    );
+
+  if (reasonCode) {
+    result.reasonStatus = 'valid';
+    result.reasonCodeId =
+      Number(reasonCode.id);
+    result.reasonCodeRecord = reasonCode;
+  } else {
+    result.reasonStatus = 'invalid';
+  }
+
+  const budget =
+    db.prepare(`
+      SELECT
+        b.id,
+        b.budget_number AS budgetNumber,
+        b.name,
+        b.department_id AS departmentId,
+        d.name AS departmentName,
+        b.status
+      FROM budgets b
+      LEFT JOIN departments d
+        ON d.id = b.department_id
+      WHERE b.budget_number = ?
+        COLLATE NOCASE
+        AND b.status = 'active'
+        AND (
+          b.effective_from IS NULL OR
+          b.effective_from <= date('now')
+        )
+        AND (
+          b.effective_to IS NULL OR
+          b.effective_to >= date('now')
+        )
+      LIMIT 1
+    `).get(
+      parsed.budgetNumber
+    );
+
+  if (budget) {
+    result.budgetStatus = 'valid';
+    result.budgetId =
+      Number(budget.id);
+    result.departmentId =
+      budget.departmentId
+        ? Number(budget.departmentId)
+        : null;
+    result.budget = budget;
+  } else {
+    result.budgetStatus = 'invalid';
+  }
+
+  if (budget) {
+    const assignedHolders =
+      db.prepare(`
+        SELECT
+          u.id,
+          u.first_name AS firstName,
+          u.last_name AS lastName,
+          u.status,
+          ba.assignment_type AS assignmentType
+
+        FROM budget_assignments ba
+
+        JOIN users u
+          ON u.id = ba.user_id
+
+        WHERE ba.budget_id = ?
+          AND ba.assignment_type IN (
+            'primary_holder',
+            'deputy_holder'
+          )
+          AND ba.is_active = 1
+          AND (
+            ba.valid_from IS NULL OR
+            ba.valid_from <= date('now')
+          )
+          AND (
+            ba.valid_to IS NULL OR
+            ba.valid_to >= date('now')
+          )
+          AND u.status = 'active'
+
+        ORDER BY
+          CASE ba.assignment_type
+            WHEN 'primary_holder' THEN 0
+            ELSE 1
+          END,
+          ba.id DESC
+      `).all(
+        budget.id
+      );
+
+    const wantedName =
+      normaliseCodingName(
+        parsed.budgetHolder
+      );
+
+    const assignedMatch =
+      assignedHolders.find(
+        (holder) =>
+          normaliseCodingName(
+            `${holder.firstName} ${holder.lastName}`
+          ) === wantedName
+      );
+
+    if (assignedMatch) {
+      result.holderStatus = 'valid';
+      result.budgetHolderUserId =
+        Number(assignedMatch.id);
+      result.budgetHolderRecord =
+        assignedMatch;
+    } else {
+      const matchingUser =
+        db.prepare(`
+          SELECT
+            id,
+            first_name AS firstName,
+            last_name AS lastName,
+            status
+          FROM users
+          WHERE lower(
+            trim(
+              first_name || ' ' || last_name
+            )
+          ) = lower(?)
+            AND status = 'active'
+          ORDER BY id
+          LIMIT 1
+        `).get(
+          parsed.budgetHolder
+        );
+
+      result.holderStatus =
+        matchingUser
+          ? 'budget_mismatch'
+          : 'invalid';
+    }
+  } else {
+    result.holderStatus =
+      parsed.budgetHolder
+        ? 'not_checked'
+        : 'missing';
+  }
+
+  if (
+    result.reasonStatus === 'valid' &&
+    result.budgetStatus === 'valid' &&
+    result.holderStatus === 'valid'
+  ) {
+    result.status = 'valid';
+  } else if (
+    result.holderStatus ===
+      'budget_mismatch'
+  ) {
+    result.status = 'mismatch';
+  } else {
+    result.status = 'invalid';
+  }
+
+  return result;
+}
+
+
+function upsertBookingCodingReconciliation(
+  bookingId,
+  coding
+) {
+  db.prepare(`
+    INSERT INTO booking_coding_reconciliation
+      (
+        booking_id,
+        raw_reference,
+        parsed_reason_code,
+        parsed_budget_number,
+        parsed_budget_holder,
+        status,
+        reason_status,
+        budget_status,
+        holder_status,
+        details_json,
+        checked_at,
+        updated_at
+      )
+    VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP
+    )
+
+    ON CONFLICT(booking_id)
+    DO UPDATE SET
+      raw_reference =
+        excluded.raw_reference,
+      parsed_reason_code =
+        excluded.parsed_reason_code,
+      parsed_budget_number =
+        excluded.parsed_budget_number,
+      parsed_budget_holder =
+        excluded.parsed_budget_holder,
+      status =
+        excluded.status,
+      reason_status =
+        excluded.reason_status,
+      budget_status =
+        excluded.budget_status,
+      holder_status =
+        excluded.holder_status,
+      details_json =
+        excluded.details_json,
+      checked_at =
+        CURRENT_TIMESTAMP,
+      updated_at =
+        CURRENT_TIMESTAMP
+  `).run(
+    bookingId,
+    coding.rawReference,
+    coding.reasonCode,
+    coding.budgetNumber,
+    coding.budgetHolder,
+    coding.status,
+    coding.reasonStatus,
+    coding.budgetStatus,
+    coding.holderStatus,
+    JSON.stringify({
+      formatValid:
+        coding.formatValid,
+      reasonStatus:
+        coding.reasonStatus,
+      budgetStatus:
+        coding.budgetStatus,
+      holderStatus:
+        coding.holderStatus
+    })
+  );
+}
+
+
+function insertAutocabBookingStops(
+  bookingId,
+  payload
+) {
+  const insert =
+    db.prepare(`
+      INSERT INTO booking_stops
+        (
+          booking_id,
+          sequence_number,
+          stop_type,
+          address,
+          postcode,
+          notes
+        )
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+  let sequence = 0;
+
+  insert.run(
+    bookingId,
+    sequence++,
+    'pickup',
+    normaliseAutocabScalar(
+      payload?.Pickup?.Address
+    ) || '',
+    null,
+    null
+  );
+
+  const vias =
+    Array.isArray(payload?.Vias)
+      ? payload.Vias
+      : [];
+
+  for (const via of vias) {
+    insert.run(
+      bookingId,
+      sequence++,
+      'via',
+      normaliseAutocabScalar(
+        via?.Address
+      ) || '',
+      null,
+      null
+    );
+  }
+
+  insert.run(
+    bookingId,
+    sequence,
+    'destination',
+    normaliseAutocabScalar(
+      payload?.Destination?.Address
+    ) || '',
+    null,
+    null
+  );
+}
+
+
+function importAutocabCreatedBooking(
+  payload
+) {
+  const autocabBookingId =
+    normaliseAutocabScalar(
+      payload?.Id
+    );
+
+  if (
+    !autocabBookingId ||
+    !/^\d+$/.test(
+      autocabBookingId
+    )
+  ) {
+    const error = new Error(
+      'Autocab BookingCreated payload has no valid booking ID'
+    );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const autocabReference =
+    normaliseAutocabScalar(
+      payload?.OurReference
+    );
+
+  const existing =
+    db.prepare(`
+      SELECT
+        id,
+        source,
+        operational_status AS operationalStatus,
+        financial_status AS financialStatus
+      FROM bookings
+      WHERE autocab_booking_id = ?
+      LIMIT 1
+    `).get(
+      autocabBookingId
+    );
+
+  if (existing) {
+    if (autocabReference) {
+      db.prepare(`
+        UPDATE bookings
+        SET
+          autocab_reference =
+            COALESCE(
+              autocab_reference,
+              ?
+            ),
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        autocabReference,
+        existing.id
+      );
+    }
+
+    return {
+      bookingId:
+        Number(existing.id),
+      imported: false,
+      existing: true,
+      codingStatus:
+        existing.financialStatus ===
+          'coding_required'
+          ? 'review_required'
+          : 'existing'
+    };
+  }
+
+  const requestedPickupAt =
+    normaliseAutocabScalar(
+      payload?.PickupDueTime
+    );
+
+  if (!requestedPickupAt) {
+    const error = new Error(
+      'Autocab BookingCreated payload has no pickup due time'
+    );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const coding =
+    evaluateAutocabBookingCoding(
+      autocabReference
+    );
+
+  const financialStatus =
+    coding.status === 'valid'
+      ? 'authorised'
+      : 'coding_required';
+
+  const passengerCountRaw =
+    Number(payload?.Passengers);
+
+  const passengerCount =
+    Number.isInteger(
+      passengerCountRaw
+    ) &&
+    passengerCountRaw > 0
+      ? passengerCountRaw
+      : 1;
+
+  const passengerName =
+    normaliseAutocabScalar(
+      payload?.Name
+    ) || '';
+
+  const passengerMobile =
+    normaliseAutocabScalar(
+      payload?.TelephoneNumber
+    ) || '';
+
+  const pickupAddress =
+    normaliseAutocabScalar(
+      payload?.Pickup?.Address
+    ) || '';
+
+  const destinationAddress =
+    normaliseAutocabScalar(
+      payload?.Destination?.Address
+    ) || '';
+
+  const driverNotes =
+    normaliseAutocabScalar(
+      payload?.DriverNote
+    );
+
+  const internalNotes =
+    normaliseAutocabScalar(
+      payload?.OfficeNote
+    );
+
+  const bookedAt =
+    normaliseAutocabScalar(
+      payload?.BookedAtTime
+    );
+
+  db.exec('BEGIN');
+
+  try {
+    const insertResult =
+      db.prepare(`
+        INSERT INTO bookings
+          (
+            autocab_booking_id,
+            autocab_reference,
+            source,
+            operational_status,
+            financial_status,
+            requested_pickup_at,
+            passenger_name,
+            passenger_mobile,
+            passenger_count,
+            pickup_address,
+            destination_address,
+            driver_notes,
+            internal_notes,
+            budget_id,
+            reason_code_id,
+            budget_holder_user_id,
+            created_by_user_id,
+            department_id,
+            submitted_at
+          )
+        VALUES (
+          ?, ?,
+          'import',
+          'booked',
+          ?,
+          ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?,
+          NULL,
+          ?,
+          ?
+        )
+      `).run(
+        autocabBookingId,
+        autocabReference,
+        financialStatus,
+        requestedPickupAt,
+        passengerName,
+        passengerMobile,
+        passengerCount,
+        pickupAddress,
+        destinationAddress,
+        driverNotes,
+        internalNotes,
+        coding.status === 'valid'
+          ? coding.budgetId
+          : null,
+        coding.status === 'valid'
+          ? coding.reasonCodeId
+          : null,
+        coding.status === 'valid'
+          ? coding.budgetHolderUserId
+          : null,
+        coding.status === 'valid'
+          ? coding.departmentId
+          : null,
+        bookedAt
+      );
+
+    const bookingId =
+      Number(
+        insertResult.lastInsertRowid
+      );
+
+    const referenceYear =
+      new Date(
+        requestedPickupAt
+      ).getFullYear();
+
+    const safeYear =
+      Number.isInteger(
+        referenceYear
+      )
+        ? referenceYear
+        : new Date().getFullYear();
+
+    const publicReference =
+      `UHP-${safeYear}-${String(
+        bookingId
+      ).padStart(6, '0')}`;
+
+    db.prepare(`
+      UPDATE bookings
+      SET public_reference = ?
+      WHERE id = ?
+    `).run(
+      publicReference,
+      bookingId
+    );
+
+    insertAutocabBookingStops(
+      bookingId,
+      payload
+    );
+
+    upsertBookingCodingReconciliation(
+      bookingId,
+      coding
+    );
+
+    if (
+      coding.status === 'valid'
+    ) {
+      const customerId =
+        normaliseAutocabScalar(
+          payload?.Account?.Id
+        );
+
+      db.prepare(`
+        INSERT INTO booking_account_snapshot
+          (
+            booking_id,
+            customer_id,
+            budget_id,
+            budget_number,
+            budget_name,
+            reason_code_id,
+            reason_code,
+            reason_description,
+            budget_holder_user_id,
+            budget_holder_name,
+            department_id,
+            department_name
+          )
+        VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+      `).run(
+        bookingId,
+        customerId,
+        coding.budget.id,
+        coding.budget.budgetNumber,
+        coding.budget.name,
+        coding.reasonCodeRecord.id,
+        coding.reasonCodeRecord.code,
+        coding.reasonCodeRecord.description,
+        coding.budgetHolderUserId,
+        `${coding.budgetHolderRecord.firstName} ${coding.budgetHolderRecord.lastName}`,
+        coding.departmentId,
+        coding.budget.departmentName || null
+      );
+    }
+
+    db.prepare(`
+      INSERT INTO booking_events
+        (
+          booking_id,
+          event_type,
+          event_source,
+          new_status,
+          notes,
+          raw_payload
+        )
+      VALUES (
+        ?,
+        'booking_imported',
+        'autocab',
+        'booked',
+        ?,
+        ?
+      )
+    `).run(
+      bookingId,
+      coding.status === 'valid'
+        ? 'Autocab UHP booking imported with valid coding'
+        : 'Autocab UHP booking imported requiring coding review',
+      JSON.stringify(payload)
+    );
+
+    writeAudit({
+      action: 'CREATE',
+      entityType: 'booking',
+      entityId: bookingId,
+      newValue: JSON.stringify({
+        publicReference,
+        autocabBookingId,
+        autocabReference,
+        source: 'import',
+        operationalStatus: 'booked',
+        financialStatus,
+        codingStatus:
+          coding.status
+      }),
+      source: 'autocab',
+      actorUserId: null
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      bookingId,
+      imported: true,
+      existing: false,
+      codingStatus:
+        coding.status,
+      publicReference
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
 function captureAutocabWebhook(
   routeSuffix,
   payload
@@ -4081,12 +4864,71 @@ function captureAutocabWebhook(
       JSON.stringify(payload)
     );
 
+  const eventId =
+    Number(
+      result.lastInsertRowid
+    );
+
+  if (
+    routeSuffix === 'created'
+  ) {
+    try {
+      const importResult =
+        importAutocabCreatedBooking(
+          payload
+        );
+
+      db.prepare(`
+        UPDATE integration_events
+        SET
+          booking_id = ?,
+          processing_status =
+            'processed',
+          processing_error = NULL,
+          processed_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        importResult.bookingId,
+        eventId
+      );
+
+      return {
+        received: true,
+        eventId,
+        eventType:
+          definition.eventType,
+        category:
+          definition.category,
+        autocabBookingId,
+        autocabReference,
+        ...importResult
+      };
+    } catch (error) {
+      db.prepare(`
+        UPDATE integration_events
+        SET
+          processing_status =
+            'failed',
+          processing_error = ?,
+          processed_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        String(
+          error?.message ||
+          'Booking import failed'
+        ),
+        eventId
+      );
+
+      throw error;
+    }
+  }
+
   return {
     received: true,
-    eventId:
-      Number(
-        result.lastInsertRowid
-      ),
+    eventId,
     eventType:
       definition.eventType,
     category:
@@ -4095,7 +4937,6 @@ function captureAutocabWebhook(
     autocabReference
   };
 }
-
 
 function findAutocabLinkedBooking(
   autocabBookingId,
