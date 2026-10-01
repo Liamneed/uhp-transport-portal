@@ -590,6 +590,11 @@ function App() {
             <MyBookingsPage
               currentUser={currentUser}
             />
+          ) : active === 'holder-bookings' ? (
+            <MyBookingsPage
+              currentUser={currentUser}
+              scope="budget"
+            />
           ) : active === 'nac-control' ? (
             <NacControlPage/>
           ) : active === 'nac-bookings' ? (
@@ -2173,8 +2178,14 @@ function NacBookingsPage({
   );
 }
 
-function MyBookingsPage({ currentUser }) {
+function MyBookingsPage({
+  currentUser,
+  scope = 'mine'
+}) {
   const bookingUserId = currentUser.id;
+
+  const budgetScope =
+    scope === 'budget';
 
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2203,7 +2214,9 @@ function MyBookingsPage({ currentUser }) {
 
     try {
       const response = await apiFetch(
-        `http://localhost:3001/api/my-bookings?userId=${bookingUserId}`
+        budgetScope
+          ? `${API_BASE}/api/budget-bookings`
+          : `${API_BASE}/api/my-bookings?userId=${bookingUserId}`
       );
 
       const data = await response.json();
@@ -2228,7 +2241,7 @@ function MyBookingsPage({ currentUser }) {
 
   useEffect(() => {
     loadBookings();
-  }, []);
+  }, [budgetScope, bookingUserId]);
 
   const filteredBookings = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -2247,7 +2260,9 @@ function MyBookingsPage({ currentUser }) {
           booking.destinationAddress,
           booking.budgetNumber,
           booking.reasonCode,
-          booking.reasonDescription
+          booking.reasonDescription,
+          booking.createdBy,
+          booking.department
         ]
           .filter(Boolean)
           .join(' ')
@@ -2643,11 +2658,16 @@ function MyBookingsPage({ currentUser }) {
     <>
       <div className="page-heading">
         <div>
-          <h1>My Bookings</h1>
+          <h1>
+            {budgetScope
+              ? 'Budget Bookings'
+              : 'My Bookings'}
+          </h1>
 
           <p>
-            View and manage UHP transport requests
-            you have created.
+            {budgetScope
+              ? 'View UHP transport requests charged to budgets you are authorised to oversee.'
+              : 'View and manage UHP transport requests you have created.'}
           </p>
         </div>
       </div>
@@ -2743,8 +2763,9 @@ function MyBookingsPage({ currentUser }) {
             <strong>No bookings found</strong>
 
             <span>
-              New UHP transport requests
-              will appear here.
+              {budgetScope
+                ? 'Bookings charged to your authorised budgets will appear here.'
+                : 'New UHP transport requests will appear here.'}
             </span>
           </div>
         ) : (
@@ -2776,8 +2797,9 @@ function MyBookingsPage({ currentUser }) {
                       ) ?? [];
 
                     const canManage =
+                      !budgetScope &&
                       booking.operationalStatus ===
-                      'draft';
+                        'draft';
 
                     return (
                       <React.Fragment
@@ -2800,6 +2822,13 @@ function MyBookingsPage({ currentUser }) {
                             <strong>
                               {booking.publicReference}
                             </strong>
+
+                            {budgetScope && (
+                              <small>
+                                Booked by{' '}
+                                {booking.createdBy || '—'}
+                              </small>
+                            )}
                           </td>
 
                           <td>

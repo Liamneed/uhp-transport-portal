@@ -665,6 +665,15 @@ function enforceApiAccess(
   }
 
   if (
+    pathname === '/api/budget-bookings'
+  ) {
+    return requireAnyRole(
+      req,
+      ['budget_holder']
+    );
+  }
+
+  if (
     pathname ===
       '/api/booking-options' ||
     pathname ===
@@ -2640,6 +2649,117 @@ function listBookingsForUser(userId) {
   }));
 }
 
+
+function listBudgetVisibleBookings(userId) {
+  const bookings = db.prepare(`
+    SELECT
+      b.id,
+      b.public_reference AS publicReference,
+
+      b.operational_status AS operationalStatus,
+      b.financial_status AS financialStatus,
+
+      b.requested_pickup_at AS requestedPickupAt,
+
+      b.passenger_name AS passengerName,
+      b.passenger_mobile AS passengerMobile,
+      b.passenger_count AS passengerCount,
+
+      b.pickup_address AS pickupAddress,
+      b.pickup_postcode AS pickupPostcode,
+
+      b.destination_address AS destinationAddress,
+      b.destination_postcode AS destinationPostcode,
+
+      b.driver_notes AS driverNotes,
+
+      b.budget_id AS budgetId,
+      bu.budget_number AS budgetNumber,
+      bu.name AS budgetName,
+
+      b.reason_code_id AS reasonCodeId,
+      rc.code AS reasonCode,
+      rc.description AS reasonDescription,
+
+      b.budget_holder_user_id AS budgetHolderUserId,
+      holder.first_name || ' ' ||
+        holder.last_name AS budgetHolder,
+
+      b.created_by_user_id AS createdByUserId,
+      creator.first_name || ' ' ||
+        creator.last_name AS createdBy,
+
+      b.department_id AS departmentId,
+      d.name AS department,
+
+      b.created_at AS createdAt,
+      b.updated_at AS updatedAt
+
+    FROM bookings b
+
+    JOIN budgets bu
+      ON bu.id = b.budget_id
+
+    JOIN reason_codes rc
+      ON rc.id = b.reason_code_id
+
+    JOIN users holder
+      ON holder.id = b.budget_holder_user_id
+
+    JOIN users creator
+      ON creator.id = b.created_by_user_id
+
+    LEFT JOIN departments d
+      ON d.id = b.department_id
+
+    WHERE EXISTS (
+      SELECT 1
+      FROM user_budget_access uba
+
+      WHERE uba.user_id = ?
+        AND uba.budget_id = b.budget_id
+        AND uba.can_view = 1
+
+        AND (
+          uba.valid_from IS NULL OR
+          uba.valid_from <= date('now')
+        )
+
+        AND (
+          uba.valid_to IS NULL OR
+          uba.valid_to >= date('now')
+        )
+    )
+
+    ORDER BY
+      datetime(b.requested_pickup_at) DESC,
+      b.id DESC
+  `).all(userId);
+
+  const stopsStatement = db.prepare(`
+    SELECT
+      sequence_number AS sequenceNumber,
+      stop_type AS stopType,
+      address,
+      postcode,
+      notes
+
+    FROM booking_stops
+
+    WHERE booking_id = ?
+
+    ORDER BY sequence_number
+  `);
+
+  return bookings.map((booking) => ({
+    ...booking,
+
+    stops:
+      stopsStatement.all(booking.id)
+  }));
+}
+
+
 function getBookingById(bookingId) {
   return db.prepare(`
     SELECT
@@ -3941,6 +4061,23 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         bookings:
           listBookingsForUser(
+            auth.user.id
+          )
+      });
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname === '/api/budget-bookings'
+    ) {
+      const auth = requireAnyRole(
+        req,
+        ['budget_holder']
+      );
+
+      return sendJson(res, 200, {
+        bookings:
+          listBudgetVisibleBookings(
             auth.user.id
           )
       });
