@@ -697,9 +697,23 @@ function MyBookingsPage() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [expandedId, setExpandedId] = useState(null);
+
+  const [editingBooking, setEditingBooking] = useState(null);
+  const [editOptions, setEditOptions] = useState({
+    budgets: [],
+    reasonCodes: []
+  });
+  const [editForm, setEditForm] = useState(null);
+  const [editVias, setEditVias] = useState([]);
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const [cancelBooking, setCancelBooking] = useState(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
 
   async function loadBookings() {
     setLoading(true);
@@ -807,6 +821,334 @@ function MyBookingsPage() {
     return map[status] || formatStatus(status);
   }
 
+  async function openAmend(bookingId) {
+    setError('');
+    setNotice('');
+
+    try {
+      const [bookingResponse, optionsResponse] =
+        await Promise.all([
+          fetch(
+            `http://localhost:3001/api/bookings/${bookingId}?userId=${bookingUserId}`
+          ),
+          fetch(
+            `http://localhost:3001/api/booking-options?userId=${bookingUserId}`
+          )
+        ]);
+
+      const bookingData =
+        await bookingResponse.json();
+
+      const optionsData =
+        await optionsResponse.json();
+
+      if (!bookingResponse.ok) {
+        throw new Error(
+          bookingData.error ||
+          'Unable to load booking'
+        );
+      }
+
+      if (!optionsResponse.ok) {
+        throw new Error(
+          optionsData.error ||
+          'Unable to load booking options'
+        );
+      }
+
+      const booking = bookingData.booking;
+
+      if (booking.operationalStatus !== 'draft') {
+        throw new Error(
+          'This booking can no longer be amended'
+        );
+      }
+
+      const [pickupDate = '', pickupTime = ''] =
+        String(booking.requestedPickupAt || '')
+          .split('T');
+
+      const pickup =
+        booking.stops?.find(
+          (stop) => stop.stopType === 'pickup'
+        ) ?? {};
+
+      const destination =
+        booking.stops?.find(
+          (stop) => stop.stopType === 'destination'
+        ) ?? {};
+
+      const vias =
+        booking.stops
+          ?.filter(
+            (stop) => stop.stopType === 'via'
+          )
+          .map((stop) => ({
+            address: stop.address || '',
+            postcode: stop.postcode || ''
+          })) ?? [];
+
+      setEditOptions({
+        budgets: optionsData.budgets ?? [],
+        reasonCodes:
+          optionsData.reasonCodes ?? []
+      });
+
+      setEditForm({
+        pickupDate,
+        pickupTime: pickupTime.slice(0, 5),
+        pickupAddress:
+          pickup.address ||
+          booking.pickupAddress ||
+          '',
+        pickupPostcode:
+          pickup.postcode ||
+          booking.pickupPostcode ||
+          '',
+        destinationAddress:
+          destination.address ||
+          booking.destinationAddress ||
+          '',
+        destinationPostcode:
+          destination.postcode ||
+          booking.destinationPostcode ||
+          '',
+        passengerName:
+          booking.passengerName || '',
+        passengerMobile:
+          booking.passengerMobile || '',
+        passengerCount:
+          booking.passengerCount || 1,
+        budgetId:
+          String(booking.budgetId || ''),
+        reasonCodeId:
+          String(booking.reasonCodeId || ''),
+        driverNotes:
+          booking.driverNotes || ''
+      });
+
+      setEditVias(vias);
+      setEditingBooking(booking);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load booking'
+      );
+    }
+  }
+
+  function updateEditForm(field, value) {
+    setEditForm((current) => ({
+      ...current,
+      [field]: value
+    }));
+  }
+
+  function addEditVia() {
+    setEditVias((current) => [
+      ...current,
+      {
+        address: '',
+        postcode: ''
+      }
+    ]);
+  }
+
+  function updateEditVia(
+    index,
+    field,
+    value
+  ) {
+    setEditVias((current) =>
+      current.map((via, viaIndex) =>
+        viaIndex === index
+          ? {
+              ...via,
+              [field]: value
+            }
+          : via
+      )
+    );
+  }
+
+  function removeEditVia(index) {
+    setEditVias((current) =>
+      current.filter(
+        (_, viaIndex) => viaIndex !== index
+      )
+    );
+  }
+
+  function closeAmend() {
+    if (savingEdit) return;
+
+    setEditingBooking(null);
+    setEditForm(null);
+    setEditVias([]);
+  }
+
+  async function submitAmendment(event) {
+    event.preventDefault();
+
+    if (!editingBooking || !editForm) return;
+
+    setSavingEdit(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/bookings/${editingBooking.id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            userId: bookingUserId,
+
+            requestedPickupAt:
+              `${editForm.pickupDate}T${editForm.pickupTime}:00`,
+
+            passengerName:
+              editForm.passengerName,
+
+            passengerMobile:
+              editForm.passengerMobile,
+
+            passengerCount:
+              Number(editForm.passengerCount),
+
+            pickup: {
+              address:
+                editForm.pickupAddress,
+              postcode:
+                editForm.pickupPostcode
+            },
+
+            vias: editVias
+              .filter(
+                (via) => via.address.trim()
+              )
+              .map((via) => ({
+                address: via.address,
+                postcode: via.postcode
+              })),
+
+            destination: {
+              address:
+                editForm.destinationAddress,
+              postcode:
+                editForm.destinationPostcode
+            },
+
+            driverNotes:
+              editForm.driverNotes,
+
+            budgetId:
+              Number(editForm.budgetId),
+
+            reasonCodeId:
+              Number(editForm.reasonCodeId)
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          'Unable to amend booking'
+        );
+      }
+
+      closeAmend();
+      await loadBookings();
+
+      setNotice(
+        `${data.booking.publicReference} has been amended successfully.`
+      );
+
+      setExpandedId(data.booking.id);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to amend booking'
+      );
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  function openCancel(booking) {
+    setError('');
+    setNotice('');
+    setCancelReason('');
+    setCancelBooking(booking);
+  }
+
+  function closeCancel() {
+    if (cancelling) return;
+
+    setCancelBooking(null);
+    setCancelReason('');
+  }
+
+  async function confirmCancel(event) {
+    event.preventDefault();
+
+    if (!cancelBooking) return;
+
+    setCancelling(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/bookings/${cancelBooking.id}/cancel`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            userId: bookingUserId,
+            reason: cancelReason
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          'Unable to cancel booking'
+        );
+      }
+
+      closeCancel();
+      await loadBookings();
+
+      setNotice(
+        `${data.booking.publicReference} has been cancelled.`
+      );
+
+      setExpandedId(data.booking.id);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to cancel booking'
+      );
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="card state-panel">
@@ -820,8 +1162,10 @@ function MyBookingsPage() {
       <div className="page-heading">
         <div>
           <h1>My Bookings</h1>
+
           <p>
-            View UHP transport requests you have created.
+            View and manage UHP transport requests
+            you have created.
           </p>
         </div>
       </div>
@@ -829,6 +1173,12 @@ function MyBookingsPage() {
       {error && (
         <div className="notice error">
           {error}
+        </div>
+      )}
+
+      {notice && (
+        <div className="notice success">
+          {notice}
         </div>
       )}
 
@@ -865,7 +1215,9 @@ function MyBookingsPage() {
 
             <input
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) =>
+                setQuery(e.target.value)
+              }
               placeholder="Search bookings..."
             />
           </div>
@@ -909,7 +1261,8 @@ function MyBookingsPage() {
             <strong>No bookings found</strong>
 
             <span>
-              New UHP transport requests will appear here.
+              New UHP transport requests
+              will appear here.
             </span>
           </div>
         ) : (
@@ -929,210 +1282,645 @@ function MyBookingsPage() {
               </thead>
 
               <tbody>
-                {filteredBookings.map((booking) => {
-                  const isExpanded =
-                    expandedId === booking.id;
+                {filteredBookings.map(
+                  (booking) => {
+                    const isExpanded =
+                      expandedId === booking.id;
 
-                  const viaStops =
-                    booking.stops?.filter(
-                      (stop) =>
-                        stop.stopType === 'via'
-                    ) ?? [];
+                    const viaStops =
+                      booking.stops?.filter(
+                        (stop) =>
+                          stop.stopType === 'via'
+                      ) ?? [];
 
-                  return (
-                    <React.Fragment key={booking.id}>
-                      <tr>
-                        <td>
-                          <strong>
-                            {formatPickup(
-                              booking.requestedPickupAt
-                            )}
-                          </strong>
+                    const canManage =
+                      booking.operationalStatus ===
+                      'draft';
 
-                          <small>
-                            Created {booking.createdAt}
-                          </small>
-                        </td>
+                    return (
+                      <React.Fragment
+                        key={booking.id}
+                      >
+                        <tr>
+                          <td>
+                            <strong>
+                              {formatPickup(
+                                booking.requestedPickupAt
+                              )}
+                            </strong>
 
-                        <td>
-                          <strong>
-                            {booking.publicReference}
-                          </strong>
-                        </td>
+                            <small>
+                              Created {booking.createdAt}
+                            </small>
+                          </td>
 
-                        <td>
-                          <strong>
-                            {booking.passengerName}
-                          </strong>
+                          <td>
+                            <strong>
+                              {booking.publicReference}
+                            </strong>
+                          </td>
 
-                          <small>
-                            {booking.passengerMobile}
-                          </small>
-                        </td>
+                          <td>
+                            <strong>
+                              {booking.passengerName}
+                            </strong>
 
-                        <td className="journey-cell">
-                          <strong>
-                            {booking.pickupAddress}
-                          </strong>
+                            <small>
+                              {booking.passengerMobile}
+                            </small>
+                          </td>
 
-                          <small>
-                            to {booking.destinationAddress}
-                          </small>
-                        </td>
+                          <td className="journey-cell">
+                            <strong>
+                              {booking.pickupAddress}
+                            </strong>
 
-                        <td>
-                          <strong>
-                            {booking.budgetNumber}
-                          </strong>
+                            <small>
+                              to {booking.destinationAddress}
+                            </small>
+                          </td>
 
-                          <small>
-                            {booking.budgetName}
-                          </small>
-                        </td>
+                          <td>
+                            <strong>
+                              {booking.budgetNumber}
+                            </strong>
 
-                        <td>
-                          <strong>
-                            {booking.reasonCode}
-                          </strong>
+                            <small>
+                              {booking.budgetName}
+                            </small>
+                          </td>
 
-                          <small>
-                            {booking.reasonDescription}
-                          </small>
-                        </td>
+                          <td>
+                            <strong>
+                              {booking.reasonCode}
+                            </strong>
 
-                        <td>
-                          <span
-                            className={`badge ${booking.operationalStatus}`}
-                          >
-                            {friendlyBookingStatus(
-                              booking.operationalStatus
-                            )}
-                          </span>
-                        </td>
+                            <small>
+                              {booking.reasonDescription}
+                            </small>
+                          </td>
 
-                        <td>
-                          <button
-                            type="button"
-                            className="text-action"
-                            onClick={() =>
-                              setExpandedId(
-                                isExpanded
-                                  ? null
-                                  : booking.id
-                              )
-                            }
-                          >
-                            {isExpanded
-                              ? 'Hide'
-                              : 'Details'}
-                          </button>
-                        </td>
-                      </tr>
+                          <td>
+                            <span
+                              className={
+                                `badge ${booking.operationalStatus}`
+                              }
+                            >
+                              {friendlyBookingStatus(
+                                booking.operationalStatus
+                              )}
+                            </span>
+                          </td>
 
-                      {isExpanded && (
-                        <tr className="booking-detail-row">
-                          <td colSpan="8">
-                            <div className="booking-detail-panel">
-                              <div className="booking-detail-grid">
-                                <div>
-                                  <small>
-                                    Passenger Count
-                                  </small>
-
-                                  <strong>
-                                    {booking.passengerCount}
-                                  </strong>
-                                </div>
-
-                                <div>
-                                  <small>
-                                    Budget Holder
-                                  </small>
-
-                                  <strong>
-                                    {booking.budgetHolder}
-                                  </strong>
-                                </div>
-
-                                <div>
-                                  <small>
-                                    Financial Status
-                                  </small>
-
-                                  <strong>
-                                    {formatStatus(
-                                      booking.financialStatus
-                                    )}
-                                  </strong>
-                                </div>
-
-                                <div>
-                                  <small>
-                                    Driver Notes
-                                  </small>
-
-                                  <strong>
-                                    {booking.driverNotes || '—'}
-                                  </strong>
-                                </div>
-                              </div>
-
-                              <div className="booking-route-detail">
-                                <h4>Journey</h4>
-
-                                {booking.stops?.map(
-                                  (stop) => (
-                                    <div
-                                      className="detail-stop"
-                                      key={
-                                        `${booking.id}-${stop.sequenceNumber}`
-                                      }
-                                    >
-                                      <span
-                                        className={`detail-stop-dot ${stop.stopType}`}
-                                      />
-
-                                      <div>
-                                        <small>
-                                          {stop.stopType === 'pickup'
-                                            ? 'Pickup'
-                                            : stop.stopType === 'destination'
-                                              ? 'Destination'
-                                              : `Via ${stop.sequenceNumber}`}
-                                        </small>
-
-                                        <strong>
-                                          {stop.address}
-                                        </strong>
-
-                                        {stop.postcode && (
-                                          <span>
-                                            {stop.postcode}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )
-                                )}
-
-                                {viaStops.length === 0 && (
-                                  <small className="no-vias">
-                                    Direct journey — no vias.
-                                  </small>
-                                )}
-                              </div>
-                            </div>
+                          <td>
+                            <button
+                              type="button"
+                              className="text-action"
+                              onClick={() =>
+                                setExpandedId(
+                                  isExpanded
+                                    ? null
+                                    : booking.id
+                                )
+                              }
+                            >
+                              {isExpanded
+                                ? 'Hide'
+                                : 'Details'}
+                            </button>
                           </td>
                         </tr>
-                      )}
-                    </React.Fragment>
-                  );
-                })}
+
+                        {isExpanded && (
+                          <tr className="booking-detail-row">
+                            <td colSpan="8">
+                              <div className="booking-detail-panel">
+                                <div className="booking-detail-grid">
+                                  <div>
+                                    <small>
+                                      Passenger Count
+                                    </small>
+
+                                    <strong>
+                                      {booking.passengerCount}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Budget Holder
+                                    </small>
+
+                                    <strong>
+                                      {booking.budgetHolder}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Financial Status
+                                    </small>
+
+                                    <strong>
+                                      {formatStatus(
+                                        booking.financialStatus
+                                      )}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Driver Notes
+                                    </small>
+
+                                    <strong>
+                                      {booking.driverNotes || '—'}
+                                    </strong>
+                                  </div>
+                                </div>
+
+                                <div className="booking-route-detail">
+                                  <h4>Journey</h4>
+
+                                  {booking.stops?.map(
+                                    (stop) => (
+                                      <div
+                                        className="detail-stop"
+                                        key={
+                                          `${booking.id}-${stop.sequenceNumber}`
+                                        }
+                                      >
+                                        <span
+                                          className={
+                                            `detail-stop-dot ${stop.stopType}`
+                                          }
+                                        />
+
+                                        <div>
+                                          <small>
+                                            {stop.stopType === 'pickup'
+                                              ? 'Pickup'
+                                              : stop.stopType === 'destination'
+                                                ? 'Destination'
+                                                : `Via ${stop.sequenceNumber}`}
+                                          </small>
+
+                                          <strong>
+                                            {stop.address}
+                                          </strong>
+
+                                          {stop.postcode && (
+                                            <span>
+                                              {stop.postcode}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )
+                                  )}
+
+                                  {viaStops.length === 0 && (
+                                    <small className="no-vias">
+                                      Direct journey — no vias.
+                                    </small>
+                                  )}
+                                </div>
+
+                                {canManage && (
+                                  <div className="booking-actions">
+                                    <button
+                                      type="button"
+                                      className="secondary"
+                                      onClick={() =>
+                                        openAmend(
+                                          booking.id
+                                        )
+                                      }
+                                    >
+                                      Amend Booking
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      className="danger-button"
+                                      onClick={() =>
+                                        openCancel(
+                                          booking
+                                        )
+                                      }
+                                    >
+                                      Cancel Booking
+                                    </button>
+                                  </div>
+                                )}
+
+                                {!canManage &&
+                                  booking.operationalStatus === 'cancelled' && (
+                                    <div className="managed-booking-note">
+                                      This booking has been cancelled
+                                      and can no longer be amended.
+                                    </div>
+                                  )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  }
+                )}
               </tbody>
             </table>
           </div>
         )}
       </div>
+
+      {editingBooking && editForm && (
+        <div className="modal-backdrop">
+          <div className="modal-card booking-edit-modal">
+            <div className="modal-header">
+              <div>
+                <h2>Amend Booking</h2>
+
+                <p>
+                  {editingBooking.publicReference}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeAmend}
+                disabled={savingEdit}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={submitAmendment}>
+              <div className="form-grid two">
+                <label>
+                  Pickup Date
+                  <input
+                    type="date"
+                    required
+                    value={editForm.pickupDate}
+                    onChange={(e) =>
+                      updateEditForm(
+                        'pickupDate',
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  Pickup Time
+                  <input
+                    type="time"
+                    required
+                    value={editForm.pickupTime}
+                    onChange={(e) =>
+                      updateEditForm(
+                        'pickupTime',
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-grid two">
+                <label>
+                  Pickup
+                  <input
+                    required
+                    value={editForm.pickupAddress}
+                    onChange={(e) =>
+                      updateEditForm(
+                        'pickupAddress',
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  Pickup Postcode
+                  <input
+                    value={editForm.pickupPostcode}
+                    onChange={(e) =>
+                      updateEditForm(
+                        'pickupPostcode',
+                        e.target.value.toUpperCase()
+                      )
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="edit-vias">
+                {editVias.map((via, index) => (
+                  <div
+                    className="edit-via-row"
+                    key={index}
+                  >
+                    <label>
+                      Via {index + 1}
+                      <input
+                        value={via.address}
+                        onChange={(e) =>
+                          updateEditVia(
+                            index,
+                            'address',
+                            e.target.value
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Postcode
+                      <input
+                        value={via.postcode}
+                        onChange={(e) =>
+                          updateEditVia(
+                            index,
+                            'postcode',
+                            e.target.value.toUpperCase()
+                          )
+                        }
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      className="remove-stop"
+                      onClick={() =>
+                        removeEditVia(index)
+                      }
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  className="add-via edit-add-via"
+                  onClick={addEditVia}
+                >
+                  <Plus size={16}/>
+                  Add Via
+                </button>
+              </div>
+
+              <div className="form-grid two">
+                <label>
+                  Destination
+                  <input
+                    required
+                    value={editForm.destinationAddress}
+                    onChange={(e) =>
+                      updateEditForm(
+                        'destinationAddress',
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  Destination Postcode
+                  <input
+                    value={
+                      editForm.destinationPostcode
+                    }
+                    onChange={(e) =>
+                      updateEditForm(
+                        'destinationPostcode',
+                        e.target.value.toUpperCase()
+                      )
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-grid two">
+                <label>
+                  Passenger Name
+                  <input
+                    required
+                    value={editForm.passengerName}
+                    onChange={(e) =>
+                      updateEditForm(
+                        'passengerName',
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  Contact Number
+                  <input
+                    type="tel"
+                    required
+                    value={editForm.passengerMobile}
+                    onChange={(e) =>
+                      updateEditForm(
+                        'passengerMobile',
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-grid two">
+                <label>
+                  Passenger Count
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={editForm.passengerCount}
+                    onChange={(e) =>
+                      updateEditForm(
+                        'passengerCount',
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  Reason Code
+                  <select
+                    required
+                    value={editForm.reasonCodeId}
+                    onChange={(e) =>
+                      updateEditForm(
+                        'reasonCodeId',
+                        e.target.value
+                      )
+                    }
+                  >
+                    <option value="">
+                      Select reason...
+                    </option>
+
+                    {editOptions.reasonCodes.map(
+                      (reason) => (
+                        <option
+                          key={reason.id}
+                          value={reason.id}
+                        >
+                          {reason.code} — {reason.description}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+              </div>
+
+              <label>
+                Budget
+                <select
+                  required
+                  value={editForm.budgetId}
+                  onChange={(e) =>
+                    updateEditForm(
+                      'budgetId',
+                      e.target.value
+                    )
+                  }
+                >
+                  <option value="">
+                    Select budget...
+                  </option>
+
+                  {editOptions.budgets.map(
+                    (budget) => (
+                      <option
+                        key={budget.id}
+                        value={budget.id}
+                      >
+                        {budget.budgetNumber} — {budget.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+
+              <label>
+                Driver Notes
+                <textarea
+                  rows="3"
+                  value={editForm.driverNotes}
+                  onChange={(e) =>
+                    updateEditForm(
+                      'driverNotes',
+                      e.target.value
+                    )
+                  }
+                />
+              </label>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={closeAmend}
+                  disabled={savingEdit}
+                >
+                  Keep Existing
+                </button>
+
+                <button
+                  type="submit"
+                  className="primary"
+                  disabled={savingEdit}
+                >
+                  {savingEdit
+                    ? 'Saving Changes...'
+                    : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {cancelBooking && (
+        <div className="modal-backdrop">
+          <div className="modal-card modal-card-small">
+            <div className="modal-header">
+              <div>
+                <h2>Cancel Booking</h2>
+
+                <p>
+                  {cancelBooking.publicReference}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeCancel}
+                disabled={cancelling}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={confirmCancel}>
+              <div className="cancel-warning">
+                This will cancel the UHP transport
+                request. The booking will remain in
+                the audit history.
+              </div>
+
+              <label>
+                Cancellation Reason
+                <textarea
+                  required
+                  rows="4"
+                  placeholder="Enter the reason for cancellation..."
+                  value={cancelReason}
+                  onChange={(e) =>
+                    setCancelReason(e.target.value)
+                  }
+                />
+              </label>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={closeCancel}
+                  disabled={cancelling}
+                >
+                  Keep Booking
+                </button>
+
+                <button
+                  type="submit"
+                  className="danger-button"
+                  disabled={
+                    cancelling ||
+                    !cancelReason.trim()
+                  }
+                >
+                  {cancelling
+                    ? 'Cancelling...'
+                    : 'Cancel Booking'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }

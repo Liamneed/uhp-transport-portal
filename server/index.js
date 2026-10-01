@@ -1622,6 +1622,28 @@ function getBookingById(bookingId) {
   `).get(bookingId);
 }
 
+
+function getOwnedBookingDetails(
+  bookingId,
+  userId
+) {
+  const booking = getBookingById(bookingId);
+
+  if (
+    !booking ||
+    booking.createdByUserId !== userId
+  ) {
+    const error = new Error('Booking not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return {
+    ...booking,
+    stops: getBookingStops(bookingId)
+  };
+}
+
 function getBookingStops(bookingId) {
   return db.prepare(`
     SELECT
@@ -1663,6 +1685,595 @@ function parseRequiredPositiveInteger(value, label) {
   }
 
   return number;
+}
+
+
+function getOwnedEditableBooking(bookingId, userId) {
+  const booking = db.prepare(`
+    SELECT
+      *
+    FROM bookings
+    WHERE id = ?
+      AND created_by_user_id = ?
+  `).get(
+    bookingId,
+    userId
+  );
+
+  if (!booking) {
+    const error = new Error('Booking not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (booking.operational_status !== 'draft') {
+    const error = new Error(
+      'This booking can no longer be amended locally'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return booking;
+}
+
+function validateBookingCoding({
+  userId,
+  budgetId,
+  reasonCodeId
+}) {
+  const creator = db.prepare(`
+    SELECT
+      id,
+      first_name AS firstName,
+      last_name AS lastName,
+      department_id AS departmentId,
+      status
+    FROM users
+    WHERE id = ?
+  `).get(userId);
+
+  if (!creator || creator.status !== 'active') {
+    const error = new Error(
+      'The booking user must be an active portal user'
+    );
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const budget = db.prepare(`
+    SELECT
+      b.id,
+      b.budget_number AS budgetNumber,
+      b.name,
+      b.department_id AS departmentId,
+      d.name AS departmentName,
+      b.status
+    FROM budgets b
+    LEFT JOIN departments d
+      ON d.id = b.department_id
+    WHERE b.id = ?
+  `).get(budgetId);
+
+  if (!budget || budget.status !== 'active') {
+    const error = new Error(
+      'The selected UHP budget is not active'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const permission = db.prepare(`
+    SELECT id
+    FROM user_budget_access
+    WHERE user_id = ?
+      AND budget_id = ?
+      AND can_book = 1
+      AND (
+        valid_from IS NULL OR
+        valid_from <= date('now')
+      )
+      AND (
+        valid_to IS NULL OR
+        valid_to >= date('now')
+      )
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(
+    userId,
+    budgetId
+  );
+
+  if (!permission) {
+    const error = new Error(
+      'This user is not authorised to book against the selected budget'
+    );
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const reasonCode = db.prepare(`
+    SELECT
+      id,
+      code,
+      description,
+      status
+    FROM reason_codes
+    WHERE id = ?
+  `).get(reasonCodeId);
+
+  if (!reasonCode || reasonCode.status !== 'active') {
+    const error = new Error(
+      'The selected reason code is not active'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const budgetHolder = db.prepare(`
+    SELECT
+      u.id,
+      u.first_name AS firstName,
+      u.last_name AS lastName
+    FROM budget_assignments ba
+    JOIN users u
+      ON u.id = ba.user_id
+    WHERE ba.budget_id = ?
+      AND ba.assignment_type = 'primary_holder'
+      AND ba.is_active = 1
+      AND (
+        ba.valid_from IS NULL OR
+        ba.valid_from <= date('now')
+      )
+      AND (
+        ba.valid_to IS NULL OR
+        ba.valid_to >= date('now')
+      )
+    ORDER BY ba.id DESC
+    LIMIT 1
+  `).get(budgetId);
+
+  if (!budgetHolder) {
+    const error = new Error(
+      'The selected budget has no active primary budget holder'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return {
+    creator,
+    budget,
+    reasonCode,
+    budgetHolder
+  };
+}
+
+function amendPortalBooking(
+  bookingId,
+  userId,
+  payload
+) {
+  const existing = getOwnedEditableBooking(
+    bookingId,
+    userId
+  );
+
+  const requestedPickupAt = String(
+    payload.requestedPickupAt || ''
+  ).trim();
+
+  const passengerName = String(
+    payload.passengerName || ''
+  ).trim();
+
+  const passengerMobile = String(
+    payload.passengerMobile || ''
+  ).trim();
+
+  const passengerCount =
+    parseRequiredPositiveInteger(
+      payload.passengerCount ?? 1,
+      'Passenger count'
+    );
+
+  const pickup = normaliseStop(payload.pickup);
+  const destination =
+    normaliseStop(payload.destination);
+
+  const vias = Array.isArray(payload.vias)
+    ? payload.vias
+        .map(normaliseStop)
+        .filter((stop) => stop.address)
+    : [];
+
+  const driverNotes = String(
+    payload.driverNotes || ''
+  ).trim();
+
+  const budgetId = Number(payload.budgetId);
+  const reasonCodeId = Number(payload.reasonCodeId);
+
+  if (!requestedPickupAt) {
+    const error = new Error(
+      'Pickup date and time are required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    Number.isNaN(
+      new Date(requestedPickupAt).getTime()
+    )
+  ) {
+    const error = new Error(
+      'Pickup date and time are not valid'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!passengerName) {
+    const error = new Error(
+      'Passenger name is required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!passengerMobile) {
+    const error = new Error(
+      'Passenger contact number is required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!pickup.address) {
+    const error = new Error(
+      'Pickup address is required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!destination.address) {
+    const error = new Error(
+      'Destination address is required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!Number.isInteger(budgetId) || budgetId < 1) {
+    const error = new Error(
+      'A valid UHP budget is required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(reasonCodeId) ||
+    reasonCodeId < 1
+  ) {
+    const error = new Error(
+      'A valid reason code is required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const {
+    creator,
+    budget,
+    reasonCode,
+    budgetHolder
+  } = validateBookingCoding({
+    userId,
+    budgetId,
+    reasonCodeId
+  });
+
+  const oldStops = getBookingStops(bookingId);
+
+  const previousSnapshot = db.prepare(`
+    SELECT *
+    FROM booking_account_snapshot
+    WHERE booking_id = ?
+  `).get(bookingId);
+
+  const oldState = {
+    requestedPickupAt:
+      existing.requested_pickup_at,
+    passengerName:
+      existing.passenger_name,
+    passengerMobile:
+      existing.passenger_mobile,
+    passengerCount:
+      existing.passenger_count,
+    pickupAddress:
+      existing.pickup_address,
+    destinationAddress:
+      existing.destination_address,
+    driverNotes:
+      existing.driver_notes,
+    budgetId:
+      existing.budget_id,
+    reasonCodeId:
+      existing.reason_code_id,
+    budgetHolderUserId:
+      existing.budget_holder_user_id,
+    stops: oldStops,
+    accountSnapshot:
+      previousSnapshot || null
+  };
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE bookings
+      SET
+        requested_pickup_at = ?,
+        passenger_name = ?,
+        passenger_mobile = ?,
+        passenger_count = ?,
+        pickup_address = ?,
+        pickup_postcode = ?,
+        destination_address = ?,
+        destination_postcode = ?,
+        driver_notes = ?,
+        budget_id = ?,
+        reason_code_id = ?,
+        budget_holder_user_id = ?,
+        department_id = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      requestedPickupAt,
+      passengerName,
+      passengerMobile,
+      passengerCount,
+      pickup.address,
+      pickup.postcode || null,
+      destination.address,
+      destination.postcode || null,
+      driverNotes || null,
+      budgetId,
+      reasonCodeId,
+      budgetHolder.id,
+      budget.departmentId || null,
+      bookingId
+    );
+
+    db.prepare(`
+      DELETE FROM booking_stops
+      WHERE booking_id = ?
+    `).run(bookingId);
+
+    const insertStop = db.prepare(`
+      INSERT INTO booking_stops
+        (
+          booking_id,
+          sequence_number,
+          stop_type,
+          address,
+          postcode,
+          notes
+        )
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    let sequenceNumber = 0;
+
+    insertStop.run(
+      bookingId,
+      sequenceNumber++,
+      'pickup',
+      pickup.address,
+      pickup.postcode || null,
+      pickup.notes || null
+    );
+
+    for (const via of vias) {
+      insertStop.run(
+        bookingId,
+        sequenceNumber++,
+        'via',
+        via.address,
+        via.postcode || null,
+        via.notes || null
+      );
+    }
+
+    insertStop.run(
+      bookingId,
+      sequenceNumber,
+      'destination',
+      destination.address,
+      destination.postcode || null,
+      destination.notes || null
+    );
+
+    db.prepare(`
+      UPDATE booking_account_snapshot
+      SET
+        budget_id = ?,
+        budget_number = ?,
+        budget_name = ?,
+        reason_code_id = ?,
+        reason_code = ?,
+        reason_description = ?,
+        budget_holder_user_id = ?,
+        budget_holder_name = ?,
+        department_id = ?,
+        department_name = ?,
+        captured_at = CURRENT_TIMESTAMP
+      WHERE booking_id = ?
+    `).run(
+      budget.id,
+      budget.budgetNumber,
+      budget.name,
+      reasonCode.id,
+      reasonCode.code,
+      reasonCode.description,
+      budgetHolder.id,
+      `${budgetHolder.firstName} ${budgetHolder.lastName}`,
+      budget.departmentId || null,
+      budget.departmentName || null,
+      bookingId
+    );
+
+    const newState = {
+      requestedPickupAt,
+      passengerName,
+      passengerMobile,
+      passengerCount,
+      pickupAddress: pickup.address,
+      destinationAddress: destination.address,
+      driverNotes: driverNotes || null,
+      budgetId,
+      reasonCodeId,
+      budgetHolderUserId: budgetHolder.id,
+      stops: getBookingStops(bookingId)
+    };
+
+    db.prepare(`
+      INSERT INTO booking_events
+        (
+          booking_id,
+          event_type,
+          event_source,
+          old_status,
+          new_status,
+          user_id,
+          notes,
+          raw_payload
+        )
+      VALUES (
+        ?,
+        'booking_amended',
+        'portal',
+        'draft',
+        'draft',
+        ?,
+        ?,
+        ?
+      )
+    `).run(
+      bookingId,
+      userId,
+      'UHP portal booking amended',
+      JSON.stringify({
+        old: oldState,
+        new: newState
+      })
+    );
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType: 'booking',
+      entityId: bookingId,
+      oldValue: JSON.stringify(oldState),
+      newValue: JSON.stringify(newState),
+      source: 'portal'
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      ...getBookingById(bookingId),
+      stops: getBookingStops(bookingId)
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function cancelPortalBooking(
+  bookingId,
+  userId,
+  payload
+) {
+  const booking = getOwnedEditableBooking(
+    bookingId,
+    userId
+  );
+
+  const reason = String(
+    payload.reason || ''
+  ).trim();
+
+  if (!reason) {
+    const error = new Error(
+      'Cancellation reason is required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE bookings
+      SET
+        operational_status = 'cancelled',
+        financial_status = 'authorisation_withdrawn',
+        cancelled_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(bookingId);
+
+    db.prepare(`
+      INSERT INTO booking_events
+        (
+          booking_id,
+          event_type,
+          event_source,
+          old_status,
+          new_status,
+          user_id,
+          notes
+        )
+      VALUES (
+        ?,
+        'booking_cancelled',
+        'portal',
+        'draft',
+        'cancelled',
+        ?,
+        ?
+      )
+    `).run(
+      bookingId,
+      userId,
+      reason
+    );
+
+    writeAudit({
+      action: 'STATUS_CHANGE',
+      entityType: 'booking',
+      entityId: bookingId,
+      fieldName: 'operational_status',
+      oldValue: booking.operational_status,
+      newValue: 'cancelled',
+      source: 'portal'
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      ...getBookingById(bookingId),
+      stops: getBookingStops(bookingId)
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 function createPortalBooking(payload) {
@@ -1959,7 +2570,7 @@ function createPortalBooking(payload) {
       reasonCodeId,
       budgetHolder.id,
       createdByUserId,
-      creator.departmentId || null
+      budget.departmentId || null
     );
 
     const bookingId = Number(result.lastInsertRowid);
@@ -2183,6 +2794,82 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, 200, {
         bookings: listBookingsForUser(userId)
+      });
+    }
+
+    const bookingAmendMatch = url.pathname.match(
+      /^\/api\/bookings\/(\d+)$/
+    );
+
+    // owned-booking-detail route
+    if (req.method === 'GET' && bookingAmendMatch) {
+      const bookingId = Number(bookingAmendMatch[1]);
+      const userId = Number(
+        url.searchParams.get('userId')
+      );
+
+      if (!Number.isInteger(userId) || userId < 1) {
+        const error = new Error(
+          'A valid userId is required'
+        );
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return sendJson(res, 200, {
+        booking: getOwnedBookingDetails(
+          bookingId,
+          userId
+        )
+      });
+    }
+
+    // booking-amend route
+    if (req.method === 'PATCH' && bookingAmendMatch) {
+      const payload = await readJson(req);
+      const bookingId = Number(bookingAmendMatch[1]);
+      const userId = Number(payload.userId);
+
+      if (!Number.isInteger(userId) || userId < 1) {
+        const error = new Error('A valid userId is required');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const booking = amendPortalBooking(
+        bookingId,
+        userId,
+        payload
+      );
+
+      return sendJson(res, 200, {
+        booking
+      });
+    }
+
+    const bookingCancelMatch = url.pathname.match(
+      /^\/api\/bookings\/(\d+)\/cancel$/
+    );
+
+    if (req.method === 'POST' && bookingCancelMatch) {
+      const payload = await readJson(req);
+      const bookingId = Number(bookingCancelMatch[1]);
+      const userId = Number(payload.userId);
+
+      if (!Number.isInteger(userId) || userId < 1) {
+        const error = new Error('A valid userId is required');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const booking = cancelPortalBooking(
+        bookingId,
+        userId,
+        payload
+      );
+
+      return sendJson(res, 200, {
+        booking
       });
     }
 
