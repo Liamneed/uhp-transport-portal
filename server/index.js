@@ -3598,6 +3598,354 @@ const AUTOCAB_WEBHOOK_EVENTS = {
   }
 };
 
+function normaliseAutocabScalar(
+  value
+) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return null;
+  }
+
+  const clean =
+    String(value).trim();
+
+  return clean || null;
+}
+
+
+function captureAutocabVehiclePosition(
+  payload
+) {
+  if (!Array.isArray(payload)) {
+    const error = new Error(
+      'Autocab vehicle position payload must be an array'
+    );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const statement =
+    db.prepare(`
+      INSERT INTO autocab_vehicle_position
+        (
+          vehicle_id,
+          longitude,
+          latitude,
+          speed_kph,
+          speed_mph,
+          heading_degrees,
+          heading_direction,
+          source_timestamp,
+          updated_at
+        )
+      VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(vehicle_id)
+      DO UPDATE SET
+        longitude =
+          excluded.longitude,
+        latitude =
+          excluded.latitude,
+        speed_kph =
+          excluded.speed_kph,
+        speed_mph =
+          excluded.speed_mph,
+        heading_degrees =
+          excluded.heading_degrees,
+        heading_direction =
+          excluded.heading_direction,
+        source_timestamp =
+          excluded.source_timestamp,
+        updated_at =
+          CURRENT_TIMESTAMP
+    `);
+
+  let updated = 0;
+
+  db.exec('BEGIN');
+
+  try {
+    for (const item of payload) {
+      const vehicleId =
+        Number(item?.VehicleAutoID);
+
+      const longitude =
+        Number(
+          item?.Position?.Longitude
+        );
+
+      const latitude =
+        Number(
+          item?.Position?.Latitude
+        );
+
+      if (
+        !Number.isInteger(vehicleId) ||
+        vehicleId < 1 ||
+        !Number.isFinite(longitude) ||
+        !Number.isFinite(latitude)
+      ) {
+        continue;
+      }
+
+      statement.run(
+        vehicleId,
+        longitude,
+        latitude,
+        Number.isFinite(
+          Number(
+            item?.SpeedDetails
+              ?.SpeedKph
+          )
+        )
+          ? Number(
+              item.SpeedDetails
+                .SpeedKph
+            )
+          : null,
+        Number.isFinite(
+          Number(
+            item?.SpeedDetails
+              ?.SpeedMph
+          )
+        )
+          ? Number(
+              item.SpeedDetails
+                .SpeedMph
+            )
+          : null,
+        Number.isFinite(
+          Number(
+            item?.HeadingDetails
+              ?.HeadingDegrees
+          )
+        )
+          ? Number(
+              item.HeadingDetails
+                .HeadingDegrees
+            )
+          : null,
+        normaliseAutocabScalar(
+          item?.HeadingDetails
+            ?.HeadingDirection
+        ),
+        normaliseAutocabScalar(
+          item?.Received
+        )
+      );
+
+      updated += 1;
+    }
+
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  return {
+    received: true,
+    eventType:
+      'vehicle_position_changed',
+    category:
+      'fleet',
+    updated
+  };
+}
+
+
+function captureAutocabVehicleTracks(
+  payload
+) {
+  const tracks =
+    Array.isArray(
+      payload?.VehicleTracks
+    )
+      ? payload.VehicleTracks
+      : null;
+
+  if (!tracks) {
+    const error = new Error(
+      'Autocab vehicle tracks payload is not valid'
+    );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const statement =
+    db.prepare(`
+      INSERT INTO autocab_vehicle_state
+        (
+          vehicle_id,
+          callsign,
+          registration,
+          plate_number,
+          device_id,
+          booking_id,
+          vehicle_status,
+          driver_id,
+          driver_callsign,
+          driver_forename,
+          driver_surname,
+          driver_badge_number,
+          longitude,
+          latitude,
+          source_timestamp,
+          updated_at
+        )
+      VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(vehicle_id)
+      DO UPDATE SET
+        callsign =
+          excluded.callsign,
+        registration =
+          excluded.registration,
+        plate_number =
+          excluded.plate_number,
+        device_id =
+          excluded.device_id,
+        booking_id =
+          excluded.booking_id,
+        vehicle_status =
+          excluded.vehicle_status,
+        driver_id =
+          excluded.driver_id,
+        driver_callsign =
+          excluded.driver_callsign,
+        driver_forename =
+          excluded.driver_forename,
+        driver_surname =
+          excluded.driver_surname,
+        driver_badge_number =
+          excluded.driver_badge_number,
+        longitude =
+          excluded.longitude,
+        latitude =
+          excluded.latitude,
+        source_timestamp =
+          excluded.source_timestamp,
+        updated_at =
+          CURRENT_TIMESTAMP
+    `);
+
+  let updated = 0;
+
+  db.exec('BEGIN');
+
+  try {
+    for (const item of tracks) {
+      const vehicleId =
+        Number(item?.Vehicle?.Id);
+
+      if (
+        !Number.isInteger(vehicleId) ||
+        vehicleId < 1
+      ) {
+        continue;
+      }
+
+      const driverId =
+        Number(item?.Driver?.Id);
+
+      const longitude =
+        Number(
+          item?.CurrentLocation
+            ?.Longitude
+        );
+
+      const latitude =
+        Number(
+          item?.CurrentLocation
+            ?.Latitude
+        );
+
+      const bookingId =
+        Number(item?.BookingId);
+
+      statement.run(
+        vehicleId,
+        normaliseAutocabScalar(
+          item?.Vehicle?.Callsign
+        ),
+        normaliseAutocabScalar(
+          item?.Vehicle
+            ?.Registration
+        ),
+        normaliseAutocabScalar(
+          item?.Vehicle
+            ?.PlateNumber
+        ),
+        normaliseAutocabScalar(
+          item?.Vehicle
+            ?.DeviceId
+        ),
+        Number.isFinite(bookingId) &&
+        bookingId > 0
+          ? String(bookingId)
+          : null,
+        normaliseAutocabScalar(
+          item?.VehicleStatus
+        ),
+        Number.isInteger(driverId) &&
+        driverId > 0
+          ? driverId
+          : null,
+        normaliseAutocabScalar(
+          item?.Driver?.Callsign
+        ),
+        normaliseAutocabScalar(
+          item?.Driver?.Forename
+        ),
+        normaliseAutocabScalar(
+          item?.Driver?.Surname
+        ),
+        normaliseAutocabScalar(
+          item?.Driver
+            ?.BadgeNumber
+        ),
+        Number.isFinite(longitude)
+          ? longitude
+          : null,
+        Number.isFinite(latitude)
+          ? latitude
+          : null,
+        normaliseAutocabScalar(
+          item?.Timestamp
+        )
+      );
+
+      updated += 1;
+    }
+
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  return {
+    received: true,
+    eventType:
+      'vehicle_tracks_changed',
+    category:
+      'fleet',
+    updated
+  };
+}
+
+
 function captureAutocabWebhook(
   routeSuffix,
   payload
@@ -3617,6 +3965,47 @@ function captureAutocabWebhook(
     throw error;
   }
 
+  /*
+    High-frequency fleet telemetry is
+    stored as latest known state rather
+    than permanent integration events.
+  */
+  if (
+    routeSuffix ===
+      'vehicle_position'
+  ) {
+    return (
+      captureAutocabVehiclePosition(
+        payload
+      )
+    );
+  }
+
+  if (
+    routeSuffix ===
+      'vehicle_tracks'
+  ) {
+    return (
+      captureAutocabVehicleTracks(
+        payload
+      )
+    );
+  }
+
+  const autocabBookingId =
+    definition.category === 'booking'
+      ? normaliseAutocabScalar(
+          payload?.Id
+        )
+      : null;
+
+  const autocabReference =
+    definition.category === 'booking'
+      ? normaliseAutocabScalar(
+          payload?.OurReference
+        )
+      : null;
+
   const result =
     db.prepare(`
       INSERT INTO integration_events
@@ -3626,6 +4015,8 @@ function captureAutocabWebhook(
           event_type,
           route_suffix,
           category,
+          autocab_booking_id,
+          autocab_reference,
           payload_json,
           processing_status
         )
@@ -3636,12 +4027,16 @@ function captureAutocabWebhook(
         ?,
         ?,
         ?,
+        ?,
+        ?,
         'received'
       )
     `).run(
       definition.eventType,
       routeSuffix,
       definition.category,
+      autocabBookingId,
+      autocabReference,
       JSON.stringify(payload)
     );
 
@@ -3654,7 +4049,9 @@ function captureAutocabWebhook(
     eventType:
       definition.eventType,
     category:
-      definition.category
+      definition.category,
+    autocabBookingId,
+    autocabReference
   };
 }
 
