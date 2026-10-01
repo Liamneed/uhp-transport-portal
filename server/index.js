@@ -1504,6 +1504,236 @@ function getBookingOptions(userId) {
 }
 
 
+
+function listOperationalBookings() {
+  const bookings = db.prepare(`
+    SELECT
+      b.id,
+      b.public_reference AS publicReference,
+
+      b.autocab_booking_id AS autocabBookingId,
+      b.autocab_reference AS autocabReference,
+
+      b.source,
+      b.operational_status AS operationalStatus,
+      b.financial_status AS financialStatus,
+
+      b.requested_pickup_at AS requestedPickupAt,
+
+      b.passenger_name AS passengerName,
+      b.passenger_mobile AS passengerMobile,
+      b.passenger_count AS passengerCount,
+
+      b.pickup_address AS pickupAddress,
+      b.pickup_postcode AS pickupPostcode,
+
+      b.destination_address AS destinationAddress,
+      b.destination_postcode AS destinationPostcode,
+
+      b.driver_notes AS driverNotes,
+      b.internal_notes AS internalNotes,
+
+      b.budget_id AS budgetId,
+      bu.budget_number AS budgetNumber,
+      bu.name AS budgetName,
+
+      b.reason_code_id AS reasonCodeId,
+      rc.code AS reasonCode,
+      rc.description AS reasonDescription,
+
+      b.budget_holder_user_id AS budgetHolderUserId,
+      holder.first_name || ' ' || holder.last_name AS budgetHolder,
+
+      b.created_by_user_id AS createdByUserId,
+      creator.first_name || ' ' || creator.last_name AS createdBy,
+
+      b.department_id AS departmentId,
+      d.name AS department,
+
+      b.submitted_at AS submittedAt,
+      b.confirmed_at AS confirmedAt,
+      b.completed_at AS completedAt,
+      b.cancelled_at AS cancelledAt,
+
+      b.created_at AS createdAt,
+      b.updated_at AS updatedAt
+
+    FROM bookings b
+
+    JOIN budgets bu
+      ON bu.id = b.budget_id
+
+    JOIN reason_codes rc
+      ON rc.id = b.reason_code_id
+
+    JOIN users holder
+      ON holder.id = b.budget_holder_user_id
+
+    JOIN users creator
+      ON creator.id = b.created_by_user_id
+
+    LEFT JOIN departments d
+      ON d.id = b.department_id
+
+    ORDER BY
+      datetime(b.requested_pickup_at) DESC,
+      b.id DESC
+  `).all();
+
+  const stopsStatement = db.prepare(`
+    SELECT
+      sequence_number AS sequenceNumber,
+      stop_type AS stopType,
+      address,
+      postcode,
+      notes
+    FROM booking_stops
+    WHERE booking_id = ?
+    ORDER BY sequence_number
+  `);
+
+  const eventsStatement = db.prepare(`
+    SELECT
+      id,
+      event_type AS eventType,
+      event_source AS eventSource,
+      event_at AS eventAt,
+      old_status AS oldStatus,
+      new_status AS newStatus,
+      user_id AS userId,
+      notes
+    FROM booking_events
+    WHERE booking_id = ?
+    ORDER BY id DESC
+  `);
+
+  return bookings.map((booking) => {
+    const exceptionReasons = [];
+
+    if (
+      booking.operationalStatus === 'failed'
+    ) {
+      exceptionReasons.push(
+        'Booking submission failed'
+      );
+    }
+
+    if (
+      booking.operationalStatus ===
+      'requires_review'
+    ) {
+      exceptionReasons.push(
+        'Booking requires review'
+      );
+    }
+
+    if (
+      booking.financialStatus ===
+      'coding_required'
+    ) {
+      exceptionReasons.push(
+        'Financial coding required'
+      );
+    }
+
+    if (
+      booking.financialStatus ===
+      'disputed'
+    ) {
+      exceptionReasons.push(
+        'Financial status disputed'
+      );
+    }
+
+    if (
+      booking.financialStatus ===
+      'adjustment_required'
+    ) {
+      exceptionReasons.push(
+        'Financial adjustment required'
+      );
+    }
+
+    return {
+      ...booking,
+
+      stops:
+        stopsStatement.all(booking.id),
+
+      events:
+        eventsStatement.all(booking.id),
+
+      hasException:
+        exceptionReasons.length > 0,
+
+      exceptionReasons
+    };
+  });
+}
+
+function getControlSummary() {
+  const bookings = listOperationalBookings();
+
+  const now = new Date();
+
+  const today =
+    now.toISOString().slice(0, 10);
+
+  const activeStatuses = new Set([
+    'draft',
+    'submitting',
+    'booked',
+    'confirmed',
+    'driver_allocated',
+    'driver_en_route',
+    'driver_arrived',
+    'passenger_on_board',
+    'requires_review'
+  ]);
+
+  const active = bookings.filter(
+    (booking) =>
+      activeStatuses.has(
+        booking.operationalStatus
+      )
+  );
+
+  return {
+    total: bookings.length,
+
+    active: active.length,
+
+    dueToday: active.filter(
+      (booking) =>
+        String(
+          booking.requestedPickupAt || ''
+        ).slice(0, 10) === today
+    ).length,
+
+    requestRecorded: bookings.filter(
+      (booking) =>
+        booking.operationalStatus === 'draft'
+    ).length,
+
+    completed: bookings.filter(
+      (booking) =>
+        booking.operationalStatus ===
+        'completed'
+    ).length,
+
+    cancelled: bookings.filter(
+      (booking) =>
+        booking.operationalStatus ===
+        'cancelled'
+    ).length,
+
+    exceptions: bookings.filter(
+      (booking) =>
+        booking.hasException
+    ).length
+  };
+}
+
 function listBookingsForUser(userId) {
   const user = db.prepare(`
     SELECT
@@ -2795,6 +3025,26 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         bookings: listBookingsForUser(userId)
       });
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname === '/api/control/bookings'
+    ) {
+      return sendJson(res, 200, {
+        bookings: listOperationalBookings()
+      });
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname === '/api/control/summary'
+    ) {
+      return sendJson(
+        res,
+        200,
+        getControlSummary()
+      );
     }
 
     const bookingAmendMatch = url.pathname.match(

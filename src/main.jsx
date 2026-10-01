@@ -96,6 +96,12 @@ function App() {
             <BookTransportPage/>
           ) : role === 'booker' && active === 'My Bookings' ? (
             <MyBookingsPage/>
+          ) : role === 'nac' && active === 'Control' ? (
+            <NacControlPage/>
+          ) : role === 'nac' && active === 'Bookings' ? (
+            <NacBookingsPage/>
+          ) : role === 'nac' && active === 'Exceptions' ? (
+            <NacBookingsPage exceptionsOnly/>
           ) : (
             <Placeholder role={role} active={active}/>
           )}
@@ -690,6 +696,977 @@ function UsersPage() {
 
 
 
+
+
+function formatOperationalStatus(status) {
+  const map = {
+    draft: 'Request Recorded',
+    submitting: 'Sending to Dispatch',
+    booked: 'Booked',
+    confirmed: 'Confirmed',
+    driver_allocated: 'Driver Allocated',
+    driver_en_route: 'Driver En Route',
+    driver_arrived: 'Driver Arrived',
+    passenger_on_board: 'Passenger On Board',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+    no_show: 'No Show',
+    failed: 'Failed',
+    requires_review: 'Requires Review'
+  };
+
+  return map[status] || formatStatus(status);
+}
+
+function formatBookingDateTime(value) {
+  if (!value) return '—';
+
+  return value
+    .replace('T', ' ')
+    .slice(0, 16);
+}
+
+function NacControlPage() {
+  const [summary, setSummary] = useState(null);
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  async function loadControl() {
+    setLoading(true);
+    setError('');
+
+    try {
+      const [summaryResponse, bookingsResponse] =
+        await Promise.all([
+          fetch(
+            'http://localhost:3001/api/control/summary'
+          ),
+          fetch(
+            'http://localhost:3001/api/control/bookings'
+          )
+        ]);
+
+      const summaryData =
+        await summaryResponse.json();
+
+      const bookingData =
+        await bookingsResponse.json();
+
+      if (!summaryResponse.ok) {
+        throw new Error(
+          summaryData.error ||
+          'Unable to load control summary'
+        );
+      }
+
+      if (!bookingsResponse.ok) {
+        throw new Error(
+          bookingData.error ||
+          'Unable to load bookings'
+        );
+      }
+
+      setSummary(summaryData);
+      setBookings(bookingData.bookings ?? []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load control'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadControl();
+  }, []);
+
+  const upcoming = useMemo(
+    () =>
+      bookings
+        .filter(
+          (booking) =>
+            ![
+              'completed',
+              'cancelled',
+              'no_show'
+            ].includes(
+              booking.operationalStatus
+            )
+        )
+        .sort(
+          (a, b) =>
+            new Date(a.requestedPickupAt) -
+            new Date(b.requestedPickupAt)
+        )
+        .slice(0, 8),
+    [bookings]
+  );
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading Need-A-Cab control...
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>Need-A-Cab Control</h1>
+
+          <p>
+            Operational view of UHP-funded
+            transport requests.
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="stats-grid nac-control-stats">
+        <Stat
+          icon={<CarFront/>}
+          label="Active"
+          value={summary?.active ?? 0}
+        />
+
+        <Stat
+          icon={<Clock3/>}
+          label="Due Today"
+          value={summary?.dueToday ?? 0}
+        />
+
+        <Stat
+          icon={<CheckCircle2/>}
+          label="Completed"
+          value={summary?.completed ?? 0}
+        />
+
+        <Stat
+          icon={<AlertTriangle/>}
+          label="Exceptions"
+          value={summary?.exceptions ?? 0}
+        />
+      </div>
+
+      <div className="control-grid">
+        <section className="card control-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Upcoming Requests</h2>
+
+              <p>
+                Next UHP journeys requiring
+                operational visibility.
+              </p>
+            </div>
+          </div>
+
+          {upcoming.length === 0 ? (
+            <div className="empty-bookings compact-empty">
+              <CalendarDays size={28}/>
+
+              <strong>
+                No upcoming requests
+              </strong>
+
+              <span>
+                New portal bookings will
+                appear here.
+              </span>
+            </div>
+          ) : (
+            <div className="control-booking-list">
+              {upcoming.map((booking) => (
+                <div
+                  className="control-booking-item"
+                  key={booking.id}
+                >
+                  <div className="control-time">
+                    <strong>
+                      {formatBookingDateTime(
+                        booking.requestedPickupAt
+                      )}
+                    </strong>
+
+                    <small>
+                      {booking.publicReference}
+                    </small>
+                  </div>
+
+                  <div className="control-passenger">
+                    <strong>
+                      {booking.passengerName}
+                    </strong>
+
+                    <small>
+                      {booking.pickupAddress}
+                      {' → '}
+                      {booking.destinationAddress}
+                    </small>
+                  </div>
+
+                  <div className="control-meta">
+                    <span
+                      className={
+                        `badge ${booking.operationalStatus}`
+                      }
+                    >
+                      {formatOperationalStatus(
+                        booking.operationalStatus
+                      )}
+                    </span>
+
+                    {booking.hasException && (
+                      <span className="exception-chip">
+                        Exception
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <aside className="card control-side-panel">
+          <h3>Portal Status</h3>
+
+          <div className="control-kpi">
+            <span>Request Recorded</span>
+            <strong>
+              {summary?.requestRecorded ?? 0}
+            </strong>
+          </div>
+
+          <div className="control-kpi">
+            <span>Cancelled</span>
+            <strong>
+              {summary?.cancelled ?? 0}
+            </strong>
+          </div>
+
+          <div className="control-kpi">
+            <span>Total Requests</span>
+            <strong>
+              {summary?.total ?? 0}
+            </strong>
+          </div>
+
+          <div className="control-note">
+            Autocab dispatch integration is
+            not yet enabled. Portal requests
+            remain local until that integration
+            is switched on.
+          </div>
+        </aside>
+      </div>
+    </>
+  );
+}
+
+function NacBookingsPage({
+  exceptionsOnly = false
+}) {
+  const [bookings, setBookings] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [budgets, setBudgets] = useState([]);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] =
+    useState('all');
+  const [departmentFilter, setDepartmentFilter] =
+    useState('all');
+  const [budgetFilter, setBudgetFilter] =
+    useState('all');
+  const [dateFilter, setDateFilter] =
+    useState('');
+
+  const [expandedId, setExpandedId] =
+    useState(null);
+
+  async function loadOperationalBookings() {
+    setLoading(true);
+    setError('');
+
+    try {
+      const [
+        bookingResponse,
+        departmentResponse,
+        budgetResponse
+      ] = await Promise.all([
+        fetch(
+          'http://localhost:3001/api/control/bookings'
+        ),
+        fetch(
+          'http://localhost:3001/api/departments'
+        ),
+        fetch(
+          'http://localhost:3001/api/budgets'
+        )
+      ]);
+
+      const bookingData =
+        await bookingResponse.json();
+
+      const departmentData =
+        await departmentResponse.json();
+
+      const budgetData =
+        await budgetResponse.json();
+
+      if (!bookingResponse.ok) {
+        throw new Error(
+          bookingData.error ||
+          'Unable to load operational bookings'
+        );
+      }
+
+      if (!departmentResponse.ok) {
+        throw new Error(
+          departmentData.error ||
+          'Unable to load departments'
+        );
+      }
+
+      if (!budgetResponse.ok) {
+        throw new Error(
+          budgetData.error ||
+          'Unable to load budgets'
+        );
+      }
+
+      setBookings(
+        bookingData.bookings ?? []
+      );
+
+      setDepartments(
+        departmentData.departments ?? []
+      );
+
+      setBudgets(
+        budgetData.budgets ?? []
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load operational bookings'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadOperationalBookings();
+  }, []);
+
+  const filteredBookings = useMemo(() => {
+    const term =
+      query.trim().toLowerCase();
+
+    return bookings.filter((booking) => {
+      if (
+        exceptionsOnly &&
+        !booking.hasException
+      ) {
+        return false;
+      }
+
+      if (
+        statusFilter !== 'all' &&
+        booking.operationalStatus !==
+          statusFilter
+      ) {
+        return false;
+      }
+
+      if (
+        departmentFilter !== 'all' &&
+        String(booking.departmentId) !==
+          String(departmentFilter)
+      ) {
+        return false;
+      }
+
+      if (
+        budgetFilter !== 'all' &&
+        String(booking.budgetId) !==
+          String(budgetFilter)
+      ) {
+        return false;
+      }
+
+      if (
+        dateFilter &&
+        String(
+          booking.requestedPickupAt || ''
+        ).slice(0, 10) !== dateFilter
+      ) {
+        return false;
+      }
+
+      if (!term) return true;
+
+      return [
+        booking.publicReference,
+        booking.autocabReference,
+        booking.passengerName,
+        booking.passengerMobile,
+        booking.pickupAddress,
+        booking.destinationAddress,
+        booking.budgetNumber,
+        booking.budgetName,
+        booking.reasonCode,
+        booking.reasonDescription,
+        booking.budgetHolder,
+        booking.createdBy,
+        booking.department
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(term);
+    });
+  }, [
+    bookings,
+    exceptionsOnly,
+    query,
+    statusFilter,
+    departmentFilter,
+    budgetFilter,
+    dateFilter
+  ]);
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading operational bookings...
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>
+            {exceptionsOnly
+              ? 'UHP Exceptions'
+              : 'UHP Bookings'}
+          </h1>
+
+          <p>
+            {exceptionsOnly
+              ? 'Bookings requiring operational or financial attention.'
+              : 'All UHP-funded transport requests across the portal.'}
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="card nac-bookings-card">
+        <div className="nac-filter-grid">
+          <div className="search compact">
+            <Search size={17}/>
+
+            <input
+              value={query}
+              onChange={(e) =>
+                setQuery(e.target.value)
+              }
+              placeholder="Search passenger, reference, journey..."
+            />
+          </div>
+
+          <input
+            type="date"
+            value={dateFilter}
+            onChange={(e) =>
+              setDateFilter(e.target.value)
+            }
+          />
+
+          <select
+            value={statusFilter}
+            onChange={(e) =>
+              setStatusFilter(e.target.value)
+            }
+          >
+            <option value="all">
+              All statuses
+            </option>
+
+            <option value="draft">
+              Request Recorded
+            </option>
+
+            <option value="submitting">
+              Sending to Dispatch
+            </option>
+
+            <option value="booked">
+              Booked
+            </option>
+
+            <option value="confirmed">
+              Confirmed
+            </option>
+
+            <option value="driver_allocated">
+              Driver Allocated
+            </option>
+
+            <option value="completed">
+              Completed
+            </option>
+
+            <option value="cancelled">
+              Cancelled
+            </option>
+
+            <option value="failed">
+              Failed
+            </option>
+
+            <option value="requires_review">
+              Requires Review
+            </option>
+          </select>
+
+          <select
+            value={departmentFilter}
+            onChange={(e) =>
+              setDepartmentFilter(
+                e.target.value
+              )
+            }
+          >
+            <option value="all">
+              All departments
+            </option>
+
+            {departments.map(
+              (department) => (
+                <option
+                  key={department.id}
+                  value={department.id}
+                >
+                  {department.name}
+                </option>
+              )
+            )}
+          </select>
+
+          <select
+            value={budgetFilter}
+            onChange={(e) =>
+              setBudgetFilter(
+                e.target.value
+              )
+            }
+          >
+            <option value="all">
+              All budgets
+            </option>
+
+            {budgets.map((budget) => (
+              <option
+                key={budget.id}
+                value={budget.id}
+              >
+                {budget.budgetNumber}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="nac-results-summary">
+          <strong>
+            {filteredBookings.length}
+          </strong>
+
+          <span>
+            {exceptionsOnly
+              ? 'exceptions'
+              : 'bookings'}
+          </span>
+        </div>
+
+        {filteredBookings.length === 0 ? (
+          <div className="empty-bookings">
+            {exceptionsOnly ? (
+              <AlertTriangle size={30}/>
+            ) : (
+              <CalendarDays size={30}/>
+            )}
+
+            <strong>
+              {exceptionsOnly
+                ? 'No exceptions'
+                : 'No bookings found'}
+            </strong>
+
+            <span>
+              {exceptionsOnly
+                ? 'There are currently no bookings requiring attention.'
+                : 'Adjust the filters or create a UHP transport request.'}
+            </span>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="bookings-table nac-bookings-table">
+              <thead>
+                <tr>
+                  <th>Date / Time</th>
+                  <th>Reference</th>
+                  <th>Passenger</th>
+                  <th>Journey</th>
+                  <th>Department</th>
+                  <th>Budget</th>
+                  <th>Status</th>
+                  <th/>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredBookings.map(
+                  (booking) => {
+                    const isExpanded =
+                      expandedId === booking.id;
+
+                    return (
+                      <React.Fragment
+                        key={booking.id}
+                      >
+                        <tr
+                          className={
+                            booking.hasException
+                              ? 'exception-row'
+                              : ''
+                          }
+                        >
+                          <td>
+                            <strong>
+                              {formatBookingDateTime(
+                                booking.requestedPickupAt
+                              )}
+                            </strong>
+
+                            <small>
+                              Created {booking.createdAt}
+                            </small>
+                          </td>
+
+                          <td>
+                            <strong>
+                              {booking.publicReference}
+                            </strong>
+
+                            <small>
+                              {booking.autocabReference
+                                ? `Autocab ${booking.autocabReference}`
+                                : 'Not sent to Autocab'}
+                            </small>
+                          </td>
+
+                          <td>
+                            <strong>
+                              {booking.passengerName}
+                            </strong>
+
+                            <small>
+                              {booking.passengerMobile}
+                            </small>
+                          </td>
+
+                          <td className="journey-cell">
+                            <strong>
+                              {booking.pickupAddress}
+                            </strong>
+
+                            <small>
+                              to {booking.destinationAddress}
+                            </small>
+                          </td>
+
+                          <td>
+                            <strong>
+                              {booking.department || '—'}
+                            </strong>
+
+                            <small>
+                              Booked by {booking.createdBy}
+                            </small>
+                          </td>
+
+                          <td>
+                            <strong>
+                              {booking.budgetNumber}
+                            </strong>
+
+                            <small>
+                              {booking.reasonCode}
+                            </small>
+                          </td>
+
+                          <td>
+                            <span
+                              className={
+                                `badge ${booking.operationalStatus}`
+                              }
+                            >
+                              {formatOperationalStatus(
+                                booking.operationalStatus
+                              )}
+                            </span>
+
+                            {booking.hasException && (
+                              <span className="exception-chip table-exception">
+                                Attention
+                              </span>
+                            )}
+                          </td>
+
+                          <td>
+                            <button
+                              type="button"
+                              className="text-action"
+                              onClick={() =>
+                                setExpandedId(
+                                  isExpanded
+                                    ? null
+                                    : booking.id
+                                )
+                              }
+                            >
+                              {isExpanded
+                                ? 'Hide'
+                                : 'Details'}
+                            </button>
+                          </td>
+                        </tr>
+
+                        {isExpanded && (
+                          <tr className="booking-detail-row">
+                            <td colSpan="8">
+                              <div className="booking-detail-panel">
+                                <div className="booking-detail-grid nac-detail-grid">
+                                  <div>
+                                    <small>
+                                      Passenger Count
+                                    </small>
+
+                                    <strong>
+                                      {booking.passengerCount}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Budget Holder
+                                    </small>
+
+                                    <strong>
+                                      {booking.budgetHolder}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Reason
+                                    </small>
+
+                                    <strong>
+                                      {booking.reasonCode}
+                                      {' · '}
+                                      {booking.reasonDescription}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Financial Status
+                                    </small>
+
+                                    <strong>
+                                      {formatStatus(
+                                        booking.financialStatus
+                                      )}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Portal Source
+                                    </small>
+
+                                    <strong>
+                                      {formatStatus(
+                                        booking.source
+                                      )}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Last Updated
+                                    </small>
+
+                                    <strong>
+                                      {booking.updatedAt}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Driver Notes
+                                    </small>
+
+                                    <strong>
+                                      {booking.driverNotes || '—'}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Internal Notes
+                                    </small>
+
+                                    <strong>
+                                      {booking.internalNotes || '—'}
+                                    </strong>
+                                  </div>
+                                </div>
+
+                                {booking.hasException && (
+                                  <div className="exception-panel">
+                                    <strong>
+                                      Attention Required
+                                    </strong>
+
+                                    {booking.exceptionReasons.map(
+                                      (reason) => (
+                                        <span key={reason}>
+                                          {reason}
+                                        </span>
+                                      )
+                                    )}
+                                  </div>
+                                )}
+
+                                <div className="nac-detail-columns">
+                                  <div className="booking-route-detail">
+                                    <h4>Journey</h4>
+
+                                    {booking.stops?.map(
+                                      (stop) => (
+                                        <div
+                                          className="detail-stop"
+                                          key={
+                                            `${booking.id}-${stop.sequenceNumber}`
+                                          }
+                                        >
+                                          <span
+                                            className={
+                                              `detail-stop-dot ${stop.stopType}`
+                                            }
+                                          />
+
+                                          <div>
+                                            <small>
+                                              {stop.stopType === 'pickup'
+                                                ? 'Pickup'
+                                                : stop.stopType === 'destination'
+                                                  ? 'Destination'
+                                                  : `Via ${stop.sequenceNumber}`}
+                                            </small>
+
+                                            <strong>
+                                              {stop.address}
+                                            </strong>
+
+                                            {stop.postcode && (
+                                              <span>
+                                                {stop.postcode}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+
+                                  <div className="booking-history-panel">
+                                    <h4>History</h4>
+
+                                    {booking.events?.length ? (
+                                      booking.events.map(
+                                        (event) => (
+                                          <div
+                                            className="history-event"
+                                            key={event.id}
+                                          >
+                                            <strong>
+                                              {formatStatus(
+                                                event.eventType
+                                              )}
+                                            </strong>
+
+                                            <span>
+                                              {event.eventAt}
+                                            </span>
+
+                                            {event.notes && (
+                                              <small>
+                                                {event.notes}
+                                              </small>
+                                            )}
+                                          </div>
+                                        )
+                                      )
+                                    ) : (
+                                      <span className="history-empty">
+                                        No recorded events.
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  }
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
 
 function MyBookingsPage() {
   const bookingUserId = 1;
