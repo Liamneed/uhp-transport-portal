@@ -3386,6 +3386,8 @@ function listBookingsForUser(userId) {
     SELECT
       b.id,
       b.public_reference AS publicReference,
+      b.autocab_booking_id AS autocabBookingId,
+      b.autocab_reference AS autocabReference,
       b.operational_status AS operationalStatus,
       b.financial_status AS financialStatus,
       b.requested_pickup_at AS requestedPickupAt,
@@ -3449,6 +3451,8 @@ function listBudgetVisibleBookings(userId) {
     SELECT
       b.id,
       b.public_reference AS publicReference,
+      b.autocab_booking_id AS autocabBookingId,
+      b.autocab_reference AS autocabReference,
 
       b.operational_status AS operationalStatus,
       b.financial_status AS financialStatus,

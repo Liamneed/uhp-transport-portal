@@ -1419,7 +1419,7 @@ function NacControlPage() {
                     </strong>
 
                     <small>
-                      {booking.publicReference}
+                      {autocabBookingPrimary(booking)}
                     </small>
                   </div>
 
@@ -1642,6 +1642,7 @@ function NacBookingsPage({
       if (!term) return true;
 
       return [
+        booking.autocabBookingId,
         booking.publicReference,
         booking.autocabReference,
         booking.passengerName,
@@ -1857,7 +1858,7 @@ function NacBookingsPage({
               <thead>
                 <tr>
                   <th>Date / Time</th>
-                  <th>Reference</th>
+                  <th>Booking</th>
                   <th>Passenger</th>
                   <th>Journey</th>
                   <th>Department</th>
@@ -1898,13 +1899,11 @@ function NacBookingsPage({
 
                           <td>
                             <strong>
-                              {booking.publicReference}
+                              {autocabBookingPrimary(booking)}
                             </strong>
 
                             <small>
-                              {booking.autocabReference
-                                ? `Autocab ${booking.autocabReference}`
-                                : 'Not sent to Autocab'}
+                              {portalBookingReference(booking)}
                             </small>
                           </td>
 
@@ -1990,6 +1989,69 @@ function NacBookingsPage({
                             <td colSpan="8">
                               <div className="booking-detail-panel">
                                 <div className="booking-detail-grid nac-detail-grid">
+                                  <div>
+                                    <small>
+                                      Autocab Booking
+                                    </small>
+
+                                    <strong>
+                                      {booking.autocabBookingId || 'Pending'}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Portal Reference
+                                    </small>
+
+                                    <strong>
+                                      {booking.publicReference || '—'}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      OurReference
+                                    </small>
+
+                                    <strong>
+                                      {booking.autocabReference || '—'}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Passenger Mobile
+                                    </small>
+
+                                    <strong>
+                                      {booking.passengerMobile || '—'}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Department
+                                    </small>
+
+                                    <strong>
+                                      {booking.department || '—'}
+                                    </strong>
+                                  </div>
+
+                                  <div>
+                                    <small>
+                                      Budget
+                                    </small>
+
+                                    <strong>
+                                      {booking.budgetNumber || '—'}
+                                      {booking.budgetName
+                                        ? ` · ${booking.budgetName}`
+                                        : ''}
+                                    </strong>
+                                  </div>
+
                                   <div>
                                     <small>
                                       Passenger Count
@@ -2211,6 +2273,33 @@ function formatMoneyFromPence(
 }
 
 
+function autocabBookingPrimary(booking) {
+  return booking?.autocabBookingId
+    ? `Autocab ${booking.autocabBookingId}`
+    : 'Autocab Pending';
+}
+
+
+function portalBookingReference(booking) {
+  return booking?.publicReference
+    ? `Portal Ref: ${booking.publicReference}`
+    : 'Portal Ref: —';
+}
+
+
+function bookingNoticeReference(booking) {
+  if (booking?.autocabBookingId) {
+    return `Autocab ${booking.autocabBookingId}`;
+  }
+
+  if (booking?.publicReference) {
+    return `Portal ${booking.publicReference}`;
+  }
+
+  return 'Booking';
+}
+
+
 function formatPickup(value) {
   if (!value) return '—';
 
@@ -2300,7 +2389,9 @@ function BudgetInvoicesPage() {
           const matchesQuery =
             !term ||
             [
+              booking.autocabBookingId,
               booking.publicReference,
+              booking.autocabReference,
               booking.passengerName,
               booking.pickupAddress,
               booking.destinationAddress,
@@ -2444,7 +2535,7 @@ function BudgetInvoicesPage() {
               <thead>
                 <tr>
                   <th>Completed</th>
-                  <th>Reference</th>
+                  <th>Booking</th>
                   <th>Passenger</th>
                   <th>Journey</th>
                   <th>Budget</th>
@@ -2471,8 +2562,12 @@ function BudgetInvoicesPage() {
 
                       <td>
                         <strong>
-                          {booking.publicReference}
+                          {autocabBookingPrimary(booking)}
                         </strong>
+
+                        <small>
+                          {portalBookingReference(booking)}
+                        </small>
                       </td>
 
                       <td>
@@ -2821,7 +2916,7 @@ function CodingReviewPage() {
       }
 
       const approvedReference =
-        selectedBooking.publicReference;
+        bookingNoticeReference(selectedBooking);
 
       setNotice(
         `${approvedReference} coding has been approved.`
@@ -2942,13 +3037,17 @@ function CodingReviewPage() {
                     >
                       <div className="coding-review-list-top">
                         <strong>
-                          {booking.publicReference}
+                          {autocabBookingPrimary(booking)}
                         </strong>
 
                         <span className="coding-required-chip">
                           Coding Required
                         </span>
                       </div>
+
+                      <small>
+                        {portalBookingReference(booking)}
+                      </small>
 
                       <span>
                         {formatPickup(
@@ -2983,7 +3082,7 @@ function CodingReviewPage() {
                     </span>
 
                     <h2>
-                      {selectedBooking.publicReference}
+                      {autocabBookingPrimary(selectedBooking)}
                     </h2>
 
                     <p>
@@ -2995,17 +3094,15 @@ function CodingReviewPage() {
                     </p>
                   </div>
 
-                  {selectedBooking.autocabBookingId && (
-                    <div className="coding-autocab-id">
-                      <small>
-                        Autocab Booking
-                      </small>
+                  <div className="coding-autocab-id">
+                    <small>
+                      Portal Reference
+                    </small>
 
-                      <strong>
-                        {selectedBooking.autocabBookingId}
-                      </strong>
-                    </div>
-                  )}
+                    <strong>
+                      {selectedBooking.publicReference || '—'}
+                    </strong>
+                  </div>
                 </div>
 
 
@@ -3458,7 +3555,9 @@ function MyBookingsPage({
       const matchesQuery =
         !term ||
         [
+          booking.autocabBookingId,
           booking.publicReference,
+          booking.autocabReference,
           booking.passengerName,
           booking.pickupAddress,
           booking.destinationAddress,
@@ -3761,7 +3860,7 @@ function MyBookingsPage({
       await loadBookings();
 
       setNotice(
-        `${data.booking.publicReference} has been amended successfully.`
+        `${bookingNoticeReference(data.booking)} has been amended successfully.`
       );
 
       setExpandedId(data.booking.id);
@@ -3827,7 +3926,7 @@ function MyBookingsPage({
       await loadBookings();
 
       setNotice(
-        `${data.booking.publicReference} has been cancelled.`
+        `${bookingNoticeReference(data.booking)} has been cancelled.`
       );
 
       setExpandedId(data.booking.id);
@@ -3873,7 +3972,7 @@ function MyBookingsPage({
       await loadBookings();
 
       setNotice(
-        `${booking.publicReference} has been approved for invoice.`
+        `${bookingNoticeReference(booking)} has been approved for invoice.`
       );
 
       setExpandedId(booking.id);
@@ -3944,7 +4043,7 @@ function MyBookingsPage({
       }
 
       const reference =
-        disputeBooking.publicReference;
+        bookingNoticeReference(disputeBooking);
 
       setDisputeBooking(null);
       setDisputeReason('');
@@ -4099,7 +4198,7 @@ function MyBookingsPage({
               <thead>
                 <tr>
                   <th>Date / Time</th>
-                  <th>Reference</th>
+                  <th>Booking</th>
                   <th>Passenger</th>
                   <th>Journey</th>
                   <th>Budget</th>
@@ -4145,8 +4244,12 @@ function MyBookingsPage({
 
                           <td>
                             <strong>
-                              {booking.publicReference}
+                              {autocabBookingPrimary(booking)}
                             </strong>
+
+                            <small>
+                              {portalBookingReference(booking)}
+                            </small>
 
                             {budgetScope && (
                               <small>
@@ -4432,7 +4535,7 @@ function MyBookingsPage({
                 <h2>Dispute Booking</h2>
 
                 <p>
-                  {disputeBooking.publicReference}
+                  {autocabBookingPrimary(disputeBooking)}
                 </p>
               </div>
 
@@ -4525,7 +4628,7 @@ function MyBookingsPage({
                 <h2>Amend Booking</h2>
 
                 <p>
-                  {editingBooking.publicReference}
+                  {autocabBookingPrimary(editingBooking)}
                 </p>
               </div>
 
@@ -4842,7 +4945,7 @@ function MyBookingsPage({
                 <h2>Cancel Booking</h2>
 
                 <p>
-                  {cancelBooking.publicReference}
+                  {autocabBookingPrimary(cancelBooking)}
                 </p>
               </div>
 
@@ -5121,8 +5224,14 @@ function BookTransportPage({ currentUser }) {
         </p>
 
         <div className="confirmation-reference">
-          <small>UHP Reference</small>
-          <strong>{confirmation.publicReference}</strong>
+          <small>Autocab Booking</small>
+          <strong>
+            {confirmation.autocabBookingId || 'Pending'}
+          </strong>
+
+          <small>
+            {portalBookingReference(confirmation)}
+          </small>
         </div>
 
         <div className="confirmation-grid">
