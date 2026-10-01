@@ -14,11 +14,57 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '..');
-const DATA_DIR = path.join(ROOT, 'data');
-const DB_PATH = path.join(DATA_DIR, 'uhp-transport.sqlite');
-const MIGRATIONS_DIR = path.join(ROOT, 'db', 'migrations');
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
+const NODE_ENV =
+  String(process.env.NODE_ENV || 'development');
+
+const IS_PRODUCTION =
+  NODE_ENV === 'production';
+
+const DATA_DIR =
+  process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR)
+    : path.join(ROOT, 'data');
+
+const DB_PATH =
+  path.join(
+    DATA_DIR,
+    'uhp-transport.sqlite'
+  );
+
+const MIGRATIONS_DIR =
+  path.join(ROOT, 'db', 'migrations');
+
+const DIST_DIR =
+  path.join(ROOT, 'dist');
+
+const FRONTEND_ORIGIN =
+  String(
+    process.env.FRONTEND_ORIGIN ||
+    (
+      IS_PRODUCTION
+        ? ''
+        : 'http://localhost:5173'
+    )
+  ).replace(/\/$/, '');
+
+if (
+  IS_PRODUCTION &&
+  !String(
+    process.env.AUTOCAB_WEBHOOK_SECRET || ''
+  ).trim()
+) {
+  throw new Error(
+    'AUTOCAB_WEBHOOK_SECRET is required in production'
+  );
+}
+
+fs.mkdirSync(
+  DATA_DIR,
+  {
+    recursive: true
+  }
+);
 
 const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA foreign_keys = ON;');
@@ -298,6 +344,23 @@ function seedReferenceData() {
 runMigrations();
 seedReferenceData();
 
+function getCorsHeaders() {
+  if (!FRONTEND_ORIGIN) {
+    return {};
+  }
+
+  return {
+    'Access-Control-Allow-Origin':
+      FRONTEND_ORIGIN,
+
+    'Access-Control-Allow-Credentials':
+      'true',
+
+    'Vary':
+      'Origin'
+  };
+}
+
 function sendJson(
   res,
   statusCode,
@@ -310,17 +373,13 @@ function sendJson(
     'Content-Type':
       'application/json; charset=utf-8',
 
-    'Access-Control-Allow-Origin':
-      'http://localhost:5173',
+    ...getCorsHeaders(),
 
     'Access-Control-Allow-Methods':
       'GET,POST,PATCH,OPTIONS',
 
     'Access-Control-Allow-Headers':
-      'Content-Type',
-
-    'Access-Control-Allow-Credentials':
-      'true',
+      'Content-Type, X-Autocab-Webhook-Secret',
 
     'Cache-Control':
       'no-store',
@@ -5060,15 +5119,164 @@ function createPortalBooking(payload) {
   }
 }
 
+function getContentType(filePath) {
+  const extension =
+    path.extname(filePath).toLowerCase();
+
+  const contentTypes = {
+    '.html':
+      'text/html; charset=utf-8',
+
+    '.js':
+      'text/javascript; charset=utf-8',
+
+    '.css':
+      'text/css; charset=utf-8',
+
+    '.json':
+      'application/json; charset=utf-8',
+
+    '.svg':
+      'image/svg+xml',
+
+    '.png':
+      'image/png',
+
+    '.jpg':
+      'image/jpeg',
+
+    '.jpeg':
+      'image/jpeg',
+
+    '.webp':
+      'image/webp',
+
+    '.ico':
+      'image/x-icon',
+
+    '.woff':
+      'font/woff',
+
+    '.woff2':
+      'font/woff2'
+  };
+
+  return (
+    contentTypes[extension] ||
+    'application/octet-stream'
+  );
+}
+
+function sendStaticFile(
+  res,
+  filePath,
+  cacheControl
+) {
+  const content =
+    fs.readFileSync(filePath);
+
+  res.writeHead(
+    200,
+    {
+      'Content-Type':
+        getContentType(filePath),
+
+      'Content-Length':
+        content.length,
+
+      'Cache-Control':
+        cacheControl
+    }
+  );
+
+  res.end(content);
+}
+
+function serveFrontend(
+  res,
+  url
+) {
+  const indexPath =
+    path.join(
+      DIST_DIR,
+      'index.html'
+    );
+
+  if (!fs.existsSync(indexPath)) {
+    return false;
+  }
+
+  const requested =
+    decodeURIComponent(
+      url.pathname
+    );
+
+  const relativePath =
+    requested
+      .replace(/^\/+/, '');
+
+  if (relativePath) {
+    const requestedFile =
+      path.resolve(
+        DIST_DIR,
+        relativePath
+      );
+
+    const insideDist =
+      requestedFile === DIST_DIR ||
+      requestedFile.startsWith(
+        `${DIST_DIR}${path.sep}`
+      );
+
+    if (
+      insideDist &&
+      fs.existsSync(requestedFile) &&
+      fs.statSync(requestedFile).isFile()
+    ) {
+      const immutable =
+        relativePath.startsWith(
+          'assets/'
+        );
+
+      sendStaticFile(
+        res,
+        requestedFile,
+        immutable
+          ? 'public, max-age=31536000, immutable'
+          : 'no-store'
+      );
+
+      return true;
+    }
+  }
+
+  sendStaticFile(
+    res,
+    indexPath,
+    'no-store'
+  );
+
+  return true;
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': 'http://localhost:5173',
-      'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Allow-Credentials': 'true',
-      'Cache-Control': 'no-store'
-    });
+    res.writeHead(
+      204,
+      {
+        ...getCorsHeaders(),
+
+        'Access-Control-Allow-Methods':
+          'GET,POST,PATCH,OPTIONS',
+
+        'Access-Control-Allow-Headers':
+          'Content-Type, X-Autocab-Webhook-Secret',
+
+        'Cache-Control':
+          'no-store'
+      }
+    );
+
     return res.end();
   }
 
@@ -5167,12 +5375,31 @@ const server = http.createServer(async (req, res) => {
       );
     }
 
-    if (req.method === 'GET' && url.pathname === '/api/health') {
-      return sendJson(res, 200, {
-        ok: true,
-        service: 'uhp-transport-api',
-        database: path.basename(DB_PATH)
-      });
+    if (
+      req.method === 'GET' &&
+      url.pathname === '/api/health'
+    ) {
+      const databaseCheck =
+        db.prepare(
+          'SELECT 1 AS ok'
+        ).get();
+
+      return sendJson(
+        res,
+        200,
+        {
+          ok:
+            databaseCheck?.ok === 1,
+
+          service:
+            'uhp-transport-api',
+
+          database:
+            databaseCheck?.ok === 1
+              ? 'ok'
+              : 'unavailable'
+        }
+      );
     }
 
     if (
@@ -5627,9 +5854,29 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    return sendJson(res, 404, {
-      error: 'Not found'
-    });
+    if (
+      req.method === 'GET' &&
+      !url.pathname.startsWith('/api/')
+    ) {
+      const served =
+        serveFrontend(
+          res,
+          url
+        );
+
+      if (served) {
+        return;
+      }
+    }
+
+    return sendJson(
+      res,
+      404,
+      {
+        error:
+          'Not found'
+      }
+    );
   } catch (error) {
     console.error(error);
 
@@ -5646,12 +5893,39 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const PORT = Number(process.env.PORT || 3001);
+const PORT =
+  Number(
+    process.env.PORT ||
+    3001
+  );
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`UHP API listening on http://localhost:${PORT}`);
-  console.log(`SQLite database: ${DB_PATH}`);
-});
+const HOST =
+  String(
+    process.env.HOST ||
+    (
+      IS_PRODUCTION
+        ? '0.0.0.0'
+        : '127.0.0.1'
+    )
+  );
+
+server.listen(
+  PORT,
+  HOST,
+  () => {
+    console.log(
+      `UHP portal listening on http://${HOST}:${PORT}`
+    );
+
+    console.log(
+      `Environment: ${NODE_ENV}`
+    );
+
+    console.log(
+      `SQLite database: ${DB_PATH}`
+    );
+  }
+);
 
 function shutdown() {
   server.close(() => {

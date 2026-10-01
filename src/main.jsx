@@ -20,7 +20,9 @@ import {
 import './styles.css';
 
 const API_BASE =
-  'http://localhost:3001';
+  import.meta.env.DEV
+    ? 'http://localhost:3001'
+    : '';
 
 async function apiFetch(
   input,
@@ -660,10 +662,10 @@ function UsersPage() {
         budgetsResponse,
         rolesResponse
       ] = await Promise.all([
-        apiFetch('http://localhost:3001/api/users'),
-        apiFetch('http://localhost:3001/api/departments'),
-        apiFetch('http://localhost:3001/api/budgets'),
-        apiFetch('http://localhost:3001/api/roles')
+        apiFetch(`${API_BASE}/api/users`),
+        apiFetch(`${API_BASE}/api/departments`),
+        apiFetch(`${API_BASE}/api/budgets`),
+        apiFetch(`${API_BASE}/api/roles`)
       ]);
 
       if (
@@ -773,7 +775,7 @@ function UsersPage() {
 
     try {
       const response = await apiFetch(
-        'http://localhost:3001/api/users',
+        `${API_BASE}/api/users`,
         {
           method: 'POST',
           headers: {
@@ -832,7 +834,7 @@ function UsersPage() {
 
     try {
       const response = await apiFetch(
-        `http://localhost:3001/api/users/${user.id}/status`,
+        `${API_BASE}/api/users/${user.id}/status`,
         {
           method: 'PATCH',
           headers: {
@@ -1252,10 +1254,10 @@ function NacControlPage() {
       const [summaryResponse, bookingsResponse] =
         await Promise.all([
           apiFetch(
-            'http://localhost:3001/api/control/summary'
+            `${API_BASE}/api/control/summary`
           ),
           apiFetch(
-            'http://localhost:3001/api/control/bookings'
+            `${API_BASE}/api/control/bookings`
           )
         ]);
 
@@ -1522,13 +1524,13 @@ function NacBookingsPage({
         budgetResponse
       ] = await Promise.all([
         apiFetch(
-          'http://localhost:3001/api/control/bookings'
+          `${API_BASE}/api/control/bookings`
         ),
         apiFetch(
-          'http://localhost:3001/api/departments'
+          `${API_BASE}/api/departments`
         ),
         apiFetch(
-          'http://localhost:3001/api/budgets'
+          `${API_BASE}/api/budgets`
         )
       ]);
 
@@ -2717,10 +2719,10 @@ function MyBookingsPage({
       const [bookingResponse, optionsResponse] =
         await Promise.all([
           apiFetch(
-            `http://localhost:3001/api/bookings/${bookingId}?userId=${bookingUserId}`
+            `${API_BASE}/api/bookings/${bookingId}?userId=${bookingUserId}`
           ),
           apiFetch(
-            `http://localhost:3001/api/booking-options?userId=${bookingUserId}`
+            `${API_BASE}/api/booking-options?userId=${bookingUserId}`
           )
         ]);
 
@@ -2887,7 +2889,7 @@ function MyBookingsPage({
 
     try {
       const response = await apiFetch(
-        `http://localhost:3001/api/bookings/${editingBooking.id}`,
+        `${API_BASE}/api/bookings/${editingBooking.id}`,
         {
           method: 'PATCH',
           headers: {
@@ -2996,7 +2998,7 @@ function MyBookingsPage({
 
     try {
       const response = await apiFetch(
-        `http://localhost:3001/api/bookings/${cancelBooking.id}/cancel`,
+        `${API_BASE}/api/bookings/${cancelBooking.id}/cancel`,
         {
           method: 'POST',
           headers: {
@@ -4142,7 +4144,7 @@ function BookTransportPage({ currentUser }) {
 
     try {
       const response = await apiFetch(
-        `http://localhost:3001/api/booking-options?userId=${bookingUserId}`
+        `${API_BASE}/api/booking-options?userId=${bookingUserId}`
       );
 
       const data = await response.json();
@@ -4234,7 +4236,7 @@ function BookTransportPage({ currentUser }) {
       }
 
       const response = await apiFetch(
-        'http://localhost:3001/api/bookings',
+        `${API_BASE}/api/bookings`,
         {
           method: 'POST',
           headers: {
@@ -4885,9 +4887,9 @@ function BudgetsPage() {
         departmentsResponse,
         usersResponse
       ] = await Promise.all([
-        apiFetch('http://localhost:3001/api/budgets'),
-        apiFetch('http://localhost:3001/api/departments'),
-        apiFetch('http://localhost:3001/api/users')
+        apiFetch(`${API_BASE}/api/budgets`),
+        apiFetch(`${API_BASE}/api/departments`),
+        apiFetch(`${API_BASE}/api/users`)
       ]);
 
       if (
@@ -4989,8 +4991,8 @@ function BudgetsPage() {
       const isEditing = Boolean(editingBudget);
 
       const url = isEditing
-        ? `http://localhost:3001/api/budgets/${editingBudget.id}`
-        : 'http://localhost:3001/api/budgets';
+        ? `${API_BASE}/api/budgets/${editingBudget.id}`
+        : `${API_BASE}/api/budgets`;
 
       const payload = {
         budgetNumber: form.budgetNumber,
@@ -5067,7 +5069,7 @@ function BudgetsPage() {
 
     try {
       const response = await apiFetch(
-        `http://localhost:3001/api/budgets/${budget.id}/status`,
+        `${API_BASE}/api/budgets/${budget.id}/status`,
         {
           method: 'PATCH',
           headers: {
@@ -5475,7 +5477,7 @@ function ReasonCodesPage() {
 
     try {
       const response = await apiFetch(
-        'http://localhost:3001/api/reason-codes'
+        `${API_BASE}/api/reason-codes`
       );
 
       if (!response.ok) {
@@ -5563,8 +5565,8 @@ function ReasonCodesPage() {
 
       const response = await apiFetch(
         isEditing
-          ? `http://localhost:3001/api/reason-codes/${editingReason.id}`
-          : 'http://localhost:3001/api/reason-codes',
+          ? `${API_BASE}/api/reason-codes/${editingReason.id}`
+          : `${API_BASE}/api/reason-codes`,
         {
           method: isEditing ? 'PATCH' : 'POST',
           headers: {
@@ -5636,7 +5638,7 @@ function ReasonCodesPage() {
 
     try {
       const response = await apiFetch(
-        `http://localhost:3001/api/reason-codes/${reason.id}/status`,
+        `${API_BASE}/api/reason-codes/${reason.id}/status`,
         {
           method: 'PATCH',
           headers: {
