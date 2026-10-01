@@ -2697,10 +2697,22 @@ function listBudgetVisibleBookings(userId) {
       d.name AS department,
 
       b.completed_at AS completedAt,
+
+      bf.gross_amount_pence AS grossAmountPence,
+      bf.net_amount_pence AS netAmountPence,
+      bf.vat_amount_pence AS vatAmountPence,
+      bf.currency AS currency,
+      bf.source AS financialSource,
+      bf.external_reference AS financialExternalReference,
+      bf.received_at AS financialReceivedAt,
+
       b.created_at AS createdAt,
       b.updated_at AS updatedAt
 
     FROM bookings b
+
+    LEFT JOIN booking_financials bf
+      ON bf.booking_id = b.id
 
     JOIN budgets bu
       ON bu.id = b.budget_id

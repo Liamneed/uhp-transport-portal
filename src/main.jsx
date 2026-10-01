@@ -2182,6 +2182,29 @@ function NacBookingsPage({
 }
 
 
+function formatMoneyFromPence(
+  value,
+  currency = 'GBP'
+) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return '—';
+  }
+
+  return new Intl.NumberFormat(
+    'en-GB',
+    {
+      style: 'currency',
+      currency
+    }
+  ).format(
+    Number(value) / 100
+  );
+}
+
+
 function formatPickup(value) {
   if (!value) return '—';
 
@@ -2421,6 +2444,7 @@ function BudgetInvoicesPage() {
                   <th>Budget</th>
                   <th>Reason</th>
                   <th>Booked By</th>
+                  <th>Actual Fare</th>
                   <th>Financial Status</th>
                 </tr>
               </thead>
@@ -2486,6 +2510,32 @@ function BudgetInvoicesPage() {
                         <strong>
                           {booking.createdBy || '—'}
                         </strong>
+                      </td>
+
+                      <td>
+                        <strong>
+                          {formatMoneyFromPence(
+                            booking.grossAmountPence,
+                            booking.currency || 'GBP'
+                          )}
+                        </strong>
+
+                        {booking.grossAmountPence ===
+                          null ||
+                        booking.grossAmountPence ===
+                          undefined ? (
+                          <small>
+                            Fare not received
+                          </small>
+                        ) : (
+                          <small>
+                            {booking.financialSource
+                              ? formatStatus(
+                                  booking.financialSource
+                                )
+                              : 'Posted fare'}
+                          </small>
+                        )}
                       </td>
 
                       <td>
