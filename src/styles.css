@@ -1570,3 +1570,38 @@ button:disabled {
     width: 100%;
   }
 }
+
+
+.invoice-foundation-note {
+  margin-bottom: 18px;
+  padding: 13px 15px;
+  border: 1px solid #dbe6ef;
+  border-radius: 10px;
+  background: #f7fafc;
+  color: #607187;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.badge.financial-approved_for_invoice {
+  background: #eaf7ef;
+  color: #27704a;
+}
+
+.badge.financial-invoiced {
+  background: #eaf1f8;
+  color: #315f87;
+}
+
+.invoice-ready-table td {
+  vertical-align: top;
+}
+
+.invoice-ready-table td > strong,
+.invoice-ready-table td > small {
+  display: block;
+}
+
+.invoice-ready-table td > small {
+  margin-top: 3px;
+}

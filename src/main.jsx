@@ -595,6 +595,8 @@ function App() {
               currentUser={currentUser}
               scope="budget"
             />
+          ) : active === 'holder-invoices' ? (
+            <BudgetInvoicesPage/>
           ) : active === 'nac-control' ? (
             <NacControlPage/>
           ) : active === 'nac-bookings' ? (
@@ -2179,6 +2181,340 @@ function NacBookingsPage({
   );
 }
 
+
+function formatPickup(value) {
+  if (!value) return '—';
+
+  return value
+    .replace('T', ' ')
+    .slice(0, 16);
+}
+
+
+function BudgetInvoicesPage() {
+  const [bookings, setBookings] =
+    useState([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState('');
+
+  const [query, setQuery] =
+    useState('');
+
+  const [statusFilter, setStatusFilter] =
+    useState('all');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInvoiceReady() {
+      setLoading(true);
+      setError('');
+
+      try {
+        const response = await apiFetch(
+          `${API_BASE}/api/budget-invoice-ready`
+        );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+            'Unable to load invoice-ready bookings'
+          );
+        }
+
+        if (!cancelled) {
+          setBookings(
+            data.bookings ?? []
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Unable to load invoice-ready bookings'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadInvoiceReady();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const filteredBookings =
+    useMemo(() => {
+      const term =
+        query.trim().toLowerCase();
+
+      return bookings.filter(
+        (booking) => {
+          const matchesStatus =
+            statusFilter === 'all' ||
+            booking.financialStatus ===
+              statusFilter;
+
+          const matchesQuery =
+            !term ||
+            [
+              booking.publicReference,
+              booking.passengerName,
+              booking.pickupAddress,
+              booking.destinationAddress,
+              booking.budgetNumber,
+              booking.budgetName,
+              booking.reasonCode,
+              booking.reasonDescription,
+              booking.createdBy,
+              booking.department
+            ]
+              .filter(Boolean)
+              .some((value) =>
+                String(value)
+                  .toLowerCase()
+                  .includes(term)
+              );
+
+          return (
+            matchesStatus &&
+            matchesQuery
+          );
+        }
+      );
+    }, [
+      bookings,
+      query,
+      statusFilter
+    ]);
+
+  const readyCount =
+    bookings.filter(
+      (booking) =>
+        booking.financialStatus ===
+          'approved_for_invoice'
+    ).length;
+
+  const invoicedCount =
+    bookings.filter(
+      (booking) =>
+        booking.financialStatus ===
+          'invoiced'
+    ).length;
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading invoice-ready bookings...
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>Invoices</h1>
+
+          <p>
+            View completed UHP transport that has passed financial review for budgets you oversee.
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="invoice-foundation-note">
+        Fare totals, invoice numbers and downloadable invoices will appear here once completed fare data and invoice generation are integrated.
+      </div>
+
+      <div className="stats-grid">
+        <Stat
+          icon={<CheckCircle2/>}
+          label="Ready for Invoice"
+          value={readyCount}
+        />
+
+        <Stat
+          icon={<WalletCards/>}
+          label="Invoiced"
+          value={invoicedCount}
+        />
+      </div>
+
+      <div className="card">
+        <div className="toolbar">
+          <div className="search compact">
+            <Search size={17}/>
+
+            <input
+              value={query}
+              onChange={(event) =>
+                setQuery(
+                  event.target.value
+                )
+              }
+              placeholder="Search invoice-ready bookings..."
+            />
+          </div>
+
+          <select
+            value={statusFilter}
+            onChange={(event) =>
+              setStatusFilter(
+                event.target.value
+              )
+            }
+          >
+            <option value="all">
+              All financial statuses
+            </option>
+
+            <option value="approved_for_invoice">
+              Ready for Invoice
+            </option>
+
+            <option value="invoiced">
+              Invoiced
+            </option>
+          </select>
+        </div>
+
+        {filteredBookings.length === 0 ? (
+          <div className="empty-bookings">
+            <WalletCards size={30}/>
+
+            <strong>
+              No invoice-ready bookings
+            </strong>
+
+            <span>
+              Completed bookings will appear here after they have been approved for invoice.
+            </span>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="bookings-table invoice-ready-table">
+              <thead>
+                <tr>
+                  <th>Completed</th>
+                  <th>Reference</th>
+                  <th>Passenger</th>
+                  <th>Journey</th>
+                  <th>Budget</th>
+                  <th>Reason</th>
+                  <th>Booked By</th>
+                  <th>Financial Status</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredBookings.map(
+                  (booking) => (
+                    <tr key={booking.id}>
+                      <td>
+                        <strong>
+                          {booking.completedAt
+                            ? formatPickup(
+                                booking.completedAt
+                              )
+                            : '—'}
+                        </strong>
+                      </td>
+
+                      <td>
+                        <strong>
+                          {booking.publicReference}
+                        </strong>
+                      </td>
+
+                      <td>
+                        <strong>
+                          {booking.passengerName}
+                        </strong>
+                      </td>
+
+                      <td className="journey-cell">
+                        <strong>
+                          {booking.pickupAddress}
+                        </strong>
+
+                        <small>
+                          to{' '}
+                          {booking.destinationAddress}
+                        </small>
+                      </td>
+
+                      <td>
+                        <strong>
+                          {booking.budgetNumber}
+                        </strong>
+
+                        <small>
+                          {booking.budgetName}
+                        </small>
+                      </td>
+
+                      <td>
+                        <strong>
+                          {booking.reasonCode}
+                        </strong>
+
+                        <small>
+                          {booking.reasonDescription}
+                        </small>
+                      </td>
+
+                      <td>
+                        <strong>
+                          {booking.createdBy || '—'}
+                        </strong>
+                      </td>
+
+                      <td>
+                        <span
+                          className={
+                            `badge financial-${booking.financialStatus}`
+                          }
+                        >
+                          {booking.financialStatus ===
+                          'approved_for_invoice'
+                            ? 'Ready for Invoice'
+                            : formatStatus(
+                                booking.financialStatus
+                              )}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+
 function MyBookingsPage({
   currentUser,
   scope = 'mine'
@@ -2302,14 +2638,6 @@ function MyBookingsPage({
         booking.operationalStatus === 'completed'
     ).length
   }), [bookings]);
-
-  function formatPickup(value) {
-    if (!value) return '—';
-
-    return value
-      .replace('T', ' ')
-      .slice(0, 16);
-  }
 
   function friendlyBookingStatus(status) {
     const map = {

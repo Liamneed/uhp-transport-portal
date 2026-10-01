@@ -665,7 +665,8 @@ function enforceApiAccess(
   }
 
   if (
-    pathname === '/api/budget-bookings'
+    pathname === '/api/budget-bookings' ||
+    pathname === '/api/budget-invoice-ready'
   ) {
     return requireAnyRole(
       req,
@@ -2695,6 +2696,7 @@ function listBudgetVisibleBookings(userId) {
       b.department_id AS departmentId,
       d.name AS department,
 
+      b.completed_at AS completedAt,
       b.created_at AS createdAt,
       b.updated_at AS updatedAt
 
@@ -2760,6 +2762,24 @@ function listBudgetVisibleBookings(userId) {
     stops:
       stopsStatement.all(booking.id)
   }));
+}
+
+
+
+function listBudgetInvoiceReadyBookings(
+  userId
+) {
+  return listBudgetVisibleBookings(
+    userId
+  ).filter(
+    (booking) =>
+      [
+        'approved_for_invoice',
+        'invoiced'
+      ].includes(
+        booking.financialStatus
+      )
+  );
 }
 
 
@@ -4280,6 +4300,24 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         bookings:
           listBudgetVisibleBookings(
+            auth.user.id
+          )
+      });
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/budget-invoice-ready'
+    ) {
+      const auth = requireAnyRole(
+        req,
+        ['budget_holder']
+      );
+
+      return sendJson(res, 200, {
+        bookings:
+          listBudgetInvoiceReadyBookings(
             auth.user.id
           )
       });
