@@ -387,7 +387,370 @@ function listReasonCodes() {
   `).all();
 }
 
-const server = http.createServer((req, res) => {
+
+function listRoles() {
+  return db.prepare(`
+    SELECT
+      id,
+      code,
+      name,
+      description
+    FROM roles
+    WHERE code IN (
+      'booker',
+      'budget_holder',
+      'department_manager',
+      'finance',
+      'uhp_admin'
+    )
+    ORDER BY name
+  `).all();
+}
+
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+
+    req.on('data', (chunk) => {
+      body += chunk;
+
+      if (body.length > 1024 * 1024) {
+        reject(new Error('Request body too large'));
+        req.destroy();
+      }
+    });
+
+    req.on('end', () => {
+      if (!body) {
+        resolve({});
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        reject(new Error('Invalid JSON'));
+      }
+    });
+
+    req.on('error', reject);
+  });
+}
+
+function writeAudit({
+  action,
+  entityType,
+  entityId,
+  fieldName = null,
+  oldValue = null,
+  newValue = null,
+  source = 'uhp_admin'
+}) {
+  db.prepare(`
+    INSERT INTO audit_log
+      (
+        action,
+        entity_type,
+        entity_id,
+        field_name,
+        old_value,
+        new_value,
+        source
+      )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    action,
+    entityType,
+    String(entityId),
+    fieldName,
+    oldValue,
+    newValue,
+    source
+  );
+}
+
+function getUserById(userId) {
+  return db.prepare(`
+    SELECT
+      id,
+      first_name AS firstName,
+      last_name AS lastName,
+      email,
+      status
+    FROM users
+    WHERE id = ?
+  `).get(userId);
+}
+
+function createUser(payload) {
+  const firstName = String(payload.firstName || '').trim();
+  const lastName = String(payload.lastName || '').trim();
+  const email = String(payload.email || '').trim().toLowerCase();
+  const departmentId = Number(payload.departmentId);
+  const roleCode = String(payload.roleCode || '').trim();
+  const budgetIds = Array.from(
+    new Set(
+      Array.isArray(payload.budgetIds)
+        ? payload.budgetIds.map(Number).filter(Number.isInteger)
+        : []
+    )
+  );
+
+  if (!firstName || !lastName || !email || !departmentId || !roleCode) {
+    const error = new Error(
+      'First name, last name, email, department and role are required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const error = new Error('Enter a valid email address');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const duplicate = db.prepare(`
+    SELECT id
+    FROM users
+    WHERE email = ? COLLATE NOCASE
+  `).get(email);
+
+  if (duplicate) {
+    const error = new Error('A user with this email already exists');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const department = db.prepare(`
+    SELECT id
+    FROM departments
+    WHERE id = ?
+      AND status = 'active'
+  `).get(departmentId);
+
+  if (!department) {
+    const error = new Error('Selected department is not valid');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const role = db.prepare(`
+    SELECT id, code
+    FROM roles
+    WHERE code = ?
+  `).get(roleCode);
+
+  if (!role) {
+    const error = new Error('Selected role is not valid');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (budgetIds.length) {
+    const placeholders = budgetIds.map(() => '?').join(',');
+
+    const validCount = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM budgets
+      WHERE id IN (${placeholders})
+        AND status = 'active'
+    `).get(...budgetIds).count;
+
+    if (validCount !== budgetIds.length) {
+      const error = new Error('One or more selected budgets are not valid');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  const permissionsByRole = {
+    booker: [1, 0, 0, 0],
+    budget_holder: [1, 1, 1, 1],
+    department_manager: [1, 1, 1, 1],
+    finance: [0, 1, 1, 1],
+    uhp_admin: [1, 1, 1, 1]
+  };
+
+  const [
+    canBook,
+    canView,
+    canApprove,
+    canDispute
+  ] = permissionsByRole[roleCode] || [0, 0, 0, 0];
+
+  db.exec('BEGIN');
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO users
+        (
+          first_name,
+          last_name,
+          email,
+          department_id,
+          status,
+          invited_at
+        )
+      VALUES (?, ?, ?, ?, 'invited', CURRENT_TIMESTAMP)
+    `).run(
+      firstName,
+      lastName,
+      email,
+      departmentId
+    );
+
+    const userId = Number(result.lastInsertRowid);
+
+    db.prepare(`
+      INSERT INTO user_roles
+        (user_id, role_id)
+      VALUES (?, ?)
+    `).run(userId, role.id);
+
+    const grantBudget = db.prepare(`
+      INSERT INTO user_budget_access
+        (
+          user_id,
+          budget_id,
+          can_book,
+          can_view,
+          can_approve,
+          can_dispute,
+          valid_from
+        )
+      VALUES (?, ?, ?, ?, ?, ?, date('now'))
+    `);
+
+    for (const budgetId of budgetIds) {
+      grantBudget.run(
+        userId,
+        budgetId,
+        canBook,
+        canView,
+        canApprove,
+        canDispute
+      );
+    }
+
+    writeAudit({
+      action: 'CREATE',
+      entityType: 'user',
+      entityId: userId,
+      newValue: JSON.stringify({
+        firstName,
+        lastName,
+        email,
+        departmentId,
+        roleCode,
+        budgetIds,
+        status: 'invited'
+      })
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      id: userId,
+      firstName,
+      lastName,
+      email,
+      status: 'invited'
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function setUserStatus(userId, nextStatus) {
+  const allowed = new Set([
+    'active',
+    'suspended',
+    'archived'
+  ]);
+
+  if (!allowed.has(nextStatus)) {
+    const error = new Error('Invalid user status');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const existing = getUserById(userId);
+
+  if (!existing) {
+    const error = new Error('User not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (existing.status === nextStatus) {
+    return existing;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE users
+      SET
+        status = ?,
+        activated_at = CASE
+          WHEN ? = 'active'
+            THEN COALESCE(activated_at, CURRENT_TIMESTAMP)
+          ELSE activated_at
+        END,
+        suspended_at = CASE
+          WHEN ? = 'suspended'
+            THEN CURRENT_TIMESTAMP
+          WHEN ? = 'active'
+            THEN NULL
+          ELSE suspended_at
+        END,
+        suspension_reason = CASE
+          WHEN ? = 'active'
+            THEN NULL
+          ELSE suspension_reason
+        END,
+        archived_at = CASE
+          WHEN ? = 'archived'
+            THEN CURRENT_TIMESTAMP
+          WHEN ? = 'active'
+            THEN NULL
+          ELSE archived_at
+        END,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      nextStatus,
+      nextStatus,
+      nextStatus,
+      nextStatus,
+      nextStatus,
+      nextStatus,
+      nextStatus,
+      userId
+    );
+
+    writeAudit({
+      action: 'STATUS_CHANGE',
+      entityType: 'user',
+      entityId: userId,
+      fieldName: 'status',
+      oldValue: existing.status,
+      newValue: nextStatus
+    });
+
+    db.exec('COMMIT');
+
+    return getUserById(userId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': 'http://localhost:5173',
@@ -432,14 +795,55 @@ const server = http.createServer((req, res) => {
       });
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/roles') {
+      return sendJson(res, 200, {
+        roles: listRoles()
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/users') {
+      const payload = await readJson(req);
+      const user = createUser(payload);
+
+      return sendJson(res, 201, {
+        user
+      });
+    }
+
+    const userStatusMatch = url.pathname.match(
+      /^\/api\/users\/(\d+)\/status$/
+    );
+
+    if (req.method === 'PATCH' && userStatusMatch) {
+      const payload = await readJson(req);
+      const userId = Number(userStatusMatch[1]);
+
+      const user = setUserStatus(
+        userId,
+        String(payload.status || '')
+      );
+
+      return sendJson(res, 200, {
+        user
+      });
+    }
+
     return sendJson(res, 404, {
       error: 'Not found'
     });
   } catch (error) {
     console.error(error);
-    return sendJson(res, 500, {
-      error: 'Internal server error'
-    });
+
+    return sendJson(
+      res,
+      error.statusCode || 500,
+      {
+        error:
+          error.statusCode
+            ? error.message
+            : 'Internal server error'
+      }
+    );
   }
 });
 

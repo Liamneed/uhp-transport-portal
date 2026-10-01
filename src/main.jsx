@@ -96,56 +96,77 @@ function App() {
 function UsersPage() {
   const [users, setUsers] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [budgets, setBudgets] = useState([]);
+  const [roles, setRoles] = useState([]);
+
   const [query, setQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [form, setForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    departmentId: '',
+    roleCode: 'booker',
+    budgetIds: []
+  });
+
+  async function loadData() {
+    setLoading(true);
+    setError('');
+
+    try {
+      const [
+        usersResponse,
+        departmentsResponse,
+        budgetsResponse,
+        rolesResponse
+      ] = await Promise.all([
+        fetch('http://localhost:3001/api/users'),
+        fetch('http://localhost:3001/api/departments'),
+        fetch('http://localhost:3001/api/budgets'),
+        fetch('http://localhost:3001/api/roles')
+      ]);
+
+      if (
+        !usersResponse.ok ||
+        !departmentsResponse.ok ||
+        !budgetsResponse.ok ||
+        !rolesResponse.ok
+      ) {
+        throw new Error('Unable to load administration data');
+      }
+
+      const usersData = await usersResponse.json();
+      const departmentsData = await departmentsResponse.json();
+      const budgetsData = await budgetsResponse.json();
+      const rolesData = await rolesResponse.json();
+
+      setUsers(usersData.users ?? []);
+      setDepartments(departmentsData.departments ?? []);
+      setBudgets(budgetsData.budgets ?? []);
+      setRoles(rolesData.roles ?? []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load users'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      setLoading(true);
-      setError('');
-
-      try {
-        const [usersResponse, departmentsResponse] = await Promise.all([
-          fetch('http://localhost:3001/api/users'),
-          fetch('http://localhost:3001/api/departments')
-        ]);
-
-        if (!usersResponse.ok || !departmentsResponse.ok) {
-          throw new Error('Unable to load administration data');
-        }
-
-        const usersData = await usersResponse.json();
-        const departmentsData = await departmentsResponse.json();
-
-        if (!cancelled) {
-          setUsers(usersData.users ?? []);
-          setDepartments(departmentsData.departments ?? []);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : 'Unable to load users'
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    load();
-
-    return () => {
-      cancelled = true;
-    };
+    loadData();
   }, []);
 
   const stats = useMemo(() => {
@@ -190,6 +211,127 @@ function UsersPage() {
     });
   }, [users, query, departmentFilter, statusFilter]);
 
+  function resetForm() {
+    setForm({
+      firstName: '',
+      lastName: '',
+      email: '',
+      departmentId: '',
+      roleCode: 'booker',
+      budgetIds: []
+    });
+  }
+
+  function toggleBudget(budgetId) {
+    setForm((current) => {
+      const exists = current.budgetIds.includes(budgetId);
+
+      return {
+        ...current,
+        budgetIds: exists
+          ? current.budgetIds.filter((id) => id !== budgetId)
+          : [...current.budgetIds, budgetId]
+      };
+    });
+  }
+
+  async function submitUser(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const response = await fetch(
+        'http://localhost:3001/api/users',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            ...form,
+            departmentId: Number(form.departmentId)
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to create user');
+      }
+
+      setNotice(
+        `${form.firstName} ${form.lastName} has been invited.`
+      );
+
+      setShowAddUser(false);
+      resetForm();
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to create user'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changeStatus(user, status) {
+    const labels = {
+      active: 'reactivate',
+      suspended: 'suspend',
+      archived: 'archive'
+    };
+
+    const action = labels[status] || 'update';
+
+    if (
+      !window.confirm(
+        `Are you sure you want to ${action} ${user.firstName} ${user.lastName}?`
+      )
+    ) {
+      return;
+    }
+
+    setError('');
+    setNotice('');
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/users/${user.id}/status`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ status })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Unable to update user');
+      }
+
+      setNotice(
+        `${user.firstName} ${user.lastName} is now ${formatStatus(status).toLowerCase()}.`
+      );
+
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to update user'
+      );
+    }
+  }
+
   return (
     <>
       <div className="page-heading">
@@ -197,11 +339,31 @@ function UsersPage() {
           <h1>Users</h1>
           <p>Manage hospital access without exposing complex permission settings.</p>
         </div>
-        <button className="primary">
+
+        <button
+          className="primary"
+          onClick={() => {
+            setError('');
+            setNotice('');
+            setShowAddUser(true);
+          }}
+        >
           <Plus size={18}/>
           Add User
         </button>
       </div>
+
+      {notice && (
+        <div className="notice success">
+          {notice}
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
 
       <div className="stats-grid">
         <Stat icon={<UsersRound/>} label="Active Users" value={stats.active} />
@@ -251,14 +413,6 @@ function UsersPage() {
           </div>
         )}
 
-        {!loading && error && (
-          <div className="state-panel error">
-            <strong>Unable to load users.</strong>
-            <span>{error}</span>
-            <small>Make sure the local API is running with npm run dev:api.</small>
-          </div>
-        )}
-
         {!loading && !error && (
           <div className="table-wrap">
             <table>
@@ -269,28 +423,59 @@ function UsersPage() {
                   <th>Role</th>
                   <th>Budget Access</th>
                   <th>Status</th>
-                  <th></th>
+                  <th>Actions</th>
                 </tr>
               </thead>
+
               <tbody>
                 {filteredUsers.map((user) => (
                   <tr key={user.id}>
                     <td>
-                      <strong>{user.firstName} {user.lastName}</strong>
+                      <strong>
+                        {user.firstName} {user.lastName}
+                      </strong>
                       <small>{user.email}</small>
                     </td>
+
                     <td>{user.department || '—'}</td>
                     <td>{user.roles || '—'}</td>
                     <td>{user.budgets || '—'}</td>
+
                     <td>
                       <span className={`badge ${user.status}`}>
                         {formatStatus(user.status)}
                       </span>
                     </td>
+
                     <td>
-                      <button className="icon-btn" aria-label={`Actions for ${user.firstName} ${user.lastName}`}>
-                        <MoreHorizontal size={18}/>
-                      </button>
+                      <div className="row-actions">
+                        {user.status !== 'active' && (
+                          <button
+                            className="text-action"
+                            onClick={() => changeStatus(user, 'active')}
+                          >
+                            Reactivate
+                          </button>
+                        )}
+
+                        {user.status === 'active' && (
+                          <button
+                            className="text-action warning"
+                            onClick={() => changeStatus(user, 'suspended')}
+                          >
+                            Suspend
+                          </button>
+                        )}
+
+                        {user.status !== 'archived' && (
+                          <button
+                            className="text-action danger"
+                            onClick={() => changeStatus(user, 'archived')}
+                          >
+                            Archive
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -309,6 +494,184 @@ function UsersPage() {
           </div>
         )}
       </div>
+
+      {showAddUser && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !saving) {
+              setShowAddUser(false);
+            }
+          }}
+        >
+          <form className="modal-card" onSubmit={submitUser}>
+            <div className="modal-header">
+              <div>
+                <h2>Add User</h2>
+                <p>
+                  Invite a hospital user and assign their initial access.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setShowAddUser(false)}
+                disabled={saving}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="form-grid two">
+              <label>
+                First Name
+                <input
+                  required
+                  value={form.firstName}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      firstName: e.target.value
+                    })
+                  }
+                />
+              </label>
+
+              <label>
+                Last Name
+                <input
+                  required
+                  value={form.lastName}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      lastName: e.target.value
+                    })
+                  }
+                />
+              </label>
+            </div>
+
+            <label>
+              Email
+              <input
+                type="email"
+                required
+                value={form.email}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    email: e.target.value
+                  })
+                }
+              />
+            </label>
+
+            <div className="form-grid two">
+              <label>
+                Department
+                <select
+                  required
+                  value={form.departmentId}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      departmentId: e.target.value
+                    })
+                  }
+                >
+                  <option value="">Select department...</option>
+
+                  {departments
+                    .filter((department) => department.status === 'active')
+                    .map((department) => (
+                      <option
+                        key={department.id}
+                        value={department.id}
+                      >
+                        {department.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+
+              <label>
+                Role
+                <select
+                  required
+                  value={form.roleCode}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      roleCode: e.target.value
+                    })
+                  }
+                >
+                  {roles.map((role) => (
+                    <option key={role.id} value={role.code}>
+                      {role.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <fieldset className="budget-picker">
+              <legend>Budget Access</legend>
+              <p>
+                Select the budgets this user is allowed to access.
+              </p>
+
+              <div className="budget-options">
+                {budgets
+                  .filter((budget) => budget.status === 'active')
+                  .map((budget) => (
+                    <label
+                      key={budget.id}
+                      className="budget-option"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={form.budgetIds.includes(budget.id)}
+                        onChange={() => toggleBudget(budget.id)}
+                      />
+
+                      <span>
+                        <strong>{budget.budgetNumber}</strong>
+                        <small>
+                          {budget.name}
+                          {budget.department
+                            ? ` · ${budget.department}`
+                            : ''}
+                        </small>
+                      </span>
+                    </label>
+                  ))}
+              </div>
+            </fieldset>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setShowAddUser(false)}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                className="primary"
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : 'Send Invite'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </>
   );
 }
