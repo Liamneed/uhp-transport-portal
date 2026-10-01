@@ -293,3 +293,27 @@ button:disabled {
     padding: 18px;
   }
 }
+
+.attention-text {
+  color: #a56b00;
+  font-weight: 700;
+}
+
+.inline-warning {
+  margin: -2px 0 18px;
+  padding: 10px 12px;
+  border: 1px solid #efd9a9;
+  border-radius: 9px;
+  background: #fff9eb;
+  color: #8a6208;
+  font-size: 13px;
+}
+
+.modal-card-small {
+  width: min(520px, 100%);
+}
+
+.badge.inactive {
+  background: #f0f2f5;
+  color: #687588;
+}

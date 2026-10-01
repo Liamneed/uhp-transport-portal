@@ -86,7 +86,15 @@ function App() {
         </header>
 
         <section className="content">
-          {role === 'uhp_admin' && active === 'Users' ? <UsersPage/> : <Placeholder role={role} active={active}/>}
+          {role === 'uhp_admin' && active === 'Users' ? (
+            <UsersPage/>
+          ) : role === 'uhp_admin' && active === 'Budgets' ? (
+            <BudgetsPage/>
+          ) : role === 'uhp_admin' && active === 'Reason Codes' ? (
+            <ReasonCodesPage/>
+          ) : (
+            <Placeholder role={role} active={active}/>
+          )}
         </section>
       </main>
     </div>
@@ -667,6 +675,1054 @@ function UsersPage() {
                 disabled={saving}
               >
                 {saving ? 'Saving...' : 'Send Invite'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </>
+  );
+}
+
+
+function BudgetsPage() {
+  const [budgets, setBudgets] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [users, setUsers] = useState([]);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [query, setQuery] = useState('');
+
+  const [showModal, setShowModal] = useState(false);
+  const [editingBudget, setEditingBudget] = useState(null);
+
+  const emptyForm = {
+    budgetNumber: '',
+    name: '',
+    departmentId: '',
+    holderUserId: '',
+    deputyUserId: ''
+  };
+
+  const [form, setForm] = useState(emptyForm);
+
+  async function loadData() {
+    setLoading(true);
+    setError('');
+
+    try {
+      const [
+        budgetsResponse,
+        departmentsResponse,
+        usersResponse
+      ] = await Promise.all([
+        fetch('http://localhost:3001/api/budgets'),
+        fetch('http://localhost:3001/api/departments'),
+        fetch('http://localhost:3001/api/users')
+      ]);
+
+      if (
+        !budgetsResponse.ok ||
+        !departmentsResponse.ok ||
+        !usersResponse.ok
+      ) {
+        throw new Error('Unable to load budget administration data');
+      }
+
+      const budgetData = await budgetsResponse.json();
+      const departmentData = await departmentsResponse.json();
+      const userData = await usersResponse.json();
+
+      setBudgets(budgetData.budgets ?? []);
+      setDepartments(departmentData.departments ?? []);
+      setUsers(userData.users ?? []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load budgets'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const filteredBudgets = useMemo(() => {
+    const term = query.trim().toLowerCase();
+
+    if (!term) return budgets;
+
+    return budgets.filter((budget) =>
+      [
+        budget.budgetNumber,
+        budget.name,
+        budget.department,
+        budget.budgetHolder,
+        budget.deputyHolder,
+        budget.status
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(term)
+    );
+  }, [budgets, query]);
+
+  const stats = useMemo(() => ({
+    active: budgets.filter((b) => b.status === 'active').length,
+    inactive: budgets.filter((b) => b.status === 'inactive').length,
+    missingHolder: budgets.filter(
+      (b) => b.status === 'active' && !b.holderUserId
+    ).length
+  }), [budgets]);
+
+  const eligibleUsers = users.filter(
+    (user) =>
+      user.status === 'active' ||
+      user.status === 'invited'
+  );
+
+  function openCreate() {
+    setEditingBudget(null);
+    setForm(emptyForm);
+    setError('');
+    setNotice('');
+    setShowModal(true);
+  }
+
+  function openEdit(budget) {
+    setEditingBudget(budget);
+
+    setForm({
+      budgetNumber: budget.budgetNumber,
+      name: budget.name,
+      departmentId: String(budget.departmentId ?? ''),
+      holderUserId: String(budget.holderUserId ?? ''),
+      deputyUserId: String(budget.deputyUserId ?? '')
+    });
+
+    setError('');
+    setNotice('');
+    setShowModal(true);
+  }
+
+  async function submitBudget(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const isEditing = Boolean(editingBudget);
+
+      const url = isEditing
+        ? `http://localhost:3001/api/budgets/${editingBudget.id}`
+        : 'http://localhost:3001/api/budgets';
+
+      const payload = {
+        budgetNumber: form.budgetNumber,
+        name: form.name,
+        departmentId: Number(form.departmentId),
+        holderUserId: form.holderUserId
+          ? Number(form.holderUserId)
+          : null,
+        deputyUserId: form.deputyUserId
+          ? Number(form.deputyUserId)
+          : null
+      };
+
+      const response = await fetch(url, {
+        method: isEditing ? 'PATCH' : 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+          `Unable to ${isEditing ? 'update' : 'create'} budget`
+        );
+      }
+
+      setShowModal(false);
+      setEditingBudget(null);
+      setForm(emptyForm);
+
+      setNotice(
+        isEditing
+          ? 'Budget updated successfully.'
+          : 'Budget created successfully.'
+      );
+
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to save budget'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changeStatus(budget) {
+    const nextStatus =
+      budget.status === 'active'
+        ? 'inactive'
+        : 'active';
+
+    const verb =
+      nextStatus === 'inactive'
+        ? 'deactivate'
+        : 'reactivate';
+
+    if (
+      !window.confirm(
+        `Are you sure you want to ${verb} budget ${budget.budgetNumber}?`
+      )
+    ) {
+      return;
+    }
+
+    setError('');
+    setNotice('');
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/budgets/${budget.id}/status`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            status: nextStatus
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+          'Unable to update budget status'
+        );
+      }
+
+      setNotice(
+        `Budget ${budget.budgetNumber} is now ${nextStatus}.`
+      );
+
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to update budget'
+      );
+    }
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>Budgets</h1>
+          <p>
+            Manage the UHP budgets authorised to fund transport bookings.
+          </p>
+        </div>
+
+        <button
+          className="primary"
+          onClick={openCreate}
+        >
+          <Plus size={18}/>
+          Add Budget
+        </button>
+      </div>
+
+      {notice && (
+        <div className="notice success">
+          {notice}
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="stats-grid">
+        <Stat
+          icon={<WalletCards/>}
+          label="Active Budgets"
+          value={stats.active}
+        />
+
+        <Stat
+          icon={<Clock3/>}
+          label="Inactive"
+          value={stats.inactive}
+        />
+
+        <Stat
+          icon={<AlertTriangle/>}
+          label="Needs Budget Holder"
+          value={stats.missingHolder}
+        />
+      </div>
+
+      <div className="card">
+        <div className="toolbar">
+          <div className="search compact">
+            <Search size={17}/>
+
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search budgets..."
+            />
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="state-panel">
+            Loading budgets...
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Budget</th>
+                  <th>Department</th>
+                  <th>Primary Holder</th>
+                  <th>Deputy</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredBudgets.map((budget) => (
+                  <tr key={budget.id}>
+                    <td>
+                      <strong>{budget.budgetNumber}</strong>
+                      <small>{budget.name}</small>
+                    </td>
+
+                    <td>{budget.department || '—'}</td>
+
+                    <td>
+                      {budget.budgetHolder || (
+                        <span className="attention-text">
+                          Needs holder
+                        </span>
+                      )}
+                    </td>
+
+                    <td>
+                      {budget.deputyHolder || '—'}
+                    </td>
+
+                    <td>
+                      <span className={`badge ${budget.status}`}>
+                        {formatStatus(budget.status)}
+                      </span>
+                    </td>
+
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          className="text-action"
+                          onClick={() => openEdit(budget)}
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          className={
+                            budget.status === 'active'
+                              ? 'text-action warning'
+                              : 'text-action'
+                          }
+                          onClick={() => changeStatus(budget)}
+                        >
+                          {budget.status === 'active'
+                            ? 'Deactivate'
+                            : 'Reactivate'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+
+                {filteredBudgets.length === 0 && (
+                  <tr>
+                    <td colSpan="6">
+                      <div className="empty-table">
+                        No budgets match your search.
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {showModal && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              !saving
+            ) {
+              setShowModal(false);
+            }
+          }}
+        >
+          <form
+            className="modal-card"
+            onSubmit={submitBudget}
+          >
+            <div className="modal-header">
+              <div>
+                <h2>
+                  {editingBudget
+                    ? 'Edit Budget'
+                    : 'Add Budget'}
+                </h2>
+
+                <p>
+                  Configure the budget and the people responsible for it.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setShowModal(false)}
+                disabled={saving}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="form-grid two">
+              <label>
+                Budget Number
+                <input
+                  required
+                  disabled={Boolean(editingBudget)}
+                  value={form.budgetNumber}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      budgetNumber: e.target.value
+                    })
+                  }
+                />
+              </label>
+
+              <label>
+                Department
+                <select
+                  required
+                  value={form.departmentId}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      departmentId: e.target.value
+                    })
+                  }
+                >
+                  <option value="">
+                    Select department...
+                  </option>
+
+                  {departments
+                    .filter(
+                      (department) =>
+                        department.status === 'active'
+                    )
+                    .map((department) => (
+                      <option
+                        key={department.id}
+                        value={department.id}
+                      >
+                        {department.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </div>
+
+            <label>
+              Budget Name
+              <input
+                required
+                value={form.name}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    name: e.target.value
+                  })
+                }
+              />
+            </label>
+
+            <div className="form-grid two">
+              <label>
+                Primary Budget Holder
+                <select
+                  value={form.holderUserId}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      holderUserId: e.target.value
+                    })
+                  }
+                >
+                  <option value="">
+                    Not assigned
+                  </option>
+
+                  {eligibleUsers.map((user) => (
+                    <option
+                      key={user.id}
+                      value={user.id}
+                    >
+                      {user.firstName} {user.lastName}
+                      {user.department
+                        ? ` — ${user.department}`
+                        : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Deputy Budget Holder
+                <select
+                  value={form.deputyUserId}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      deputyUserId: e.target.value
+                    })
+                  }
+                >
+                  <option value="">
+                    Not assigned
+                  </option>
+
+                  {eligibleUsers.map((user) => (
+                    <option
+                      key={user.id}
+                      value={user.id}
+                    >
+                      {user.firstName} {user.lastName}
+                      {user.department
+                        ? ` — ${user.department}`
+                        : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {form.holderUserId &&
+              form.holderUserId === form.deputyUserId && (
+                <div className="inline-warning">
+                  Primary and deputy cannot be the same person.
+                  The deputy assignment will be ignored.
+                </div>
+              )}
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setShowModal(false)}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                className="primary"
+                disabled={saving}
+              >
+                {saving
+                  ? 'Saving...'
+                  : editingBudget
+                    ? 'Save Changes'
+                    : 'Create Budget'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </>
+  );
+}
+
+function ReasonCodesPage() {
+  const [reasonCodes, setReasonCodes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [query, setQuery] = useState('');
+
+  const [showModal, setShowModal] = useState(false);
+  const [editingReason, setEditingReason] = useState(null);
+
+  const [form, setForm] = useState({
+    code: '',
+    description: ''
+  });
+
+  async function loadReasonCodes() {
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(
+        'http://localhost:3001/api/reason-codes'
+      );
+
+      if (!response.ok) {
+        throw new Error('Unable to load reason codes');
+      }
+
+      const data = await response.json();
+      setReasonCodes(data.reasonCodes ?? []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load reason codes'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadReasonCodes();
+  }, []);
+
+  const filteredReasonCodes = useMemo(() => {
+    const term = query.trim().toLowerCase();
+
+    if (!term) return reasonCodes;
+
+    return reasonCodes.filter((reason) =>
+      [
+        reason.code,
+        reason.description,
+        reason.status
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(term)
+    );
+  }, [reasonCodes, query]);
+
+  const stats = useMemo(() => ({
+    active: reasonCodes.filter(
+      (reason) => reason.status === 'active'
+    ).length,
+    inactive: reasonCodes.filter(
+      (reason) => reason.status === 'inactive'
+    ).length
+  }), [reasonCodes]);
+
+  function openCreate() {
+    setEditingReason(null);
+
+    setForm({
+      code: '',
+      description: ''
+    });
+
+    setError('');
+    setNotice('');
+    setShowModal(true);
+  }
+
+  function openEdit(reason) {
+    setEditingReason(reason);
+
+    setForm({
+      code: reason.code,
+      description: reason.description
+    });
+
+    setError('');
+    setNotice('');
+    setShowModal(true);
+  }
+
+  async function submitReason(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const isEditing = Boolean(editingReason);
+
+      const response = await fetch(
+        isEditing
+          ? `http://localhost:3001/api/reason-codes/${editingReason.id}`
+          : 'http://localhost:3001/api/reason-codes',
+        {
+          method: isEditing ? 'PATCH' : 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            code: form.code,
+            description: form.description
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+          `Unable to ${isEditing ? 'update' : 'create'} reason code`
+        );
+      }
+
+      setShowModal(false);
+      setEditingReason(null);
+
+      setForm({
+        code: '',
+        description: ''
+      });
+
+      setNotice(
+        isEditing
+          ? 'Reason code updated successfully.'
+          : 'Reason code created successfully.'
+      );
+
+      await loadReasonCodes();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to save reason code'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changeStatus(reason) {
+    const nextStatus =
+      reason.status === 'active'
+        ? 'inactive'
+        : 'active';
+
+    const verb =
+      nextStatus === 'inactive'
+        ? 'deactivate'
+        : 'reactivate';
+
+    if (
+      !window.confirm(
+        `Are you sure you want to ${verb} ${reason.code}?`
+      )
+    ) {
+      return;
+    }
+
+    setError('');
+    setNotice('');
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/reason-codes/${reason.id}/status`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            status: nextStatus
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+          'Unable to update reason code status'
+        );
+      }
+
+      setNotice(
+        `${reason.code} is now ${nextStatus}.`
+      );
+
+      await loadReasonCodes();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to update reason code'
+      );
+    }
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>Reason Codes</h1>
+          <p>
+            Control the valid reasons available for UHP-funded transport.
+          </p>
+        </div>
+
+        <button
+          className="primary"
+          onClick={openCreate}
+        >
+          <Plus size={18}/>
+          Add Reason Code
+        </button>
+      </div>
+
+      {notice && (
+        <div className="notice success">
+          {notice}
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="stats-grid">
+        <Stat
+          icon={<Tags/>}
+          label="Active Codes"
+          value={stats.active}
+        />
+
+        <Stat
+          icon={<Clock3/>}
+          label="Inactive"
+          value={stats.inactive}
+        />
+      </div>
+
+      <div className="card">
+        <div className="toolbar">
+          <div className="search compact">
+            <Search size={17}/>
+
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search reason codes..."
+            />
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="state-panel">
+            Loading reason codes...
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Description</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredReasonCodes.map((reason) => (
+                  <tr key={reason.id}>
+                    <td>
+                      <strong>{reason.code}</strong>
+                    </td>
+
+                    <td>{reason.description}</td>
+
+                    <td>
+                      <span className={`badge ${reason.status}`}>
+                        {formatStatus(reason.status)}
+                      </span>
+                    </td>
+
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          className="text-action"
+                          onClick={() => openEdit(reason)}
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          className={
+                            reason.status === 'active'
+                              ? 'text-action warning'
+                              : 'text-action'
+                          }
+                          onClick={() => changeStatus(reason)}
+                        >
+                          {reason.status === 'active'
+                            ? 'Deactivate'
+                            : 'Reactivate'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+
+                {filteredReasonCodes.length === 0 && (
+                  <tr>
+                    <td colSpan="4">
+                      <div className="empty-table">
+                        No reason codes match your search.
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {showModal && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              !saving
+            ) {
+              setShowModal(false);
+            }
+          }}
+        >
+          <form
+            className="modal-card modal-card-small"
+            onSubmit={submitReason}
+          >
+            <div className="modal-header">
+              <div>
+                <h2>
+                  {editingReason
+                    ? 'Edit Reason Code'
+                    : 'Add Reason Code'}
+                </h2>
+
+                <p>
+                  Only active codes will be offered on new bookings.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setShowModal(false)}
+                disabled={saving}
+              >
+                ×
+              </button>
+            </div>
+
+            <label>
+              Reason Code
+              <input
+                required
+                disabled={Boolean(editingReason)}
+                value={form.code}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    code: e.target.value.toUpperCase()
+                  })
+                }
+              />
+            </label>
+
+            <label>
+              Description
+              <input
+                required
+                value={form.description}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    description: e.target.value
+                  })
+                }
+              />
+            </label>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setShowModal(false)}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                className="primary"
+                disabled={saving}
+              >
+                {saving
+                  ? 'Saving...'
+                  : editingReason
+                    ? 'Save Changes'
+                    : 'Create Reason Code'}
               </button>
             </div>
           </form>

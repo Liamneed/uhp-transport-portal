@@ -358,19 +358,57 @@ function listBudgets() {
       b.status,
       d.id AS departmentId,
       d.name AS department,
-      holder.id AS holderUserId,
-      CASE
-        WHEN holder.id IS NULL THEN NULL
-        ELSE holder.first_name || ' ' || holder.last_name
-      END AS budgetHolder
+
+      (
+        SELECT u.id
+        FROM budget_assignments ba
+        JOIN users u ON u.id = ba.user_id
+        WHERE ba.budget_id = b.id
+          AND ba.assignment_type = 'primary_holder'
+          AND ba.is_active = 1
+          AND (ba.valid_to IS NULL OR ba.valid_to >= date('now'))
+        ORDER BY ba.id DESC
+        LIMIT 1
+      ) AS holderUserId,
+
+      (
+        SELECT u.first_name || ' ' || u.last_name
+        FROM budget_assignments ba
+        JOIN users u ON u.id = ba.user_id
+        WHERE ba.budget_id = b.id
+          AND ba.assignment_type = 'primary_holder'
+          AND ba.is_active = 1
+          AND (ba.valid_to IS NULL OR ba.valid_to >= date('now'))
+        ORDER BY ba.id DESC
+        LIMIT 1
+      ) AS budgetHolder,
+
+      (
+        SELECT u.id
+        FROM budget_assignments ba
+        JOIN users u ON u.id = ba.user_id
+        WHERE ba.budget_id = b.id
+          AND ba.assignment_type = 'deputy_holder'
+          AND ba.is_active = 1
+          AND (ba.valid_to IS NULL OR ba.valid_to >= date('now'))
+        ORDER BY ba.id DESC
+        LIMIT 1
+      ) AS deputyUserId,
+
+      (
+        SELECT u.first_name || ' ' || u.last_name
+        FROM budget_assignments ba
+        JOIN users u ON u.id = ba.user_id
+        WHERE ba.budget_id = b.id
+          AND ba.assignment_type = 'deputy_holder'
+          AND ba.is_active = 1
+          AND (ba.valid_to IS NULL OR ba.valid_to >= date('now'))
+        ORDER BY ba.id DESC
+        LIMIT 1
+      ) AS deputyHolder
+
     FROM budgets b
     LEFT JOIN departments d ON d.id = b.department_id
-    LEFT JOIN budget_assignments ba
-      ON ba.budget_id = b.id
-      AND ba.assignment_type = 'primary_holder'
-      AND ba.is_active = 1
-      AND (ba.valid_to IS NULL OR ba.valid_to >= date('now'))
-    LEFT JOIN users holder ON holder.id = ba.user_id
     ORDER BY b.budget_number
   `).all();
 }
@@ -750,6 +788,623 @@ function setUserStatus(userId, nextStatus) {
   }
 }
 
+
+
+function grantBudgetHolderAccess(userId, budgetId) {
+  if (!userId) return;
+
+  const existing = db.prepare(`
+    SELECT id
+    FROM user_budget_access
+    WHERE user_id = ?
+      AND budget_id = ?
+      AND (valid_to IS NULL OR valid_to >= date('now'))
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(userId, budgetId);
+
+  if (existing) {
+    db.prepare(`
+      UPDATE user_budget_access
+      SET
+        can_book = 1,
+        can_view = 1,
+        can_approve = 1,
+        can_dispute = 1,
+        valid_to = NULL
+      WHERE id = ?
+    `).run(existing.id);
+
+    return;
+  }
+
+  db.prepare(`
+    INSERT INTO user_budget_access
+      (
+        user_id,
+        budget_id,
+        can_book,
+        can_view,
+        can_approve,
+        can_dispute,
+        valid_from
+      )
+    VALUES (?, ?, 1, 1, 1, 1, date('now'))
+  `).run(userId, budgetId);
+}
+
+function getBudgetById(budgetId) {
+  return db.prepare(`
+    SELECT
+      id,
+      budget_number AS budgetNumber,
+      name,
+      department_id AS departmentId,
+      status
+    FROM budgets
+    WHERE id = ?
+  `).get(budgetId);
+}
+
+function createBudget(payload) {
+  const budgetNumber = String(payload.budgetNumber || '').trim();
+  const name = String(payload.name || '').trim();
+  const departmentId = Number(payload.departmentId);
+  const holderUserId = payload.holderUserId
+    ? Number(payload.holderUserId)
+    : null;
+  const deputyUserId = payload.deputyUserId
+    ? Number(payload.deputyUserId)
+    : null;
+
+  if (!budgetNumber || !name || !departmentId) {
+    const error = new Error(
+      'Budget number, budget name and department are required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const duplicate = db.prepare(`
+    SELECT id
+    FROM budgets
+    WHERE budget_number = ?
+  `).get(budgetNumber);
+
+  if (duplicate) {
+    const error = new Error('This budget number already exists');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const department = db.prepare(`
+    SELECT id
+    FROM departments
+    WHERE id = ?
+      AND status = 'active'
+  `).get(departmentId);
+
+  if (!department) {
+    const error = new Error('Selected department is not valid');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    holderUserId &&
+    deputyUserId &&
+    holderUserId === deputyUserId
+  ) {
+    const error = new Error(
+      'Primary and deputy budget holder must be different users'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  for (const [label, userId] of [
+    ['budget holder', holderUserId],
+    ['deputy budget holder', deputyUserId]
+  ]) {
+    if (!userId) continue;
+
+    const user = db.prepare(`
+      SELECT id
+      FROM users
+      WHERE id = ?
+        AND status IN ('active','invited')
+    `).get(userId);
+
+    if (!user) {
+      const error = new Error(`Selected ${label} is not valid`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO budgets
+        (
+          budget_number,
+          name,
+          department_id,
+          status,
+          effective_from
+        )
+      VALUES (?, ?, ?, 'active', date('now'))
+    `).run(
+      budgetNumber,
+      name,
+      departmentId
+    );
+
+    const budgetId = Number(result.lastInsertRowid);
+
+    const assignHolder = db.prepare(`
+      INSERT INTO budget_assignments
+        (
+          budget_id,
+          user_id,
+          assignment_type,
+          valid_from,
+          is_active
+        )
+      VALUES (?, ?, ?, date('now'), 1)
+    `);
+
+    if (holderUserId) {
+      assignHolder.run(
+        budgetId,
+        holderUserId,
+        'primary_holder'
+      );
+
+      grantBudgetHolderAccess(
+        holderUserId,
+        budgetId
+      );
+    }
+
+    if (deputyUserId && deputyUserId !== holderUserId) {
+      assignHolder.run(
+        budgetId,
+        deputyUserId,
+        'deputy_holder'
+      );
+
+      grantBudgetHolderAccess(
+        deputyUserId,
+        budgetId
+      );
+    }
+
+    writeAudit({
+      action: 'CREATE',
+      entityType: 'budget',
+      entityId: budgetId,
+      newValue: JSON.stringify({
+        budgetNumber,
+        name,
+        departmentId,
+        holderUserId,
+        deputyUserId,
+        status: 'active'
+      })
+    });
+
+    db.exec('COMMIT');
+
+    return getBudgetById(budgetId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function updateBudget(budgetId, payload) {
+  const existing = getBudgetById(budgetId);
+
+  if (!existing) {
+    const error = new Error('Budget not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const name = String(payload.name || existing.name).trim();
+  const departmentId = Number(
+    payload.departmentId || existing.departmentId
+  );
+  const holderUserId =
+    payload.holderUserId === null || payload.holderUserId === ''
+      ? null
+      : Number(payload.holderUserId);
+
+  const deputyUserId =
+    payload.deputyUserId === null || payload.deputyUserId === ''
+      ? null
+      : Number(payload.deputyUserId);
+
+  if (!name || !departmentId) {
+    const error = new Error(
+      'Budget name and department are required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const department = db.prepare(`
+    SELECT id
+    FROM departments
+    WHERE id = ?
+      AND status = 'active'
+  `).get(departmentId);
+
+  if (!department) {
+    const error = new Error('Selected department is not valid');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    holderUserId &&
+    deputyUserId &&
+    holderUserId === deputyUserId
+  ) {
+    const error = new Error(
+      'Primary and deputy budget holder must be different users'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  for (const [label, userId] of [
+    ['budget holder', holderUserId],
+    ['deputy budget holder', deputyUserId]
+  ]) {
+    if (!userId) continue;
+
+    const user = db.prepare(`
+      SELECT id
+      FROM users
+      WHERE id = ?
+        AND status IN ('active','invited')
+    `).get(userId);
+
+    if (!user) {
+      const error = new Error(`Selected ${label} is not valid`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE budgets
+      SET
+        name = ?,
+        department_id = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      name,
+      departmentId,
+      budgetId
+    );
+
+    db.prepare(`
+      UPDATE budget_assignments
+      SET
+        is_active = 0,
+        valid_to = date('now')
+      WHERE budget_id = ?
+        AND assignment_type IN ('primary_holder','deputy_holder')
+        AND is_active = 1
+    `).run(budgetId);
+
+    const assignHolder = db.prepare(`
+      INSERT INTO budget_assignments
+        (
+          budget_id,
+          user_id,
+          assignment_type,
+          valid_from,
+          is_active
+        )
+      VALUES (?, ?, ?, date('now'), 1)
+    `);
+
+    if (holderUserId) {
+      assignHolder.run(
+        budgetId,
+        holderUserId,
+        'primary_holder'
+      );
+
+      grantBudgetHolderAccess(
+        holderUserId,
+        budgetId
+      );
+    }
+
+    if (deputyUserId && deputyUserId !== holderUserId) {
+      assignHolder.run(
+        budgetId,
+        deputyUserId,
+        'deputy_holder'
+      );
+
+      grantBudgetHolderAccess(
+        deputyUserId,
+        budgetId
+      );
+    }
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType: 'budget',
+      entityId: budgetId,
+      oldValue: JSON.stringify(existing),
+      newValue: JSON.stringify({
+        ...existing,
+        name,
+        departmentId,
+        holderUserId,
+        deputyUserId
+      })
+    });
+
+    db.exec('COMMIT');
+
+    return getBudgetById(budgetId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function setBudgetStatus(budgetId, nextStatus) {
+  if (!['active', 'inactive'].includes(nextStatus)) {
+    const error = new Error('Invalid budget status');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const existing = getBudgetById(budgetId);
+
+  if (!existing) {
+    const error = new Error('Budget not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (existing.status === nextStatus) {
+    return existing;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE budgets
+      SET
+        status = ?,
+        effective_to = CASE
+          WHEN ? = 'inactive' THEN date('now')
+          ELSE NULL
+        END,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      nextStatus,
+      nextStatus,
+      budgetId
+    );
+
+    writeAudit({
+      action: 'STATUS_CHANGE',
+      entityType: 'budget',
+      entityId: budgetId,
+      fieldName: 'status',
+      oldValue: existing.status,
+      newValue: nextStatus
+    });
+
+    db.exec('COMMIT');
+
+    return getBudgetById(budgetId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function getReasonCodeById(reasonCodeId) {
+  return db.prepare(`
+    SELECT
+      id,
+      code,
+      description,
+      status
+    FROM reason_codes
+    WHERE id = ?
+  `).get(reasonCodeId);
+}
+
+function createReasonCode(payload) {
+  const code = String(payload.code || '').trim().toUpperCase();
+  const description = String(payload.description || '').trim();
+
+  if (!code || !description) {
+    const error = new Error(
+      'Reason code and description are required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const duplicate = db.prepare(`
+    SELECT id
+    FROM reason_codes
+    WHERE code = ?
+  `).get(code);
+
+  if (duplicate) {
+    const error = new Error('This reason code already exists');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO reason_codes
+        (
+          code,
+          description,
+          status,
+          effective_from
+        )
+      VALUES (?, ?, 'active', date('now'))
+    `).run(
+      code,
+      description
+    );
+
+    const reasonCodeId = Number(result.lastInsertRowid);
+
+    writeAudit({
+      action: 'CREATE',
+      entityType: 'reason_code',
+      entityId: reasonCodeId,
+      newValue: JSON.stringify({
+        code,
+        description,
+        status: 'active'
+      })
+    });
+
+    db.exec('COMMIT');
+
+    return getReasonCodeById(reasonCodeId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function updateReasonCode(reasonCodeId, payload) {
+  const existing = getReasonCodeById(reasonCodeId);
+
+  if (!existing) {
+    const error = new Error('Reason code not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const description = String(
+    payload.description || existing.description
+  ).trim();
+
+  if (!description) {
+    const error = new Error('Reason description is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE reason_codes
+      SET
+        description = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      description,
+      reasonCodeId
+    );
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType: 'reason_code',
+      entityId: reasonCodeId,
+      fieldName: 'description',
+      oldValue: existing.description,
+      newValue: description
+    });
+
+    db.exec('COMMIT');
+
+    return getReasonCodeById(reasonCodeId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function setReasonCodeStatus(reasonCodeId, nextStatus) {
+  if (!['active', 'inactive'].includes(nextStatus)) {
+    const error = new Error('Invalid reason code status');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const existing = getReasonCodeById(reasonCodeId);
+
+  if (!existing) {
+    const error = new Error('Reason code not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (existing.status === nextStatus) {
+    return existing;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE reason_codes
+      SET
+        status = ?,
+        effective_to = CASE
+          WHEN ? = 'inactive' THEN date('now')
+          ELSE NULL
+        END,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      nextStatus,
+      nextStatus,
+      reasonCodeId
+    );
+
+    writeAudit({
+      action: 'STATUS_CHANGE',
+      entityType: 'reason_code',
+      entityId: reasonCodeId,
+      fieldName: 'status',
+      oldValue: existing.status,
+      newValue: nextStatus
+    });
+
+    db.exec('COMMIT');
+
+    return getReasonCodeById(reasonCodeId);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
@@ -798,6 +1453,96 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/roles') {
       return sendJson(res, 200, {
         roles: listRoles()
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/budgets') {
+      const payload = await readJson(req);
+      const budget = createBudget(payload);
+
+      return sendJson(res, 201, {
+        budget
+      });
+    }
+
+    const budgetMatch = url.pathname.match(
+      /^\/api\/budgets\/(\d+)$/
+    );
+
+    if (req.method === 'PATCH' && budgetMatch) {
+      const payload = await readJson(req);
+      const budgetId = Number(budgetMatch[1]);
+
+      const budget = updateBudget(
+        budgetId,
+        payload
+      );
+
+      return sendJson(res, 200, {
+        budget
+      });
+    }
+
+    const budgetStatusMatch = url.pathname.match(
+      /^\/api\/budgets\/(\d+)\/status$/
+    );
+
+    if (req.method === 'PATCH' && budgetStatusMatch) {
+      const payload = await readJson(req);
+      const budgetId = Number(budgetStatusMatch[1]);
+
+      const budget = setBudgetStatus(
+        budgetId,
+        String(payload.status || '')
+      );
+
+      return sendJson(res, 200, {
+        budget
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/reason-codes') {
+      const payload = await readJson(req);
+      const reasonCode = createReasonCode(payload);
+
+      return sendJson(res, 201, {
+        reasonCode
+      });
+    }
+
+    const reasonCodeMatch = url.pathname.match(
+      /^\/api\/reason-codes\/(\d+)$/
+    );
+
+    if (req.method === 'PATCH' && reasonCodeMatch) {
+      const payload = await readJson(req);
+      const reasonCodeId = Number(reasonCodeMatch[1]);
+
+      const reasonCode = updateReasonCode(
+        reasonCodeId,
+        payload
+      );
+
+      return sendJson(res, 200, {
+        reasonCode
+      });
+    }
+
+    const reasonCodeStatusMatch = url.pathname.match(
+      /^\/api\/reason-codes\/(\d+)\/status$/
+    );
+
+    if (req.method === 'PATCH' && reasonCodeStatusMatch) {
+      const payload = await readJson(req);
+      const reasonCodeId = Number(reasonCodeStatusMatch[1]);
+
+      const reasonCode = setReasonCodeStatus(
+        reasonCodeId,
+        String(payload.status || '')
+      );
+
+      return sendJson(res, 200, {
+        reasonCode
       });
     }
 
