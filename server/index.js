@@ -3407,6 +3407,420 @@ function amendPortalBooking(
 }
 
 
+function ingestBookingFare(
+  bookingId,
+  actorUserId,
+  payload = {}
+) {
+  if (
+    !Number.isInteger(bookingId) ||
+    bookingId < 1
+  ) {
+    const error = new Error(
+      'A valid booking id is required'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const booking = db.prepare(`
+    SELECT
+      id,
+      public_reference AS publicReference,
+      operational_status AS operationalStatus,
+      financial_status AS financialStatus
+    FROM bookings
+    WHERE id = ?
+  `).get(bookingId);
+
+  if (!booking) {
+    const error = new Error(
+      'Booking not found'
+    );
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    booking.operationalStatus !==
+      'completed'
+  ) {
+    const error = new Error(
+      'Fare data can only be posted to completed bookings'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const grossAmountPence =
+    payload.grossAmountPence;
+
+  if (
+    !Number.isInteger(
+      grossAmountPence
+    ) ||
+    grossAmountPence < 0
+  ) {
+    const error = new Error(
+      'grossAmountPence must be a non-negative integer'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const netAmountPence =
+    payload.netAmountPence === null ||
+    payload.netAmountPence ===
+      undefined
+      ? null
+      : payload.netAmountPence;
+
+  const vatAmountPence =
+    payload.vatAmountPence === null ||
+    payload.vatAmountPence ===
+      undefined
+      ? null
+      : payload.vatAmountPence;
+
+  if (
+    netAmountPence !== null &&
+    (
+      !Number.isInteger(
+        netAmountPence
+      ) ||
+      netAmountPence < 0
+    )
+  ) {
+    const error = new Error(
+      'netAmountPence must be a non-negative integer or null'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    vatAmountPence !== null &&
+    (
+      !Number.isInteger(
+        vatAmountPence
+      ) ||
+      vatAmountPence < 0
+    )
+  ) {
+    const error = new Error(
+      'vatAmountPence must be a non-negative integer or null'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    netAmountPence !== null &&
+    vatAmountPence !== null &&
+    (
+      netAmountPence +
+      vatAmountPence !==
+        grossAmountPence
+    )
+  ) {
+    const error = new Error(
+      'Net amount plus VAT must equal gross amount'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const source = String(
+    payload.source || ''
+  ).trim().toLowerCase();
+
+  if (
+    ![
+      'autocab',
+      'manual',
+      'import'
+    ].includes(source)
+  ) {
+    const error = new Error(
+      'Fare source must be autocab, manual or import'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const externalReference =
+    payload.externalReference === null ||
+    payload.externalReference ===
+      undefined
+      ? null
+      : String(
+          payload.externalReference
+        ).trim() || null;
+
+  let rawPayload = null;
+
+  if (
+    payload.rawPayload !== null &&
+    payload.rawPayload !== undefined
+  ) {
+    rawPayload =
+      typeof payload.rawPayload ===
+        'string'
+        ? payload.rawPayload
+        : JSON.stringify(
+            payload.rawPayload
+          );
+  }
+
+  const existing =
+    db.prepare(`
+      SELECT
+        id,
+        booking_id AS bookingId,
+        gross_amount_pence AS grossAmountPence,
+        net_amount_pence AS netAmountPence,
+        vat_amount_pence AS vatAmountPence,
+        currency,
+        source,
+        external_reference AS externalReference,
+        received_at AS receivedAt,
+        updated_by_user_id AS updatedByUserId,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM booking_financials
+      WHERE booking_id = ?
+    `).get(bookingId);
+
+  const transitionToReview =
+    [
+      'authorised',
+      'coding_required',
+      'adjustment_required'
+    ].includes(
+      booking.financialStatus
+    );
+
+  const nextFinancialStatus =
+    transitionToReview
+      ? 'pending_review'
+      : booking.financialStatus;
+
+  const eventType =
+    existing
+      ? 'fare_updated'
+      : 'fare_received';
+
+  const oldFinancialState =
+    existing
+      ? {
+          grossAmountPence:
+            existing.grossAmountPence,
+          netAmountPence:
+            existing.netAmountPence,
+          vatAmountPence:
+            existing.vatAmountPence,
+          currency:
+            existing.currency,
+          source:
+            existing.source,
+          externalReference:
+            existing.externalReference
+        }
+      : null;
+
+  const newFinancialState = {
+    grossAmountPence,
+    netAmountPence,
+    vatAmountPence,
+    currency: 'GBP',
+    source,
+    externalReference
+  };
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      INSERT INTO booking_financials (
+        booking_id,
+        gross_amount_pence,
+        net_amount_pence,
+        vat_amount_pence,
+        currency,
+        source,
+        external_reference,
+        raw_payload,
+        received_at,
+        updated_by_user_id
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        'GBP',
+        ?,
+        ?,
+        ?,
+        CURRENT_TIMESTAMP,
+        ?
+      )
+      ON CONFLICT(booking_id)
+      DO UPDATE SET
+        gross_amount_pence =
+          excluded.gross_amount_pence,
+        net_amount_pence =
+          excluded.net_amount_pence,
+        vat_amount_pence =
+          excluded.vat_amount_pence,
+        currency =
+          excluded.currency,
+        source =
+          excluded.source,
+        external_reference =
+          excluded.external_reference,
+        raw_payload =
+          excluded.raw_payload,
+        received_at =
+          CURRENT_TIMESTAMP,
+        updated_by_user_id =
+          excluded.updated_by_user_id,
+        updated_at =
+          CURRENT_TIMESTAMP
+    `).run(
+      bookingId,
+      grossAmountPence,
+      netAmountPence,
+      vatAmountPence,
+      source,
+      externalReference,
+      rawPayload,
+      actorUserId
+    );
+
+    if (transitionToReview) {
+      db.prepare(`
+        UPDATE bookings
+        SET
+          financial_status =
+            'pending_review',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(bookingId);
+    }
+
+    db.prepare(`
+      INSERT INTO booking_events
+        (
+          booking_id,
+          event_type,
+          event_source,
+          old_status,
+          new_status,
+          user_id,
+          notes,
+          raw_payload
+        )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      bookingId,
+      eventType,
+      source,
+      booking.financialStatus,
+      nextFinancialStatus,
+      actorUserId,
+      existing
+        ? 'Completed fare updated'
+        : 'Completed fare received',
+      JSON.stringify(
+        newFinancialState
+      )
+    );
+
+    writeAudit({
+      action:
+        existing
+          ? 'UPDATE'
+          : 'CREATE',
+      entityType:
+        'booking_financial',
+      entityId:
+        bookingId,
+      oldValue:
+        oldFinancialState
+          ? JSON.stringify(
+              oldFinancialState
+            )
+          : null,
+      newValue:
+        JSON.stringify(
+          newFinancialState
+        ),
+      source,
+      actorUserId
+    });
+
+    if (transitionToReview) {
+      writeAudit({
+        action:
+          'STATUS_CHANGE',
+        entityType:
+          'booking',
+        entityId:
+          bookingId,
+        fieldName:
+          'financial_status',
+        oldValue:
+          booking.financialStatus,
+        newValue:
+          'pending_review',
+        source,
+        actorUserId
+      });
+    }
+
+    db.exec('COMMIT');
+
+    const financial =
+      db.prepare(`
+        SELECT
+          id,
+          booking_id AS bookingId,
+          gross_amount_pence AS grossAmountPence,
+          net_amount_pence AS netAmountPence,
+          vat_amount_pence AS vatAmountPence,
+          currency,
+          source,
+          external_reference AS externalReference,
+          received_at AS receivedAt,
+          updated_by_user_id AS updatedByUserId,
+          created_at AS createdAt,
+          updated_at AS updatedAt
+        FROM booking_financials
+        WHERE booking_id = ?
+      `).get(bookingId);
+
+    return {
+      booking: {
+        id:
+          booking.id,
+        publicReference:
+          booking.publicReference,
+        operationalStatus:
+          booking.operationalStatus,
+        financialStatus:
+          nextFinancialStatus
+      },
+      financial
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
 function updateBudgetBookingFinancialStatus(
   bookingId,
   userId,
@@ -4354,6 +4768,47 @@ const server = http.createServer(async (req, res) => {
         getControlSummary()
       );
     }
+
+    const bookingFareMatch =
+      url.pathname.match(
+        /^\/api\/control\/bookings\/(\d+)\/fare$/
+      );
+
+    if (
+      req.method === 'POST' &&
+      bookingFareMatch
+    ) {
+      const payload =
+        await readJson(req);
+
+      const bookingId =
+        Number(
+          bookingFareMatch[1]
+        );
+
+      const auth =
+        requireAnyRole(
+          req,
+          [
+            'nac_controller',
+            'nac_admin'
+          ]
+        );
+
+      const result =
+        ingestBookingFare(
+          bookingId,
+          auth.user.id,
+          payload
+        );
+
+      return sendJson(
+        res,
+        200,
+        result
+      );
+    }
+
 
     const bookingAmendMatch = url.pathname.match(
       /^\/api\/bookings\/(\d+)$/
