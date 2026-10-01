@@ -92,6 +92,8 @@ function App() {
             <BudgetsPage/>
           ) : role === 'uhp_admin' && active === 'Reason Codes' ? (
             <ReasonCodesPage/>
+          ) : role === 'booker' && active === 'Book UHP Transport' ? (
+            <BookTransportPage/>
           ) : (
             <Placeholder role={role} active={active}/>
           )}
@@ -684,6 +686,756 @@ function UsersPage() {
   );
 }
 
+
+
+function BookTransportPage() {
+  const bookingUserId = 1;
+
+  const initialForm = {
+    pickupDate: '',
+    pickupTime: '',
+    pickupAddress: '',
+    pickupPostcode: '',
+    destinationAddress: '',
+    destinationPostcode: '',
+    passengerName: '',
+    passengerMobile: '',
+    passengerCount: 1,
+    budgetId: '',
+    reasonCodeId: '',
+    driverNotes: ''
+  };
+
+  const [form, setForm] = useState(initialForm);
+  const [vias, setVias] = useState([]);
+
+  const [bookingUser, setBookingUser] = useState(null);
+  const [budgets, setBudgets] = useState([]);
+  const [reasonCodes, setReasonCodes] = useState([]);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [confirmation, setConfirmation] = useState(null);
+
+  useEffect(() => {
+    loadBookingOptions();
+  }, []);
+
+  async function loadBookingOptions() {
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/booking-options?userId=${bookingUserId}`
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || 'Unable to load booking options'
+        );
+      }
+
+      setBookingUser(data.user ?? null);
+      setBudgets(data.budgets ?? []);
+      setReasonCodes(data.reasonCodes ?? []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load booking options'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const selectedBudget = useMemo(
+    () =>
+      budgets.find(
+        (budget) =>
+          String(budget.id) === String(form.budgetId)
+      ) ?? null,
+    [budgets, form.budgetId]
+  );
+
+  function updateForm(field, value) {
+    setForm((current) => ({
+      ...current,
+      [field]: value
+    }));
+  }
+
+  function addVia() {
+    setVias((current) => [
+      ...current,
+      {
+        address: '',
+        postcode: ''
+      }
+    ]);
+  }
+
+  function updateVia(index, field, value) {
+    setVias((current) =>
+      current.map((via, viaIndex) =>
+        viaIndex === index
+          ? {
+              ...via,
+              [field]: value
+            }
+          : via
+      )
+    );
+  }
+
+  function removeVia(index) {
+    setVias((current) =>
+      current.filter((_, viaIndex) => viaIndex !== index)
+    );
+  }
+
+  function resetBooking() {
+    setForm(initialForm);
+    setVias([]);
+    setConfirmation(null);
+    setError('');
+  }
+
+  async function submitBooking(event) {
+    event.preventDefault();
+
+    setSaving(true);
+    setError('');
+    setConfirmation(null);
+
+    try {
+      if (!form.pickupDate || !form.pickupTime) {
+        throw new Error(
+          'Pickup date and time are required'
+        );
+      }
+
+      const response = await fetch(
+        'http://localhost:3001/api/bookings',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            requestedPickupAt:
+              `${form.pickupDate}T${form.pickupTime}:00`,
+
+            passengerName: form.passengerName,
+            passengerMobile: form.passengerMobile,
+            passengerCount: Number(form.passengerCount),
+
+            pickup: {
+              address: form.pickupAddress,
+              postcode: form.pickupPostcode
+            },
+
+            vias: vias
+              .filter((via) => via.address.trim())
+              .map((via) => ({
+                address: via.address,
+                postcode: via.postcode
+              })),
+
+            destination: {
+              address: form.destinationAddress,
+              postcode: form.destinationPostcode
+            },
+
+            driverNotes: form.driverNotes,
+
+            budgetId: Number(form.budgetId),
+            reasonCodeId: Number(form.reasonCodeId),
+            createdByUserId: bookingUserId
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || 'Unable to create booking'
+        );
+      }
+
+      setConfirmation(result.booking);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to create booking'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading booking options...
+      </div>
+    );
+  }
+
+  if (confirmation) {
+    return (
+      <div className="booking-confirmation">
+        <div className="confirmation-icon">
+          <CheckCircle2 size={34}/>
+        </div>
+
+        <h1>Transport request created</h1>
+
+        <p className="confirmation-lead">
+          The UHP transport request has been recorded successfully.
+        </p>
+
+        <div className="confirmation-reference">
+          <small>UHP Reference</small>
+          <strong>{confirmation.publicReference}</strong>
+        </div>
+
+        <div className="confirmation-grid">
+          <div>
+            <small>Passenger</small>
+            <strong>{confirmation.passengerName}</strong>
+          </div>
+
+          <div>
+            <small>Pickup</small>
+            <strong>
+              {confirmation.requestedPickupAt
+                .replace('T', ' ')
+                .slice(0, 16)}
+            </strong>
+          </div>
+
+          <div>
+            <small>Budget</small>
+            <strong>
+              {confirmation.budgetNumber}
+            </strong>
+          </div>
+
+          <div>
+            <small>Budget Holder</small>
+            <strong>
+              {confirmation.budgetHolder}
+            </strong>
+          </div>
+
+          <div>
+            <small>Reason</small>
+            <strong>
+              {confirmation.reasonCode} · {confirmation.reasonDescription}
+            </strong>
+          </div>
+
+          <div>
+            <small>Status</small>
+            <strong>
+              {formatStatus(
+                confirmation.operationalStatus
+              )}
+            </strong>
+          </div>
+        </div>
+
+        <div className="confirmation-note">
+          This request is currently stored in the UHP Transport Portal.
+          Autocab dispatch integration has not yet been enabled.
+        </div>
+
+        <button
+          className="primary"
+          onClick={resetBooking}
+        >
+          <Plus size={18}/>
+          Book Another Journey
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-heading booking-heading">
+        <div>
+          <h1>Book UHP Transport</h1>
+
+          <p>
+            For authorised UHP-funded transport only.
+          </p>
+        </div>
+
+        {bookingUser && (
+          <div className="booking-user-chip">
+            <small>Booking as</small>
+            <strong>
+              {bookingUser.firstName} {bookingUser.lastName}
+            </strong>
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      {budgets.length === 0 && (
+        <div className="notice error">
+          This user does not currently have any fully configured
+          budgets available for transport bookings.
+        </div>
+      )}
+
+      <form
+        className="booking-layout"
+        onSubmit={submitBooking}
+      >
+        <div className="booking-main">
+          <section className="card booking-section">
+            <div className="section-heading">
+              <span className="section-number">1</span>
+
+              <div>
+                <h2>Date &amp; Time</h2>
+                <p>
+                  When should the passenger be collected?
+                </p>
+              </div>
+            </div>
+
+            <div className="form-grid two">
+              <label>
+                Pickup Date
+                <input
+                  type="date"
+                  required
+                  value={form.pickupDate}
+                  onChange={(e) =>
+                    updateForm(
+                      'pickupDate',
+                      e.target.value
+                    )
+                  }
+                />
+              </label>
+
+              <label>
+                Pickup Time
+                <input
+                  type="time"
+                  required
+                  value={form.pickupTime}
+                  onChange={(e) =>
+                    updateForm(
+                      'pickupTime',
+                      e.target.value
+                    )
+                  }
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="card booking-section">
+            <div className="section-heading">
+              <span className="section-number">2</span>
+
+              <div>
+                <h2>Journey</h2>
+                <p>
+                  Enter the pickup, any stops, and destination.
+                </p>
+              </div>
+            </div>
+
+            <div className="journey-stop pickup-stop">
+              <div className="stop-marker">
+                <span/>
+              </div>
+
+              <div className="stop-fields">
+                <label>
+                  Pickup
+                  <input
+                    required
+                    placeholder="Enter pickup address"
+                    value={form.pickupAddress}
+                    onChange={(e) =>
+                      updateForm(
+                        'pickupAddress',
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label className="postcode-field">
+                  Postcode
+                  <input
+                    placeholder="Optional"
+                    value={form.pickupPostcode}
+                    onChange={(e) =>
+                      updateForm(
+                        'pickupPostcode',
+                        e.target.value.toUpperCase()
+                      )
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+
+            {vias.map((via, index) => (
+              <div
+                className="journey-stop via-stop"
+                key={index}
+              >
+                <div className="stop-marker">
+                  <span/>
+                </div>
+
+                <div className="stop-fields">
+                  <label>
+                    Via {index + 1}
+                    <input
+                      placeholder="Enter via address"
+                      value={via.address}
+                      onChange={(e) =>
+                        updateVia(
+                          index,
+                          'address',
+                          e.target.value
+                        )
+                      }
+                    />
+                  </label>
+
+                  <label className="postcode-field">
+                    Postcode
+                    <input
+                      placeholder="Optional"
+                      value={via.postcode}
+                      onChange={(e) =>
+                        updateVia(
+                          index,
+                          'postcode',
+                          e.target.value.toUpperCase()
+                        )
+                      }
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    className="remove-stop"
+                    onClick={() => removeVia(index)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <button
+              type="button"
+              className="add-via"
+              onClick={addVia}
+            >
+              <Plus size={16}/>
+              Add Via
+            </button>
+
+            <div className="journey-stop destination-stop">
+              <div className="stop-marker">
+                <span/>
+              </div>
+
+              <div className="stop-fields">
+                <label>
+                  Destination
+                  <input
+                    required
+                    placeholder="Enter destination address"
+                    value={form.destinationAddress}
+                    onChange={(e) =>
+                      updateForm(
+                        'destinationAddress',
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label className="postcode-field">
+                  Postcode
+                  <input
+                    placeholder="Optional"
+                    value={form.destinationPostcode}
+                    onChange={(e) =>
+                      updateForm(
+                        'destinationPostcode',
+                        e.target.value.toUpperCase()
+                      )
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section className="card booking-section">
+            <div className="section-heading">
+              <span className="section-number">3</span>
+
+              <div>
+                <h2>Passenger</h2>
+                <p>
+                  Who is travelling?
+                </p>
+              </div>
+            </div>
+
+            <div className="form-grid two">
+              <label>
+                Passenger Name
+                <input
+                  required
+                  value={form.passengerName}
+                  onChange={(e) =>
+                    updateForm(
+                      'passengerName',
+                      e.target.value
+                    )
+                  }
+                />
+              </label>
+
+              <label>
+                Contact Number
+                <input
+                  type="tel"
+                  required
+                  value={form.passengerMobile}
+                  onChange={(e) =>
+                    updateForm(
+                      'passengerMobile',
+                      e.target.value
+                    )
+                  }
+                />
+              </label>
+            </div>
+
+            <label className="short-field">
+              Number of Passengers
+              <input
+                type="number"
+                min="1"
+                required
+                value={form.passengerCount}
+                onChange={(e) =>
+                  updateForm(
+                    'passengerCount',
+                    e.target.value
+                  )
+                }
+              />
+            </label>
+          </section>
+
+          <section className="card booking-section">
+            <div className="section-heading">
+              <span className="section-number">4</span>
+
+              <div>
+                <h2>UHP Authorisation</h2>
+                <p>
+                  Select the approved reason and budget.
+                </p>
+              </div>
+            </div>
+
+            <div className="form-grid two">
+              <label>
+                Reason Code
+                <select
+                  required
+                  value={form.reasonCodeId}
+                  onChange={(e) =>
+                    updateForm(
+                      'reasonCodeId',
+                      e.target.value
+                    )
+                  }
+                >
+                  <option value="">
+                    Select reason...
+                  </option>
+
+                  {reasonCodes.map((reason) => (
+                    <option
+                      key={reason.id}
+                      value={reason.id}
+                    >
+                      {reason.code} — {reason.description}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Budget Number
+                <select
+                  required
+                  value={form.budgetId}
+                  onChange={(e) =>
+                    updateForm(
+                      'budgetId',
+                      e.target.value
+                    )
+                  }
+                >
+                  <option value="">
+                    Select budget...
+                  </option>
+
+                  {budgets.map((budget) => (
+                    <option
+                      key={budget.id}
+                      value={budget.id}
+                    >
+                      {budget.budgetNumber} — {budget.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {selectedBudget && (
+              <div className="budget-holder-panel">
+                <div>
+                  <small>Budget Holder</small>
+                  <strong>
+                    {selectedBudget.budgetHolder}
+                  </strong>
+                </div>
+
+                <div>
+                  <small>Department</small>
+                  <strong>
+                    {selectedBudget.department || '—'}
+                  </strong>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="card booking-section">
+            <div className="section-heading">
+              <span className="section-number">5</span>
+
+              <div>
+                <h2>Driver Notes</h2>
+                <p>
+                  Optional information the driver may need.
+                </p>
+              </div>
+            </div>
+
+            <label>
+              Notes
+              <textarea
+                rows="4"
+                placeholder="For example: collection point, ward entrance or passenger assistance information."
+                value={form.driverNotes}
+                onChange={(e) =>
+                  updateForm(
+                    'driverNotes',
+                    e.target.value
+                  )
+                }
+              />
+            </label>
+          </section>
+        </div>
+
+        <aside className="booking-summary">
+          <div className="card summary-card">
+            <h3>UHP Account Booking</h3>
+
+            <div className="account-only-chip">
+              UHP Funded
+            </div>
+
+            <p>
+              All journeys booked here require an approved UHP
+              budget and reason code.
+            </p>
+
+            <div className="summary-rule"/>
+
+            <div className="summary-item">
+              <small>Budget</small>
+
+              <strong>
+                {selectedBudget
+                  ? selectedBudget.budgetNumber
+                  : 'Not selected'}
+              </strong>
+            </div>
+
+            <div className="summary-item">
+              <small>Budget Holder</small>
+
+              <strong>
+                {selectedBudget
+                  ? selectedBudget.budgetHolder
+                  : '—'}
+              </strong>
+            </div>
+
+            <div className="summary-rule"/>
+
+            <div className="no-fare-note">
+              No fare is shown at the point of booking.
+              Completed journey costs will be posted through the
+              UHP account process.
+            </div>
+
+            <button
+              type="submit"
+              className="primary booking-submit"
+              disabled={
+                saving ||
+                budgets.length === 0
+              }
+            >
+              {saving
+                ? 'Creating Request...'
+                : 'Create Transport Request'}
+            </button>
+          </div>
+        </aside>
+      </form>
+    </>
+  );
+}
 
 function BudgetsPage() {
   const [budgets, setBudgets] = useState([]);

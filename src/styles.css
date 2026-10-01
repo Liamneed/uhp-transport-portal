@@ -317,3 +317,398 @@ button:disabled {
   background: #f0f2f5;
   color: #687588;
 }
+
+.booking-heading {
+  align-items: center;
+}
+
+.booking-user-chip {
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  padding: 10px 14px;
+  border: 1px solid #dfe7ef;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.booking-user-chip small {
+  color: #78879a;
+  margin-bottom: 2px;
+}
+
+.booking-user-chip strong {
+  color: #34475e;
+}
+
+.booking-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+  align-items: start;
+}
+
+.booking-main {
+  display: grid;
+  gap: 18px;
+}
+
+.booking-section {
+  padding: 22px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.section-heading h2 {
+  margin: 0 0 3px;
+  font-size: 18px;
+  color: #2c4059;
+}
+
+.section-heading p {
+  margin: 0;
+  color: #7a899c;
+  font-size: 13px;
+}
+
+.section-number {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 50%;
+  background: #e9f5fb;
+  color: #1476a5;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.booking-section label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #45566c;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.booking-section input,
+.booking-section select,
+.booking-section textarea {
+  width: 100%;
+  border: 1px solid #d9e2eb;
+  border-radius: 9px;
+  padding: 10px 11px;
+  background: #fff;
+  color: #26384f;
+  font: inherit;
+}
+
+.booking-section textarea {
+  resize: vertical;
+}
+
+.short-field {
+  width: 220px;
+}
+
+.journey-stop {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
+}
+
+.stop-marker {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+.stop-marker::after {
+  content: "";
+  position: absolute;
+  top: 19px;
+  bottom: -14px;
+  width: 2px;
+  background: #dce6ee;
+}
+
+.destination-stop .stop-marker::after {
+  display: none;
+}
+
+.stop-marker span {
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  margin-top: 34px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #1593c4;
+  box-shadow: 0 0 0 2px #1593c4;
+}
+
+.destination-stop .stop-marker span {
+  background: #315f87;
+  box-shadow: 0 0 0 2px #315f87;
+}
+
+.via-stop .stop-marker span {
+  background: #7da0b7;
+  box-shadow: 0 0 0 2px #7da0b7;
+}
+
+.stop-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 145px auto;
+  gap: 10px;
+  align-items: end;
+  padding-bottom: 14px;
+}
+
+.postcode-field {
+  min-width: 0;
+}
+
+.remove-stop {
+  height: 39px;
+  margin-bottom: 0;
+  border: 0;
+  background: transparent;
+  color: #a34a4a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.add-via {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px 33px;
+  border: 0;
+  background: transparent;
+  color: #1476a5;
+  font-weight: 700;
+}
+
+.budget-holder-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #dce8ef;
+  border-radius: 10px;
+  background: #f7fbfd;
+}
+
+.budget-holder-panel > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.budget-holder-panel small {
+  color: #78879a;
+}
+
+.budget-holder-panel strong {
+  color: #34475e;
+}
+
+.booking-summary {
+  position: sticky;
+  top: 86px;
+}
+
+.summary-card {
+  padding: 20px;
+}
+
+.summary-card h3 {
+  margin: 0 0 10px;
+  color: #31465f;
+}
+
+.summary-card > p {
+  color: #758497;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.account-only-chip {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #e9f7ef;
+  color: #26734b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.summary-rule {
+  height: 1px;
+  margin: 17px 0;
+  background: #e5ebf0;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 12px;
+}
+
+.summary-item small {
+  color: #7c8b9c;
+}
+
+.summary-item strong {
+  color: #34475e;
+}
+
+.no-fare-note {
+  padding: 11px 12px;
+  border-radius: 9px;
+  background: #f5f7f9;
+  color: #68788b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.booking-submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.booking-confirmation {
+  max-width: 780px;
+  margin: 36px auto;
+  padding: 34px;
+  border: 1px solid #dfe8ef;
+  border-radius: 18px;
+  background: #fff;
+  text-align: center;
+  box-shadow: 0 12px 35px rgba(29, 55, 78, 0.07);
+}
+
+.confirmation-icon {
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  background: #eaf8f0;
+  color: #27865a;
+}
+
+.booking-confirmation h1 {
+  margin: 0;
+}
+
+.confirmation-lead {
+  color: #758497;
+}
+
+.confirmation-reference {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 24px auto;
+  padding: 15px;
+  max-width: 310px;
+  border: 1px solid #dbe7ee;
+  border-radius: 11px;
+  background: #f8fbfd;
+}
+
+.confirmation-reference small {
+  color: #7a899a;
+}
+
+.confirmation-reference strong {
+  font-size: 22px;
+  color: #28516f;
+}
+
+.confirmation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin: 24px 0;
+  text-align: left;
+}
+
+.confirmation-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px;
+  border: 1px solid #e4eaf0;
+  border-radius: 9px;
+}
+
+.confirmation-grid small {
+  color: #7d8b9c;
+}
+
+.confirmation-grid strong {
+  color: #36495f;
+}
+
+.confirmation-note {
+  margin: 0 0 22px;
+  padding: 12px;
+  border-radius: 9px;
+  background: #fff8e8;
+  color: #816117;
+  font-size: 13px;
+}
+
+@media (max-width: 980px) {
+  .booking-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .booking-summary {
+    position: static;
+  }
+}
+
+@media (max-width: 700px) {
+  .booking-heading {
+    align-items: stretch;
+  }
+
+  .booking-user-chip {
+    width: 100%;
+  }
+
+  .stop-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .remove-stop {
+    justify-self: start;
+    height: auto;
+    padding: 0 0 8px;
+  }
+
+  .budget-holder-panel,
+  .confirmation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .short-field {
+    width: 100%;
+  }
+}

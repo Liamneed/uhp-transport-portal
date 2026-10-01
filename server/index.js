@@ -1406,6 +1406,103 @@ function setReasonCodeStatus(reasonCodeId, nextStatus) {
 }
 
 
+
+function getBookingOptions(userId) {
+  const user = db.prepare(`
+    SELECT
+      id,
+      first_name AS firstName,
+      last_name AS lastName,
+      email,
+      department_id AS departmentId,
+      status
+    FROM users
+    WHERE id = ?
+  `).get(userId);
+
+  if (!user || user.status !== 'active') {
+    const error = new Error(
+      'Booking user must be an active portal user'
+    );
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const budgets = db.prepare(`
+    SELECT
+      b.id,
+      b.budget_number AS budgetNumber,
+      b.name,
+      d.name AS department,
+
+      holder.id AS holderUserId,
+      holder.first_name || ' ' || holder.last_name AS budgetHolder
+
+    FROM user_budget_access uba
+
+    JOIN budgets b
+      ON b.id = uba.budget_id
+
+    LEFT JOIN departments d
+      ON d.id = b.department_id
+
+    JOIN budget_assignments ba
+      ON ba.budget_id = b.id
+      AND ba.assignment_type = 'primary_holder'
+      AND ba.is_active = 1
+      AND (
+        ba.valid_from IS NULL OR
+        ba.valid_from <= date('now')
+      )
+      AND (
+        ba.valid_to IS NULL OR
+        ba.valid_to >= date('now')
+      )
+
+    JOIN users holder
+      ON holder.id = ba.user_id
+
+    WHERE uba.user_id = ?
+      AND uba.can_book = 1
+      AND b.status = 'active'
+      AND (
+        uba.valid_from IS NULL OR
+        uba.valid_from <= date('now')
+      )
+      AND (
+        uba.valid_to IS NULL OR
+        uba.valid_to >= date('now')
+      )
+
+    GROUP BY b.id
+    ORDER BY b.budget_number
+  `).all(userId);
+
+  const reasonCodes = db.prepare(`
+    SELECT
+      id,
+      code,
+      description
+    FROM reason_codes
+    WHERE status = 'active'
+      AND (
+        effective_from IS NULL OR
+        effective_from <= date('now')
+      )
+      AND (
+        effective_to IS NULL OR
+        effective_to >= date('now')
+      )
+    ORDER BY code
+  `).all();
+
+  return {
+    user,
+    budgets,
+    reasonCodes
+  };
+}
+
 function getBookingById(bookingId) {
   return db.prepare(`
     SELECT
@@ -1978,6 +2075,22 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         roles: listRoles()
       });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/booking-options') {
+      const userId = Number(url.searchParams.get('userId'));
+
+      if (!Number.isInteger(userId) || userId < 1) {
+        const error = new Error('A valid userId is required');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return sendJson(
+        res,
+        200,
+        getBookingOptions(userId)
+      );
     }
 
     if (req.method === 'POST' && url.pathname === '/api/bookings') {
