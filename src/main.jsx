@@ -600,7 +600,7 @@ function App() {
             />
           ) : (
             <Placeholder
-              role="authenticated"
+              role={roleSummary(currentUser)}
               active={
                 nav.find(
                   ([key]) =>
