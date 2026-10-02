@@ -2200,3 +2200,268 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* 20B.3B booking state polish */
+
+.overdue-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 5px;
+  margin-left: 6px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #fff0e8;
+  color: #a94818;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.control-meta .overdue-chip {
+  margin-left: 0;
+}
+
+/* 20B.3B status cards and date filters */
+
+.booking-status-cards {
+  display: grid;
+  grid-template-columns:
+    repeat(6, minmax(110px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.booking-status-card {
+  appearance: none;
+  padding: 13px 14px;
+  border: 1px solid #dde6ed;
+  border-radius: 10px;
+  background: #fff;
+  color: #4b5f74;
+  text-align: left;
+  cursor: pointer;
+}
+
+.booking-status-card:hover {
+  border-color: #a9c9dc;
+  background: #f7fbfd;
+}
+
+.booking-status-card.active {
+  border-color: #1b78aa;
+  background: #eef8fd;
+  box-shadow:
+    inset 0 0 0 1px #1b78aa;
+}
+
+.booking-status-card small {
+  display: block;
+  margin-bottom: 4px;
+  color: #718398;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.booking-status-card strong {
+  display: block;
+  color: #2e465f;
+  font-size: 22px;
+}
+
+.date-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.date-filter-field span {
+  color: #748497;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.date-filter-field input {
+  min-width: 145px;
+}
+
+@media (max-width: 1050px) {
+  .booking-status-cards {
+    grid-template-columns:
+      repeat(3, minmax(120px, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .booking-status-cards {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 20B.3B UHP admin dashboard */
+
+.dashboard-kpi-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.dashboard-kpi {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+}
+
+.dashboard-kpi-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  place-items: center;
+  border-radius: 10px;
+  background: #eef7fb;
+  color: #287ca8;
+}
+
+.dashboard-kpi small {
+  display: block;
+  margin-bottom: 3px;
+  color: #7d8b9b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dashboard-kpi strong {
+  display: block;
+  color: #2d445d;
+  font-size: 26px;
+}
+
+.uhp-dashboard-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.45fr)
+    minmax(300px, .55fr);
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.dashboard-panel {
+  padding: 18px;
+}
+
+.dashboard-booking-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-booking-row {
+  display: grid;
+  grid-template-columns:
+    minmax(145px, .55fr)
+    minmax(0, 1.6fr)
+    minmax(130px, .5fr);
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+  padding: 13px 8px;
+  border: 0;
+  border-top: 1px solid #edf1f4;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dashboard-booking-row:first-child {
+  border-top: 0;
+}
+
+.dashboard-booking-row:hover,
+.dashboard-booking-row:focus-visible {
+  background: #f7fbfd;
+  outline: none;
+}
+
+.dashboard-booking-time strong,
+.dashboard-booking-main strong {
+  display: block;
+  color: #344b63;
+  font-size: 13px;
+}
+
+.dashboard-booking-time small,
+.dashboard-booking-main small {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: #7b8b9c;
+  font-size: 11px;
+}
+
+.dashboard-booking-meta {
+  text-align: right;
+}
+
+.dashboard-coding-summary {
+  margin-bottom: 12px;
+  padding: 16px;
+  border-radius: 10px;
+  background: #fff8e9;
+}
+
+.dashboard-coding-summary strong {
+  display: block;
+  margin-bottom: 3px;
+  color: #9a6511;
+  font-size: 28px;
+}
+
+.dashboard-coding-summary span {
+  color: #725e38;
+  font-size: 12px;
+}
+
+.dashboard-clear-state {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px;
+  border-radius: 9px;
+  background: #f3f9f5;
+  color: #46775b;
+  font-size: 12px;
+}
+
+.dashboard-recent-panel {
+  margin-bottom: 18px;
+}
+
+@media (max-width: 1000px) {
+  .dashboard-kpi-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .uhp-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .dashboard-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-booking-row {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-booking-meta {
+    text-align: left;
+  }
+}

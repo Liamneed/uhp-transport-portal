@@ -583,7 +583,9 @@ function App() {
         </header>
 
         <section className="content">
-          {active === 'admin-users' ? (
+          {active === 'admin-dashboard' ? (
+            <UhpAdminDashboard/>
+          ) : active === 'admin-users' ? (
             <UsersPage/>
           ) : active === 'admin-budgets' ? (
             <BudgetsPage/>
@@ -636,6 +638,505 @@ function App() {
     </div>
   );
 }
+
+function UhpAdminDashboard() {
+  const [bookings, setBookings] =
+    useState([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState('');
+
+  const [selectedBooking, setSelectedBooking] =
+    useState(null);
+
+  useEscapeClose(
+    Boolean(selectedBooking),
+    () => setSelectedBooking(null)
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDashboard() {
+      setLoading(true);
+      setError('');
+
+      try {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/uhp/bookings`
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+            'Unable to load dashboard'
+          );
+        }
+
+        if (!cancelled) {
+          setBookings(
+            data.bookings ?? []
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Unable to load dashboard'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dashboard = useMemo(() => {
+    const now = new Date();
+
+    const today =
+      [
+        now.getFullYear(),
+        String(
+          now.getMonth() + 1
+        ).padStart(2, '0'),
+        String(
+          now.getDate()
+        ).padStart(2, '0')
+      ].join('-');
+
+    const todaysBookings =
+      bookings.filter(
+        (booking) =>
+          String(
+            booking.requestedPickupAt || ''
+          ).slice(0, 10) === today
+      );
+
+    const live =
+      bookings.filter(
+        (booking) =>
+          bookingStatusGroup(
+            booking
+          ) === 'live'
+      );
+
+    const completedToday =
+      bookings.filter(
+        (booking) =>
+          booking.operationalStatus ===
+            'completed' &&
+          String(
+            booking.completedAt || ''
+          ).slice(0, 10) === today
+      );
+
+    const codingRequired =
+      bookings.filter(
+        (booking) =>
+          booking.financialStatus ===
+            'coding_required'
+      );
+
+    const terminal =
+      new Set([
+        'completed',
+        'cancelled',
+        'no_show',
+        'no_fare',
+        'failed'
+      ]);
+
+    const upcoming =
+      bookings
+        .filter(
+          (booking) => {
+            if (
+              terminal.has(
+                booking.operationalStatus
+              )
+            ) {
+              return false;
+            }
+
+            const pickup =
+              new Date(
+                String(
+                  booking.requestedPickupAt ||
+                    ''
+                ).replace(' ', 'T')
+              );
+
+            return (
+              !Number.isNaN(
+                pickup.getTime()
+              ) &&
+              pickup.getTime() >=
+                now.getTime()
+            );
+          }
+        )
+        .sort(
+          (a, b) =>
+            new Date(
+              String(
+                a.requestedPickupAt
+              ).replace(' ', 'T')
+            ) -
+            new Date(
+              String(
+                b.requestedPickupAt
+              ).replace(' ', 'T')
+            )
+        )
+        .slice(0, 6);
+
+    const recent =
+      [...bookings]
+        .sort(
+          (a, b) =>
+            new Date(
+              String(
+                bookingDisplayBookedAt(b) ||
+                  ''
+              ).replace(' ', 'T')
+            ) -
+            new Date(
+              String(
+                bookingDisplayBookedAt(a) ||
+                  ''
+              ).replace(' ', 'T')
+            )
+        )
+        .slice(0, 6);
+
+    return {
+      today,
+      todaysBookings,
+      live,
+      completedToday,
+      codingRequired,
+      upcoming,
+      recent
+    };
+  }, [bookings]);
+
+  function dashboardBookingRow(
+    booking
+  ) {
+    return (
+      <button
+        key={booking.id}
+        type="button"
+        className="dashboard-booking-row"
+        onClick={() =>
+          setSelectedBooking(booking)
+        }
+      >
+        <div className="dashboard-booking-time">
+          <strong>
+            {formatBookingDateTime(
+              booking.requestedPickupAt
+            )}
+          </strong>
+
+          <small>
+            {autocabBookingPrimary(
+              booking
+            )}
+          </small>
+        </div>
+
+        <div className="dashboard-booking-main">
+          <strong>
+            {booking.passengerName ||
+              'Passenger'}
+          </strong>
+
+          <small>
+            {booking.pickupAddress || '—'}
+            {' → '}
+            {booking.destinationAddress ||
+              '—'}
+          </small>
+        </div>
+
+        <div className="dashboard-booking-meta">
+          <span
+            className={
+              `badge ${
+                booking.operationalStatus
+              }`
+            }
+          >
+            {formatOperationalStatus(
+              booking.operationalStatus
+            )}
+          </span>
+
+          {bookingIsOverdue(
+            booking
+          ) && (
+            <span className="overdue-chip">
+              Overdue
+            </span>
+          )}
+        </div>
+      </button>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading UHP dashboard...
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>UHP Transport Dashboard</h1>
+
+          <p>
+            Hospital-wide overview of UHP
+            transport activity and coding
+            workload.
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="dashboard-kpi-grid">
+        <div className="card dashboard-kpi">
+          <div className="dashboard-kpi-icon">
+            <CalendarDays/>
+          </div>
+
+          <div>
+            <small>
+              Today's Bookings
+            </small>
+
+            <strong>
+              {
+                dashboard
+                  .todaysBookings
+                  .length
+              }
+            </strong>
+          </div>
+        </div>
+
+        <div className="card dashboard-kpi">
+          <div className="dashboard-kpi-icon">
+            <CarFront/>
+          </div>
+
+          <div>
+            <small>Live Now</small>
+
+            <strong>
+              {dashboard.live.length}
+            </strong>
+          </div>
+        </div>
+
+        <div className="card dashboard-kpi">
+          <div className="dashboard-kpi-icon">
+            <CheckCircle2/>
+          </div>
+
+          <div>
+            <small>
+              Completed Today
+            </small>
+
+            <strong>
+              {
+                dashboard
+                  .completedToday
+                  .length
+              }
+            </strong>
+          </div>
+        </div>
+
+        <div className="card dashboard-kpi">
+          <div className="dashboard-kpi-icon">
+            <AlertTriangle/>
+          </div>
+
+          <div>
+            <small>
+              Coding Required
+            </small>
+
+            <strong>
+              {
+                dashboard
+                  .codingRequired
+                  .length
+              }
+            </strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="uhp-dashboard-grid">
+        <section className="card dashboard-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Next UHP Journeys</h2>
+
+              <p>
+                Upcoming non-terminal
+                hospital transport bookings.
+              </p>
+            </div>
+          </div>
+
+          {dashboard.upcoming.length ? (
+            <div className="dashboard-booking-list">
+              {dashboard.upcoming.map(
+                dashboardBookingRow
+              )}
+            </div>
+          ) : (
+            <div className="empty-bookings compact-empty">
+              <CalendarDays size={28}/>
+
+              <strong>
+                No upcoming journeys
+              </strong>
+
+              <span>
+                Future UHP bookings will
+                appear here.
+              </span>
+            </div>
+          )}
+        </section>
+
+        <aside className="card dashboard-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Coding Overview</h2>
+
+              <p>
+                Bookings currently waiting
+                for valid UHP coding.
+              </p>
+            </div>
+          </div>
+
+          <div className="dashboard-coding-summary">
+            <strong>
+              {
+                dashboard
+                  .codingRequired
+                  .length
+              }
+            </strong>
+
+            <span>
+              booking
+              {
+                dashboard
+                  .codingRequired
+                  .length === 1
+                  ? ''
+                  : 's'
+              } requiring coding review
+            </span>
+          </div>
+
+          {dashboard.codingRequired
+            .slice(0, 5)
+            .map(
+              dashboardBookingRow
+            )}
+
+          {dashboard.codingRequired.length ===
+            0 && (
+            <div className="dashboard-clear-state">
+              <CheckCircle2 size={22}/>
+
+              <span>
+                No bookings currently
+                require coding.
+              </span>
+            </div>
+          )}
+        </aside>
+      </div>
+
+      <section className="card dashboard-panel dashboard-recent-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Recent Bookings</h2>
+
+            <p>
+              Latest UHP transport bookings
+              received by the portal.
+            </p>
+          </div>
+        </div>
+
+        {dashboard.recent.length ? (
+          <div className="dashboard-booking-list">
+            {dashboard.recent.map(
+              dashboardBookingRow
+            )}
+          </div>
+        ) : (
+          <div className="empty-bookings compact-empty">
+            <CalendarDays size={28}/>
+
+            <strong>
+              No bookings yet
+            </strong>
+          </div>
+        )}
+      </section>
+
+      {selectedBooking && (
+        <BookingDetailModal
+          booking={selectedBooking}
+          context="uhp"
+          onClose={() =>
+            setSelectedBooking(null)
+          }
+        />
+      )}
+    </>
+  );
+}
+
+
 
 function UsersPage() {
   const [users, setUsers] = useState([]);
@@ -1237,6 +1738,7 @@ function formatOperationalStatus(status) {
     completed: 'Completed',
     cancelled: 'Cancelled',
     no_show: 'No Show',
+    no_fare: 'No Fare',
     failed: 'Failed',
     requires_review: 'Requires Review'
   };
@@ -1253,6 +1755,20 @@ function formatBookingDateTime(value) {
 }
 
 
+function friendlyAutocabText(value) {
+  if (!value) return '—';
+
+  return String(value)
+    .replace(/[._]+/g, ' ')
+    .replace(
+      /([a-z0-9])([A-Z])/g,
+      '$1 $2'
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+
 function bookingDisplayBooker(booking) {
   if (
     booking?.source === 'portal' &&
@@ -1261,15 +1777,19 @@ function bookingDisplayBooker(booking) {
     return booking.createdBy;
   }
 
-  return (
-    booking?.autocabBookedBy ||
-    booking?.createdBy ||
-    (
-      booking?.source === 'portal'
-        ? 'Portal user unavailable'
-        : 'Autocab / external booking'
-    )
-  );
+  if (booking?.autocabBookedBy) {
+    return friendlyAutocabText(
+      booking.autocabBookedBy
+    );
+  }
+
+  if (booking?.createdBy) {
+    return booking.createdBy;
+  }
+
+  return booking?.source === 'portal'
+    ? 'Portal user unavailable'
+    : 'Autocab / external booking';
 }
 
 
@@ -1279,7 +1799,9 @@ function bookingDisplaySource(booking) {
   }
 
   if (booking?.autocabBookingSource) {
-    return booking.autocabBookingSource;
+    return friendlyAutocabText(
+      booking.autocabBookingSource
+    );
   }
 
   return booking?.source
@@ -1293,8 +1815,161 @@ function bookingDisplayBookedAt(booking) {
     booking?.autocabBookedAt ||
     booking?.submittedAt ||
     booking?.createdAt ||
-    '—'
+    null
   );
+}
+
+
+function bookingHasVisiblePortalReference(
+  booking
+) {
+  return (
+    booking?.source === 'portal' &&
+    Boolean(booking?.publicReference)
+  );
+}
+
+
+const LIVE_OPERATIONAL_STATUSES =
+  new Set([
+    'driver_allocated',
+    'driver_en_route',
+    'driver_arrived',
+    'passenger_on_board'
+  ]);
+
+
+const BOOKED_OPERATIONAL_STATUSES =
+  new Set([
+    'draft',
+    'submitting',
+    'booked',
+    'confirmed',
+    'requires_review'
+  ]);
+
+
+function bookingStatusGroup(booking) {
+  const status =
+    booking?.operationalStatus;
+
+  if (
+    LIVE_OPERATIONAL_STATUSES.has(
+      status
+    )
+  ) {
+    return 'live';
+  }
+
+  if (
+    BOOKED_OPERATIONAL_STATUSES.has(
+      status
+    )
+  ) {
+    return 'booked';
+  }
+
+  if (status === 'completed') {
+    return 'completed';
+  }
+
+  if (status === 'no_fare') {
+    return 'no_fare';
+  }
+
+  if (status === 'cancelled') {
+    return 'cancelled';
+  }
+
+  return 'other';
+}
+
+
+function bookingIsOverdue(booking) {
+  if (
+    bookingStatusGroup(booking) !==
+      'booked' ||
+    !booking?.requestedPickupAt
+  ) {
+    return false;
+  }
+
+  const pickup =
+    new Date(
+      String(
+        booking.requestedPickupAt
+      ).replace(' ', 'T')
+    );
+
+  if (
+    Number.isNaN(
+      pickup.getTime()
+    )
+  ) {
+    return false;
+  }
+
+  return pickup.getTime() < Date.now();
+}
+
+
+function bookingSearchText(booking) {
+  return [
+    booking?.autocabBookingId,
+    booking?.publicReference,
+    booking?.autocabReference,
+    booking?.passengerName,
+    booking?.passengerMobile,
+    booking?.pickupAddress,
+    booking?.destinationAddress,
+    booking?.budgetNumber,
+    booking?.budgetName,
+    booking?.reasonCode,
+    booking?.reasonDescription,
+    booking?.createdBy,
+    booking?.autocabBookedBy,
+    bookingDisplayBooker(booking),
+    booking?.department
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+
+function useEscapeClose(
+  active,
+  onClose
+) {
+  useEffect(() => {
+    if (!active) {
+      return undefined;
+    }
+
+    function handleKeyDown(event) {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      event.preventDefault();
+      onClose();
+    }
+
+    document.addEventListener(
+      'keydown',
+      handleKeyDown
+    );
+
+    return () => {
+      document.removeEventListener(
+        'keydown',
+        handleKeyDown
+      );
+    };
+  }, [
+    active,
+    onClose
+  ]);
 }
 
 
@@ -1304,6 +1979,11 @@ function BookingDetailModal({
   context = 'uhp',
   children
 }) {
+  useEscapeClose(
+    Boolean(booking),
+    onClose
+  );
+
   if (!booking) return null;
 
   const stops =
@@ -1347,9 +2027,15 @@ function BookingDetailModal({
       >
         <div className="booking-modal-header">
           <div>
-            <div className="booking-modal-eyebrow">
-              {portalBookingReference(booking)}
-            </div>
+            {bookingHasVisiblePortalReference(
+              booking
+            ) && (
+              <div className="booking-modal-eyebrow">
+                {portalBookingReference(
+                  booking
+                )}
+              </div>
+            )}
 
             <div className="booking-modal-title-row">
               <h2>
@@ -1466,12 +2152,19 @@ function BookingDetailModal({
                 </strong>
               </div>
 
-              <div>
-                <small>Portal Reference</small>
-                <strong>
-                  {booking.publicReference || '—'}
-                </strong>
-              </div>
+              {bookingHasVisiblePortalReference(
+                booking
+              ) && (
+                <div>
+                  <small>
+                    Portal Reference
+                  </small>
+
+                  <strong>
+                    {booking.publicReference}
+                  </strong>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1719,23 +2412,45 @@ function NacControlPage() {
     loadControl();
   }, []);
 
-  const upcoming = useMemo(
+  const operationalQueue = useMemo(
     () =>
       bookings
         .filter(
           (booking) =>
-            ![
-              'completed',
-              'cancelled',
-              'no_show'
+            [
+              'live',
+              'booked'
             ].includes(
-              booking.operationalStatus
+              bookingStatusGroup(
+                booking
+              )
             )
         )
         .sort(
-          (a, b) =>
-            new Date(a.requestedPickupAt) -
-            new Date(b.requestedPickupAt)
+          (a, b) => {
+            const aOverdue =
+              bookingIsOverdue(a);
+
+            const bOverdue =
+              bookingIsOverdue(b);
+
+            if (
+              aOverdue !== bOverdue
+            ) {
+              return aOverdue
+                ? -1
+                : 1;
+            }
+
+            return (
+              new Date(
+                a.requestedPickupAt
+              ) -
+              new Date(
+                b.requestedPickupAt
+              )
+            );
+          }
         )
         .slice(0, 8),
     [bookings]
@@ -1799,31 +2514,32 @@ function NacControlPage() {
         <section className="card control-panel">
           <div className="panel-heading">
             <div>
-              <h2>Upcoming Requests</h2>
+              <h2>Operational Queue</h2>
 
               <p>
-                Next UHP journeys requiring
-                operational visibility.
+                Live, upcoming and overdue UHP
+                journeys requiring operational
+                visibility.
               </p>
             </div>
           </div>
 
-          {upcoming.length === 0 ? (
+          {operationalQueue.length === 0 ? (
             <div className="empty-bookings compact-empty">
               <CalendarDays size={28}/>
 
               <strong>
-                No upcoming requests
+                No active requests
               </strong>
 
               <span>
-                New portal bookings will
+                New or live UHP bookings will
                 appear here.
               </span>
             </div>
           ) : (
             <div className="control-booking-list">
-              {upcoming.map((booking) => (
+              {operationalQueue.map((booking) => (
                 <div
                   className="control-booking-item booking-row-clickable"
                   key={booking.id}
@@ -1876,6 +2592,14 @@ function NacControlPage() {
                         booking.operationalStatus
                       )}
                     </span>
+
+                    {bookingIsOverdue(
+                      booking
+                    ) && (
+                      <span className="overdue-chip">
+                        Overdue
+                      </span>
+                    )}
 
                     {booking.hasException && (
                       <span className="exception-chip">
@@ -1951,7 +2675,10 @@ function NacBookingsPage({
     useState('all');
   const [budgetFilter, setBudgetFilter] =
     useState('all');
-  const [dateFilter, setDateFilter] =
+  const [fromDate, setFromDate] =
+    useState('');
+
+  const [toDate, setToDate] =
     useState('');
 
   const [selectedBooking, setSelectedBooking] =
@@ -2048,8 +2775,9 @@ function NacBookingsPage({
 
       if (
         statusFilter !== 'all' &&
-        booking.operationalStatus !==
-          statusFilter
+        bookingStatusGroup(
+          booking
+        ) !== statusFilter
       ) {
         return false;
       }
@@ -2070,37 +2798,32 @@ function NacBookingsPage({
         return false;
       }
 
-      if (
-        dateFilter &&
+      const pickupDate =
         String(
           booking.requestedPickupAt || ''
-        ).slice(0, 10) !== dateFilter
+        ).slice(0, 10);
+
+      if (
+        fromDate &&
+        pickupDate < fromDate
       ) {
         return false;
       }
 
-      if (!term) return true;
+      if (
+        toDate &&
+        pickupDate > toDate
+      ) {
+        return false;
+      }
 
-      return [
-        booking.autocabBookingId,
-        booking.publicReference,
-        booking.autocabReference,
-        booking.passengerName,
-        booking.passengerMobile,
-        booking.pickupAddress,
-        booking.destinationAddress,
-        booking.budgetNumber,
-        booking.budgetName,
-        booking.reasonCode,
-        booking.reasonDescription,
-        booking.budgetHolder,
-        booking.createdBy,
-        booking.department
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-        .includes(term);
+      if (!term) {
+        return true;
+      }
+
+      return bookingSearchText(
+        booking
+      ).includes(term);
     });
   }, [
     bookings,
@@ -2109,8 +2832,47 @@ function NacBookingsPage({
     statusFilter,
     departmentFilter,
     budgetFilter,
-    dateFilter
+    fromDate,
+    toDate
   ]);
+
+  const statusCounts = useMemo(
+    () => ({
+      all: bookings.length,
+
+      live: bookings.filter(
+        (booking) =>
+          bookingStatusGroup(booking) ===
+            'live'
+      ).length,
+
+      booked: bookings.filter(
+        (booking) =>
+          bookingStatusGroup(booking) ===
+            'booked'
+      ).length,
+
+      completed: bookings.filter(
+        (booking) =>
+          bookingStatusGroup(booking) ===
+            'completed'
+      ).length,
+
+      no_fare: bookings.filter(
+        (booking) =>
+          bookingStatusGroup(booking) ===
+            'no_fare'
+      ).length,
+
+      cancelled: bookings.filter(
+        (booking) =>
+          bookingStatusGroup(booking) ===
+            'cancelled'
+      ).length
+    }),
+    [bookings]
+  );
+
 
   if (loading) {
     return (
@@ -2144,6 +2906,39 @@ function NacBookingsPage({
         </div>
       )}
 
+      {!exceptionsOnly && (
+        <div className="booking-status-cards">
+          {[
+            ['all', 'All', statusCounts.all],
+            ['live', 'Live', statusCounts.live],
+            ['booked', 'Booked', statusCounts.booked],
+            ['completed', 'Completed', statusCounts.completed],
+            ['no_fare', 'No Fare', statusCounts.no_fare],
+            ['cancelled', 'Cancelled', statusCounts.cancelled]
+          ].map(
+            ([key, label, value]) => (
+              <button
+                key={key}
+                type="button"
+                className={
+                  `booking-status-card ${
+                    statusFilter === key
+                      ? 'active'
+                      : ''
+                  }`
+                }
+                onClick={() =>
+                  setStatusFilter(key)
+                }
+              >
+                <small>{label}</small>
+                <strong>{value}</strong>
+              </button>
+            )
+          )}
+        </div>
+      )}
+
       <div className="card nac-bookings-card">
         <div className="nac-filter-grid">
           <div className="search compact">
@@ -2154,62 +2949,68 @@ function NacBookingsPage({
               onChange={(e) =>
                 setQuery(e.target.value)
               }
-              placeholder="Search passenger, reference, journey..."
+              placeholder="Search ID, passenger, phone, journey, booked by..."
             />
           </div>
 
-          <input
-            type="date"
-            value={dateFilter}
-            onChange={(e) =>
-              setDateFilter(e.target.value)
-            }
-          />
+          <label className="date-filter-field">
+            <span>From</span>
+
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) =>
+                setFromDate(
+                  e.target.value
+                )
+              }
+            />
+          </label>
+
+          <label className="date-filter-field">
+            <span>To</span>
+
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) =>
+                setToDate(
+                  e.target.value
+                )
+              }
+            />
+          </label>
 
           <select
             value={statusFilter}
             onChange={(e) =>
-              setStatusFilter(e.target.value)
+              setStatusFilter(
+                e.target.value
+              )
             }
           >
             <option value="all">
               All statuses
             </option>
 
-            <option value="draft">
-              Request Recorded
-            </option>
-
-            <option value="submitting">
-              Sending to Dispatch
+            <option value="live">
+              Live
             </option>
 
             <option value="booked">
               Booked
             </option>
 
-            <option value="confirmed">
-              Confirmed
-            </option>
-
-            <option value="driver_allocated">
-              Driver Allocated
-            </option>
-
             <option value="completed">
               Completed
             </option>
 
+            <option value="no_fare">
+              No Fare
+            </option>
+
             <option value="cancelled">
               Cancelled
-            </option>
-
-            <option value="failed">
-              Failed
-            </option>
-
-            <option value="requires_review">
-              Requires Review
             </option>
           </select>
 
@@ -2345,7 +3146,12 @@ function NacBookingsPage({
                             </strong>
 
                             <small>
-                              Created {booking.createdAt}
+                              Booked{' '}
+                              {formatBookingDateTime(
+                                bookingDisplayBookedAt(
+                                  booking
+                                )
+                              )}
                             </small>
                           </td>
 
@@ -2354,9 +3160,15 @@ function NacBookingsPage({
                               {autocabBookingPrimary(booking)}
                             </strong>
 
-                            <small>
-                              {portalBookingReference(booking)}
-                            </small>
+                            {bookingHasVisiblePortalReference(
+                              booking
+                            ) && (
+                              <small>
+                                {portalBookingReference(
+                                  booking
+                                )}
+                              </small>
+                            )}
                           </td>
 
                           <td>
@@ -2409,6 +3221,14 @@ function NacBookingsPage({
                                 booking.operationalStatus
                               )}
                             </span>
+
+                            {bookingIsOverdue(
+                              booking
+                            ) && (
+                              <span className="overdue-chip">
+                                Overdue
+                              </span>
+                            )}
 
                             {booking.hasException && (
                               <span className="exception-chip table-exception">
@@ -3683,7 +4503,15 @@ function MyBookingsPage({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] =
+    useState('all');
+
+  const [fromDate, setFromDate] =
+    useState('');
+
+  const [toDate, setToDate] =
+    useState('');
+
   const [selectedBooking, setSelectedBooking] =
     useState(null);
 
@@ -3711,6 +4539,38 @@ function MyBookingsPage({
 
   const [financialActionError, setFinancialActionError] =
     useState('');
+
+  useEscapeClose(
+    Boolean(disputeBooking),
+    () => {
+      if (
+        disputeBooking &&
+        financialActionId !==
+          disputeBooking.id
+      ) {
+        closeDisputeFinancialBooking();
+      }
+    }
+  );
+
+  useEscapeClose(
+    Boolean(editingBooking),
+    () => {
+      if (!savingEdit) {
+        closeAmend();
+      }
+    }
+  );
+
+  useEscapeClose(
+    Boolean(cancelBooking),
+    () => {
+      if (!cancelling) {
+        closeCancel();
+      }
+    }
+  );
+
 
   async function loadBookings() {
     setLoading(true);
@@ -3756,53 +4616,86 @@ function MyBookingsPage({
   ]);
 
   const filteredBookings = useMemo(() => {
-    const term = query.trim().toLowerCase();
+    const term =
+      query.trim().toLowerCase();
 
     return bookings.filter((booking) => {
       const matchesStatus =
         statusFilter === 'all' ||
-        booking.operationalStatus === statusFilter;
+        bookingStatusGroup(
+          booking
+        ) === statusFilter;
+
+      const pickupDate =
+        String(
+          booking.requestedPickupAt || ''
+        ).slice(0, 10);
+
+      const matchesFrom =
+        !fromDate ||
+        pickupDate >= fromDate;
+
+      const matchesTo =
+        !toDate ||
+        pickupDate <= toDate;
 
       const matchesQuery =
         !term ||
-        [
-          booking.autocabBookingId,
-          booking.publicReference,
-          booking.autocabReference,
-          booking.passengerName,
-          booking.pickupAddress,
-          booking.destinationAddress,
-          booking.budgetNumber,
-          booking.reasonCode,
-          booking.reasonDescription,
-          booking.createdBy,
-          booking.department
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-          .includes(term);
+        bookingSearchText(
+          booking
+        ).includes(term);
 
-      return matchesStatus && matchesQuery;
+      return (
+        matchesStatus &&
+        matchesFrom &&
+        matchesTo &&
+        matchesQuery
+      );
     });
-  }, [bookings, query, statusFilter]);
+  }, [
+    bookings,
+    query,
+    statusFilter,
+    fromDate,
+    toDate
+  ]);
 
-  const stats = useMemo(() => ({
-    total: bookings.length,
-    draft: bookings.filter(
-      (booking) =>
-        booking.operationalStatus === 'draft'
-    ).length,
-    booked: bookings.filter(
-      (booking) =>
-        booking.operationalStatus === 'booked' ||
-        booking.operationalStatus === 'confirmed'
-    ).length,
-    completed: bookings.filter(
-      (booking) =>
-        booking.operationalStatus === 'completed'
-    ).length
-  }), [bookings]);
+  const stats = useMemo(
+    () => ({
+      total: bookings.length,
+
+      live: bookings.filter(
+        (booking) =>
+          bookingStatusGroup(booking) ===
+            'live'
+      ).length,
+
+      booked: bookings.filter(
+        (booking) =>
+          bookingStatusGroup(booking) ===
+            'booked'
+      ).length,
+
+      completed: bookings.filter(
+        (booking) =>
+          bookingStatusGroup(booking) ===
+            'completed'
+      ).length,
+
+      noFare: bookings.filter(
+        (booking) =>
+          bookingStatusGroup(booking) ===
+            'no_fare'
+      ).length,
+
+      cancelled: bookings.filter(
+        (booking) =>
+          bookingStatusGroup(booking) ===
+            'cancelled'
+      ).length
+    }),
+    [bookings]
+  );
 
   function friendlyBookingStatus(status) {
     const map = {
@@ -3817,6 +4710,7 @@ function MyBookingsPage({
       completed: 'Completed',
       cancelled: 'Cancelled',
       no_show: 'No Show',
+      no_fare: 'No Fare',
       failed: 'Needs Attention',
       requires_review: 'Needs Review'
     };
@@ -4319,30 +5213,35 @@ function MyBookingsPage({
         </div>
       )}
 
-      <div className="stats-grid">
-        <Stat
-          icon={<CalendarDays/>}
-          label="Total"
-          value={stats.total}
-        />
-
-        <Stat
-          icon={<Clock3/>}
-          label="Request Recorded"
-          value={stats.draft}
-        />
-
-        <Stat
-          icon={<CheckCircle2/>}
-          label="Booked / Confirmed"
-          value={stats.booked}
-        />
-
-        <Stat
-          icon={<UsersRound/>}
-          label="Completed"
-          value={stats.completed}
-        />
+      <div className="booking-status-cards">
+        {[
+          ['all', 'All', stats.total],
+          ['live', 'Live', stats.live],
+          ['booked', 'Booked', stats.booked],
+          ['completed', 'Completed', stats.completed],
+          ['no_fare', 'No Fare', stats.noFare],
+          ['cancelled', 'Cancelled', stats.cancelled]
+        ].map(
+          ([key, label, value]) => (
+            <button
+              key={key}
+              type="button"
+              className={
+                `booking-status-card ${
+                  statusFilter === key
+                    ? 'active'
+                    : ''
+                }`
+              }
+              onClick={() =>
+                setStatusFilter(key)
+              }
+            >
+              <small>{label}</small>
+              <strong>{value}</strong>
+            </button>
+          )
+        )}
       </div>
 
       <div className="card">
@@ -4355,40 +5254,70 @@ function MyBookingsPage({
               onChange={(e) =>
                 setQuery(e.target.value)
               }
-              placeholder="Search bookings..."
+              placeholder="Search ID, passenger, phone, journey, booked by..."
             />
           </div>
 
           <select
             value={statusFilter}
             onChange={(e) =>
-              setStatusFilter(e.target.value)
+              setStatusFilter(
+                e.target.value
+              )
             }
           >
             <option value="all">
               All statuses
             </option>
 
-            <option value="draft">
-              Request Recorded
+            <option value="live">
+              Live
             </option>
 
             <option value="booked">
               Booked
             </option>
 
-            <option value="confirmed">
-              Confirmed
-            </option>
-
             <option value="completed">
               Completed
+            </option>
+
+            <option value="no_fare">
+              No Fare
             </option>
 
             <option value="cancelled">
               Cancelled
             </option>
           </select>
+
+          <label className="date-filter-field">
+            <span>From</span>
+
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) =>
+                setFromDate(
+                  e.target.value
+                )
+              }
+            />
+          </label>
+
+          <label className="date-filter-field">
+            <span>To</span>
+
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) =>
+                setToDate(
+                  e.target.value
+                )
+              }
+            />
+          </label>
         </div>
 
         {filteredBookings.length === 0 ? (
@@ -4452,7 +5381,12 @@ function MyBookingsPage({
                             </strong>
 
                             <small>
-                              Created {booking.createdAt}
+                              Booked{' '}
+                              {formatBookingDateTime(
+                                bookingDisplayBookedAt(
+                                  booking
+                                )
+                              )}
                             </small>
                           </td>
 
@@ -4461,9 +5395,15 @@ function MyBookingsPage({
                               {autocabBookingPrimary(booking)}
                             </strong>
 
-                            <small>
-                              {portalBookingReference(booking)}
-                            </small>
+                            {bookingHasVisiblePortalReference(
+                              booking
+                            ) && (
+                              <small>
+                                {portalBookingReference(
+                                  booking
+                                )}
+                              </small>
+                            )}
 
                             {broaderScope && (
                               <small>
@@ -4523,6 +5463,14 @@ function MyBookingsPage({
                                 booking.operationalStatus
                               )}
                             </span>
+
+                            {bookingIsOverdue(
+                              booking
+                            ) && (
+                              <span className="overdue-chip">
+                                Overdue
+                              </span>
+                            )}
                           </td>
 
                         </tr>

@@ -245,7 +245,17 @@ SET
         'cancelled',
         'nofare'
       )
-    ORDER BY ie.id DESC
+    ORDER BY
+      CASE ie.route_suffix
+        WHEN 'complete' THEN 100
+        WHEN 'cancelled' THEN 100
+        WHEN 'nofare' THEN 100
+        WHEN 'pob' THEN 30
+        WHEN 'arrived' THEN 20
+        WHEN 'accept' THEN 10
+        ELSE 0
+      END DESC,
+      ie.id DESC
     LIMIT 1
   ),
 
