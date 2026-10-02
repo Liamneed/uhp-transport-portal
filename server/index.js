@@ -3331,8 +3331,336 @@ function listOperationalBookings() {
     ORDER BY id DESC
   `);
 
+  const operationalTimesStatement =
+    db.prepare(`
+      SELECT
+        MAX(
+          CASE
+            WHEN event_type =
+              'booking_dispatch_accepted'
+            THEN event_at
+          END
+        ) AS acceptedAt,
+
+        MAX(
+          CASE
+            WHEN event_type =
+              'booking_arrived'
+            THEN event_at
+          END
+        ) AS arrivedAt,
+
+        MAX(
+          CASE
+            WHEN event_type =
+              'passenger_on_board'
+            THEN event_at
+          END
+        ) AS passengerOnBoardAt,
+
+        MAX(
+          CASE
+            WHEN event_type IN (
+              'booking_complete',
+              'booking_completed'
+            )
+            THEN event_at
+          END
+        ) AS completedEventAt,
+
+        MAX(
+          CASE
+            WHEN event_type =
+              'booking_cancelled'
+            THEN event_at
+          END
+        ) AS cancelledEventAt,
+
+        MAX(
+          CASE
+            WHEN event_type =
+              'no_fare'
+            THEN event_at
+          END
+        ) AS noFareAt,
+
+        MAX(event_at)
+          AS latestOperationalEventAt
+
+      FROM booking_events
+
+      WHERE booking_id = ?
+        AND event_source = 'autocab'
+        AND event_type IN (
+          'booking_dispatch_accepted',
+          'booking_arrived',
+          'passenger_on_board',
+          'booking_running_late',
+          'booking_complete',
+          'booking_completed',
+          'booking_cancelled',
+          'no_fare'
+        )
+    `);
+
+  const modifiedPayloadStatement =
+    db.prepare(`
+      SELECT
+        payload_json AS payloadJson,
+        received_at AS receivedAt
+      FROM integration_events
+      WHERE booking_id = ?
+        AND provider = 'autocab'
+        AND category = 'booking'
+        AND route_suffix = 'modified'
+        AND processing_status = 'processed'
+      ORDER BY id DESC
+      LIMIT 50
+    `);
+
+  const vehiclePositionStatement =
+    db.prepare(`
+      SELECT
+        longitude,
+        latitude,
+        speed_mph AS speedMph,
+        heading_degrees AS headingDegrees,
+        heading_direction AS headingDirection,
+        source_timestamp AS sourceTimestamp,
+        updated_at AS updatedAt
+      FROM autocab_vehicle_position
+      WHERE vehicle_id = ?
+      LIMIT 1
+    `);
+
+  const currentVehicleStateStatement =
+    db.prepare(`
+      SELECT
+        booking_id AS bookingId,
+        vehicle_status AS vehicleStatus,
+        source_timestamp AS sourceTimestamp,
+        updated_at AS updatedAt
+      FROM autocab_vehicle_state
+      WHERE vehicle_id = ?
+      LIMIT 1
+    `);
+
   return bookings.map((booking) => {
     const exceptionReasons = [];
+
+    const operationalTimes =
+      operationalTimesStatement.get(
+        booking.id
+      ) ?? {};
+
+    const modifiedEvents =
+      modifiedPayloadStatement.all(
+        booking.id
+      );
+
+    let identityEvent = null;
+    let identityPayload = null;
+
+    let dispatchedAt = null;
+    let arrivedAt = null;
+    let passengerOnBoardAt = null;
+    let estimatedPickupAt = null;
+
+    let latestModifiedAt = null;
+
+    for (const candidate of modifiedEvents) {
+      let candidatePayload = null;
+
+      try {
+        candidatePayload =
+          JSON.parse(
+            candidate.payloadJson
+          );
+      } catch {
+        continue;
+      }
+
+      if (!latestModifiedAt) {
+        latestModifiedAt =
+          candidate.receivedAt ||
+          null;
+      }
+
+      dispatchedAt =
+        dispatchedAt ||
+        normaliseAutocabScalar(
+          candidatePayload
+            ?.DispatchedAtTime
+        );
+
+      arrivedAt =
+        arrivedAt ||
+        normaliseAutocabScalar(
+          candidatePayload
+            ?.VehicleArrivedAtTime
+        );
+
+      passengerOnBoardAt =
+        passengerOnBoardAt ||
+        normaliseAutocabScalar(
+          candidatePayload
+            ?.PickedUpAtTime
+        );
+
+      estimatedPickupAt =
+        estimatedPickupAt ||
+        normaliseAutocabScalar(
+          candidatePayload
+            ?.EstimatedPickupTime
+        );
+
+      if (!identityPayload) {
+        const candidateDriver =
+          candidatePayload
+            ?.DriverDetails
+            ?.Driver ||
+          candidatePayload?.Driver ||
+          null;
+
+        const candidateVehicle =
+          candidatePayload
+            ?.VehicleDetails
+            ?.Vehicle ||
+          candidatePayload?.Vehicle ||
+          null;
+
+        if (
+          candidateDriver ||
+          candidateVehicle
+        ) {
+          identityEvent = candidate;
+          identityPayload =
+            candidatePayload;
+        }
+      }
+    }
+
+    const driver =
+      identityPayload
+        ?.DriverDetails
+        ?.Driver ||
+      identityPayload?.Driver ||
+      null;
+
+    const vehicle =
+      identityPayload
+        ?.VehicleDetails
+        ?.Vehicle ||
+      identityPayload?.Vehicle ||
+      null;
+
+    const vehicleId =
+      Number.isInteger(
+        Number(vehicle?.Id)
+      ) &&
+      Number(vehicle?.Id) > 0
+        ? Number(vehicle.Id)
+        : null;
+
+    const vehiclePosition =
+      vehicleId
+        ? (
+            vehiclePositionStatement.get(
+              vehicleId
+            ) ?? null
+          )
+        : null;
+
+    const currentVehicleState =
+      vehicleId
+        ? (
+            currentVehicleStateStatement.get(
+              vehicleId
+            ) ?? null
+          )
+        : null;
+
+    const liveOperationalStatuses =
+      new Set([
+        'driver_allocated',
+        'driver_en_route',
+        'driver_arrived',
+        'passenger_on_board'
+      ]);
+
+    const currentVehicleBookingMatches =
+      Boolean(
+        booking.autocabBookingId &&
+        currentVehicleState?.bookingId &&
+        String(
+          currentVehicleState.bookingId
+        ) ===
+          String(
+            booking.autocabBookingId
+          )
+      );
+
+    const latestFleetTimestamp =
+      currentVehicleState
+        ?.sourceTimestamp ||
+      currentVehicleState
+        ?.updatedAt ||
+      vehiclePosition
+        ?.sourceTimestamp ||
+      vehiclePosition
+        ?.updatedAt ||
+      null;
+
+    const latestFleetTime =
+      latestFleetTimestamp
+        ? Date.parse(
+            latestFleetTimestamp
+          )
+        : NaN;
+
+    const fleetAgeMs =
+      Number.isNaN(latestFleetTime)
+        ? null
+        : Date.now() -
+          latestFleetTime;
+
+    /*
+      Fleet telemetry is considered fresh for
+      15 minutes. This does not alter the
+      booking's factual operational status;
+      it only determines whether we can call
+      the current state genuinely live.
+    */
+    const fleetIsFresh =
+      fleetAgeMs !== null &&
+      fleetAgeMs >= 0 &&
+      fleetAgeMs <=
+        15 * 60 * 1000;
+
+    const liveState =
+      liveOperationalStatuses.has(
+        booking.operationalStatus
+      )
+        ? (
+            currentVehicleBookingMatches &&
+            fleetIsFresh
+              ? 'live'
+              : 'stale'
+          )
+        : 'not_live';
+
+    const driverName =
+      [
+        normaliseAutocabScalar(
+          driver?.Forename
+        ),
+        normaliseAutocabScalar(
+          driver?.Surname
+        )
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .trim() || null;
 
     if (
       booking.operationalStatus === 'failed'
@@ -3387,6 +3715,183 @@ function listOperationalBookings() {
       events:
         eventsStatement.all(booking.id),
 
+      acceptedAt:
+        dispatchedAt ||
+        operationalTimes.acceptedAt ||
+        null,
+
+      arrivedAt:
+        arrivedAt ||
+        operationalTimes.arrivedAt ||
+        null,
+
+      passengerOnBoardAt:
+        passengerOnBoardAt ||
+        operationalTimes
+          .passengerOnBoardAt ||
+        null,
+
+      estimatedPickupAt:
+        estimatedPickupAt ||
+        null,
+
+      completedEventAt:
+        operationalTimes
+          .completedEventAt ||
+        null,
+
+      cancelledEventAt:
+        operationalTimes
+          .cancelledEventAt ||
+        null,
+
+      noFareAt:
+        operationalTimes.noFareAt ||
+        null,
+
+      latestOperationalEventAt:
+        operationalTimes
+          .latestOperationalEventAt ||
+        latestModifiedAt ||
+        null,
+
+      driverId:
+        Number.isInteger(
+          Number(driver?.Id)
+        )
+          ? Number(driver.Id)
+          : null,
+
+      driverCallsign:
+        normaliseAutocabScalar(
+          driver?.Callsign
+        ),
+
+      driverName,
+
+      driverBadgeNumber:
+        normaliseAutocabScalar(
+          driver?.BadgeNumber
+        ),
+
+      vehicleId,
+
+      vehicleCallsign:
+        normaliseAutocabScalar(
+          vehicle?.Callsign
+        ),
+
+      vehicleRegistration:
+        normaliseAutocabScalar(
+          vehicle?.Registration
+        ),
+
+      vehiclePlateNumber:
+        normaliseAutocabScalar(
+          vehicle?.PlateNumber
+        ),
+
+      liveState,
+
+      liveStateReason:
+        liveState === 'live'
+          ? 'Fresh Autocab vehicle state matches this booking'
+          : (
+              liveState === 'stale'
+                ? (
+                    currentVehicleBookingMatches
+                      ? 'Vehicle state is no longer fresh'
+                      : 'Vehicle is no longer assigned to this booking'
+                  )
+                : null
+            ),
+
+      currentVehicleBookingMatches,
+
+      fleetStateAt:
+        latestFleetTimestamp,
+
+      fleetAgeSeconds:
+        fleetAgeMs === null
+          ? null
+          : Math.max(
+              0,
+              Math.round(
+                fleetAgeMs / 1000
+              )
+            ),
+
+      vehicleStatus:
+        currentVehicleState
+          ?.vehicleStatus ??
+        null,
+
+      vehicleLongitude:
+        liveState === 'live'
+          ? (
+              vehiclePosition?.longitude ??
+              null
+            )
+          : null,
+
+      vehicleLatitude:
+        liveState === 'live'
+          ? (
+              vehiclePosition?.latitude ??
+              null
+            )
+          : null,
+
+      vehicleSpeedMph:
+        liveState === 'live'
+          ? (
+              vehiclePosition?.speedMph ??
+              null
+            )
+          : null,
+
+      vehicleHeadingDegrees:
+        liveState === 'live'
+          ? (
+              vehiclePosition
+                ?.headingDegrees ??
+              null
+            )
+          : null,
+
+      vehicleHeadingDirection:
+        liveState === 'live'
+          ? (
+              vehiclePosition
+                ?.headingDirection ??
+              null
+            )
+          : null,
+
+      vehiclePositionAt:
+        liveState === 'live'
+          ? (
+              vehiclePosition
+                ?.sourceTimestamp ??
+              null
+            )
+          : null,
+
+      vehiclePositionUpdatedAt:
+        liveState === 'live'
+          ? (
+              vehiclePosition?.updatedAt ??
+              null
+            )
+          : null,
+
+      operationalSnapshotAt:
+        latestModifiedAt,
+
+      identitySnapshotAt:
+        identityEvent?.receivedAt ??
+        null,
+
       hasException:
         exceptionReasons.length > 0,
 
@@ -3403,29 +3908,36 @@ function getControlSummary() {
   const today =
     now.toISOString().slice(0, 10);
 
-  const activeStatuses = new Set([
-    'draft',
-    'submitting',
-    'booked',
-    'confirmed',
-    'driver_allocated',
-    'driver_en_route',
-    'driver_arrived',
-    'passenger_on_board',
-    'requires_review'
-  ]);
+  const nonTerminalQueueStatuses =
+    new Set([
+      'draft',
+      'submitting',
+      'booked',
+      'confirmed',
+      'requires_review'
+    ]);
 
-  const active = bookings.filter(
-    (booking) =>
-      activeStatuses.has(
-        booking.operationalStatus
-      )
-  );
+  const active =
+    bookings.filter(
+      (booking) =>
+        nonTerminalQueueStatuses.has(
+          booking.operationalStatus
+        ) ||
+        booking.liveState === 'live'
+    );
+
+  const stale =
+    bookings.filter(
+      (booking) =>
+        booking.liveState === 'stale'
+    );
 
   return {
     total: bookings.length,
 
     active: active.length,
+
+    stale: stale.length,
 
     dueToday: active.filter(
       (booking) =>
@@ -3457,6 +3969,98 @@ function getControlSummary() {
     ).length
   };
 }
+
+function getUhpOperationalEnrichment(
+  operational
+) {
+  if (!operational) {
+    return {};
+  }
+
+  return {
+    acceptedAt:
+      operational.acceptedAt ?? null,
+
+    arrivedAt:
+      operational.arrivedAt ?? null,
+
+    passengerOnBoardAt:
+      operational.passengerOnBoardAt ?? null,
+
+    estimatedPickupAt:
+      operational.estimatedPickupAt ?? null,
+
+    completedEventAt:
+      operational.completedEventAt ?? null,
+
+    cancelledEventAt:
+      operational.cancelledEventAt ?? null,
+
+    noFareAt:
+      operational.noFareAt ?? null,
+
+    latestOperationalEventAt:
+      operational.latestOperationalEventAt ?? null,
+
+    driverCallsign:
+      operational.driverCallsign ?? null,
+
+    driverName:
+      operational.driverName ?? null,
+
+    vehicleCallsign:
+      operational.vehicleCallsign ?? null,
+
+    vehicleRegistration:
+      operational.vehicleRegistration ?? null,
+
+    vehiclePlateNumber:
+      operational.vehiclePlateNumber ?? null,
+
+    vehicleStatus:
+      operational.vehicleStatus ?? null,
+
+    liveState:
+      operational.liveState ?? null,
+
+    liveStateReason:
+      operational.liveStateReason ?? null,
+
+    fleetStateAt:
+      operational.fleetStateAt ?? null,
+
+    fleetAgeSeconds:
+      operational.fleetAgeSeconds ?? null,
+
+    vehicleLongitude:
+      operational.vehicleLongitude ?? null,
+
+    vehicleLatitude:
+      operational.vehicleLatitude ?? null,
+
+    vehicleSpeedMph:
+      operational.vehicleSpeedMph ?? null,
+
+    vehicleHeadingDegrees:
+      operational.vehicleHeadingDegrees ?? null,
+
+    vehicleHeadingDirection:
+      operational.vehicleHeadingDirection ?? null,
+
+    vehiclePositionAt:
+      operational.vehiclePositionAt ?? null,
+
+    vehiclePositionUpdatedAt:
+      operational.vehiclePositionUpdatedAt ?? null,
+
+    operationalSnapshotAt:
+      operational.operationalSnapshotAt ?? null,
+
+    identitySnapshotAt:
+      operational.identitySnapshotAt ?? null
+  };
+}
+
 
 function listBookingsForUser(userId) {
   const user = db.prepare(`
@@ -3535,8 +4139,24 @@ function listBookingsForUser(userId) {
     ORDER BY sequence_number
   `);
 
+  const operationalById =
+    new Map(
+      listOperationalBookings()
+        .map(
+          (booking) => [
+            booking.id,
+            booking
+          ]
+        )
+    );
+
   return bookings.map((booking) => ({
     ...booking,
+    ...getUhpOperationalEnrichment(
+      operationalById.get(
+        booking.id
+      )
+    ),
     stops: stopsStatement.all(booking.id)
   }));
 }
@@ -3661,8 +4281,24 @@ function listBudgetVisibleBookings(userId) {
     ORDER BY sequence_number
   `);
 
+  const operationalById =
+    new Map(
+      listOperationalBookings()
+        .map(
+          (booking) => [
+            booking.id,
+            booking
+          ]
+        )
+    );
+
   return bookings.map((booking) => ({
     ...booking,
+    ...getUhpOperationalEnrichment(
+      operationalById.get(
+        booking.id
+      )
+    ),
 
     stops:
       stopsStatement.all(booking.id)

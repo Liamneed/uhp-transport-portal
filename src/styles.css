@@ -2518,3 +2518,100 @@ button:disabled {
     text-align: left;
   }
 }
+
+/* 20B.4 operational enrichment */
+
+.stale-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 5px;
+  margin-left: 6px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #fff4df;
+  color: #94611b;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.control-meta .stale-chip {
+  margin-left: 0;
+}
+
+.operational-state-note {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.operational-state-note strong {
+  color: inherit;
+  font-size: 12px;
+}
+
+.operational-state-note span {
+  line-height: 1.4;
+}
+
+.operational-state-note.stale {
+  background: #fff8e9;
+  color: #835b1f;
+}
+
+.operational-state-note.live {
+  background: #eef9f3;
+  color: #397050;
+}
+
+.operational-timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.operational-timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.operational-timeline-item:not(:last-child)::after {
+  position: absolute;
+  top: 21px;
+  bottom: -5px;
+  left: 5px;
+  width: 1px;
+  background: #dbe4ea;
+  content: "";
+}
+
+.operational-timeline-dot {
+  position: relative;
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  margin-top: 3px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #4a91b8;
+  box-shadow: 0 0 0 1px #a9c8d9;
+}
+
+.operational-timeline-item strong {
+  display: block;
+  color: #34495f;
+  font-size: 12px;
+}
+
+.operational-timeline-item small {
+  display: block;
+  margin-top: 2px;
+  color: #7d8b9b;
+  font-size: 11px;
+}

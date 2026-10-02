@@ -890,7 +890,15 @@ function UhpAdminDashboard() {
             )}
           </span>
 
-          {bookingIsOverdue(
+          {bookingIsStale(
+                              booking
+                            ) && (
+                              <span className="stale-chip">
+                                Stale
+                              </span>
+                            )}
+
+                            {bookingIsOverdue(
             booking
           ) && (
             <span className="overdue-chip">
@@ -1858,6 +1866,12 @@ function bookingStatusGroup(booking) {
       status
     )
   ) {
+    if (
+      booking?.liveState === 'stale'
+    ) {
+      return 'stale';
+    }
+
     return 'live';
   }
 
@@ -1882,6 +1896,16 @@ function bookingStatusGroup(booking) {
   }
 
   return 'other';
+}
+
+
+function bookingIsStale(booking) {
+  return (
+    booking?.liveState === 'stale' &&
+    LIVE_OPERATIONAL_STATUSES.has(
+      booking?.operationalStatus
+    )
+  );
 }
 
 
@@ -2009,6 +2033,53 @@ function BookingDetailModal({
 
   const isNac =
     context === 'nac';
+
+  const hasOperationalDetail =
+    Boolean(
+      booking.driverName ||
+      booking.driverCallsign ||
+      booking.vehicleCallsign ||
+      booking.vehicleRegistration ||
+      booking.vehiclePlateNumber ||
+      booking.acceptedAt ||
+      booking.arrivedAt ||
+      booking.passengerOnBoardAt ||
+      booking.completedEventAt ||
+      booking.cancelledEventAt ||
+      booking.noFareAt ||
+      booking.liveState
+    );
+
+  const operationalTimeline = [
+    {
+      label: 'Driver Allocated / Dispatched',
+      at: booking.acceptedAt
+    },
+    {
+      label: 'Driver Arrived',
+      at: booking.arrivedAt
+    },
+    {
+      label: 'Passenger On Board',
+      at: booking.passengerOnBoardAt
+    },
+    {
+      label: 'Completed',
+      at:
+        booking.completedEventAt ||
+        booking.completedAt
+    },
+    {
+      label: 'Cancelled',
+      at:
+        booking.cancelledEventAt ||
+        booking.cancelledAt
+    },
+    {
+      label: 'No Fare',
+      at: booking.noFareAt
+    }
+  ].filter((item) => item.at);
 
   return (
     <div
@@ -2300,6 +2371,166 @@ function BookingDetailModal({
             </div>
           </div>
 
+          {hasOperationalDetail && (
+            <>
+              <div className="booking-modal-section">
+                <div className="booking-modal-section-heading">
+                  <h3>Driver &amp; Vehicle</h3>
+                </div>
+
+                <div className="booking-modal-facts">
+                  <div>
+                    <small>Driver</small>
+                    <strong>
+                      {booking.driverName || '—'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Driver Callsign</small>
+                    <strong>
+                      {booking.driverCallsign || '—'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Vehicle</small>
+                    <strong>
+                      {booking.vehicleCallsign || '—'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Registration</small>
+                    <strong>
+                      {booking.vehicleRegistration || '—'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Plate Number</small>
+                    <strong>
+                      {booking.vehiclePlateNumber || '—'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Operational State</small>
+                    <strong>
+                      {booking.liveState === 'live'
+                        ? 'Live'
+                        : booking.liveState === 'stale'
+                          ? 'Stale last-known status'
+                          : 'Not Live'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Last Fleet Update</small>
+                    <strong>
+                      {formatBookingDateTime(
+                        booking.fleetStateAt
+                      )}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Snapshot Captured</small>
+                    <strong>
+                      {formatBookingDateTime(
+                        booking.identitySnapshotAt ||
+                        booking.operationalSnapshotAt
+                      )}
+                    </strong>
+                  </div>
+                </div>
+
+                {booking.liveState === 'stale' && (
+                  <div className="operational-state-note stale">
+                    <strong>
+                      Last known Autocab status
+                    </strong>
+
+                    <span>
+                      {formatOperationalStatus(
+                        booking.operationalStatus
+                      )}
+                      {booking.liveStateReason
+                        ? ` · ${booking.liveStateReason}`
+                        : ''}
+                    </span>
+                  </div>
+                )}
+
+                {booking.liveState === 'live' &&
+                  booking.vehicleLatitude !== null &&
+                  booking.vehicleLatitude !== undefined &&
+                  booking.vehicleLongitude !== null &&
+                  booking.vehicleLongitude !== undefined && (
+                    <div className="operational-state-note live">
+                      <strong>
+                        Live vehicle telemetry
+                      </strong>
+
+                      <span>
+                        {booking.vehicleSpeedMph !== null &&
+                        booking.vehicleSpeedMph !== undefined
+                          ? `${booking.vehicleSpeedMph} mph`
+                          : 'Position available'}
+
+                        {booking.vehicleHeadingDirection
+                          ? ` · ${booking.vehicleHeadingDirection}`
+                          : ''}
+
+                        {booking.vehiclePositionAt
+                          ? ` · Updated ${formatBookingDateTime(
+                              booking.vehiclePositionAt
+                            )}`
+                          : ''}
+                      </span>
+                    </div>
+                  )}
+              </div>
+
+              <div className="booking-modal-section">
+                <div className="booking-modal-section-heading">
+                  <h3>Operational Timeline</h3>
+                </div>
+
+                {operationalTimeline.length ? (
+                  <div className="operational-timeline">
+                    {operationalTimeline.map(
+                      (item) => (
+                        <div
+                          className="operational-timeline-item"
+                          key={`${item.label}-${item.at}`}
+                        >
+                          <span className="operational-timeline-dot"/>
+
+                          <div>
+                            <strong>
+                              {item.label}
+                            </strong>
+
+                            <small>
+                              {formatBookingDateTime(
+                                item.at
+                              )}
+                            </small>
+                          </div>
+                        </div>
+                      )
+                    )}
+                  </div>
+                ) : (
+                  <span className="history-empty">
+                    No operational timestamps recorded yet.
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+
           {isNac && (
             <div className="booking-modal-section">
               <div className="booking-modal-section-heading">
@@ -2419,6 +2650,7 @@ function NacControlPage() {
           (booking) =>
             [
               'live',
+              'stale',
               'booked'
             ].includes(
               bookingStatusGroup(
@@ -2593,7 +2825,15 @@ function NacControlPage() {
                       )}
                     </span>
 
-                    {bookingIsOverdue(
+                    {bookingIsStale(
+                              booking
+                            ) && (
+                              <span className="stale-chip">
+                                Stale
+                              </span>
+                            )}
+
+                            {bookingIsOverdue(
                       booking
                     ) && (
                       <span className="overdue-chip">
@@ -3221,6 +3461,14 @@ function NacBookingsPage({
                                 booking.operationalStatus
                               )}
                             </span>
+
+                            {bookingIsStale(
+                              booking
+                            ) && (
+                              <span className="stale-chip">
+                                Stale
+                              </span>
+                            )}
 
                             {bookingIsOverdue(
                               booking
@@ -5463,6 +5711,14 @@ function MyBookingsPage({
                                 booking.operationalStatus
                               )}
                             </span>
+
+                            {bookingIsStale(
+                              booking
+                            ) && (
+                              <span className="stale-chip">
+                                Stale
+                              </span>
+                            )}
 
                             {bookingIsOverdue(
                               booking
