@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import L from 'leaflet';
+import {
+  MapContainer,
+  Marker,
+  Polyline,
+  Popup,
+  TileLayer,
+  useMap
+} from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
 import {
   LayoutDashboard,
   UserRoundCog,
@@ -23,6 +33,28 @@ const API_BASE =
   import.meta.env.DEV
     ? 'http://localhost:3001'
     : '';
+
+const ROUTING_BASE_URL =
+  (
+    import.meta.env.VITE_ROUTING_BASE_URL ||
+    (
+      import.meta.env.DEV
+        ? 'https://router.project-osrm.org'
+        : ''
+    )
+  ).replace(/\/$/, '');
+
+const MAP_TILE_URL =
+  import.meta.env.VITE_MAP_TILE_URL ||
+  (
+    import.meta.env.DEV
+      ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+      : ''
+  );
+
+const MAP_TILE_ATTRIBUTION =
+  import.meta.env.VITE_MAP_TILE_ATTRIBUTION ||
+  '&copy; OpenStreetMap contributors';
 
 async function apiFetch(
   input,
@@ -1997,6 +2029,542 @@ function useEscapeClose(
 }
 
 
+
+function bookingMapPointIsValid(point) {
+  return (
+    Number.isFinite(
+      Number(point?.latitude)
+    ) &&
+    Number.isFinite(
+      Number(point?.longitude)
+    )
+  );
+}
+
+
+function bookingMapStopLabel(
+  point,
+  index,
+  total
+) {
+  if (point?.stopType === 'pickup') {
+    return 'P';
+  }
+
+  if (
+    point?.stopType === 'destination' ||
+    index === total - 1
+  ) {
+    return 'D';
+  }
+
+  return String(index);
+}
+
+
+function bookingMapStopTitle(
+  point,
+  index
+) {
+  if (point?.stopType === 'pickup') {
+    return 'Pickup';
+  }
+
+  if (point?.stopType === 'destination') {
+    return 'Destination';
+  }
+
+  return `Via ${index}`;
+}
+
+
+function bookingCodingStatusText(status) {
+  const labels = {
+    valid: 'Recognised',
+    invalid: 'Not recognised',
+    mismatch: 'Does not match',
+    not_checked: 'Not checked',
+    missing: 'Missing'
+  };
+
+  return (
+    labels[status] ||
+    formatStatus(status || '')
+  );
+}
+
+
+function BookingMapBounds({
+  coordinates
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!coordinates.length) {
+      return;
+    }
+
+    const bounds =
+      L.latLngBounds(
+        coordinates.map(
+          ([latitude, longitude]) =>
+            [latitude, longitude]
+        )
+      );
+
+    map.invalidateSize();
+
+    if (coordinates.length === 1) {
+      map.setView(
+        coordinates[0],
+        15
+      );
+
+      return;
+    }
+
+    map.fitBounds(
+      bounds,
+      {
+        padding: [34, 34],
+        maxZoom: 15
+      }
+    );
+  }, [map, coordinates]);
+
+  return null;
+}
+
+
+function BookingRouteMap({
+  booking
+}) {
+  const routePoints =
+    (
+      Array.isArray(
+        booking?.routePoints
+      )
+        ? booking.routePoints
+        : []
+    )
+      .filter(
+        bookingMapPointIsValid
+      )
+      .map(
+        (point) => ({
+          ...point,
+          latitude:
+            Number(point.latitude),
+          longitude:
+            Number(point.longitude)
+        })
+      )
+      .sort(
+        (a, b) =>
+          Number(
+            a.sequenceNumber ?? 0
+          ) -
+          Number(
+            b.sequenceNumber ?? 0
+          )
+      );
+
+  const hasLiveVehicle =
+    booking?.liveState === 'live' &&
+    Number.isFinite(
+      Number(
+        booking?.vehicleLatitude
+      )
+    ) &&
+    Number.isFinite(
+      Number(
+        booking?.vehicleLongitude
+      )
+    );
+
+  const liveVehiclePoint =
+    hasLiveVehicle
+      ? [
+          Number(
+            booking.vehicleLatitude
+          ),
+          Number(
+            booking.vehicleLongitude
+          )
+        ]
+      : null;
+
+  const routeCoordinates =
+    routePoints.map(
+      (point) => [
+        point.latitude,
+        point.longitude
+      ]
+    );
+
+  const routeRequestCoordinates =
+    routeCoordinates
+      .map(
+        ([latitude, longitude]) =>
+          `${longitude},${latitude}`
+      )
+      .join(';');
+
+  const [
+    roadRouteCoordinates,
+    setRoadRouteCoordinates
+  ] = useState([]);
+
+  const [
+    roadRouteState,
+    setRoadRouteState
+  ] = useState(
+    routeCoordinates.length > 1
+      ? 'loading'
+      : 'idle'
+  );
+
+  useEffect(() => {
+    if (
+      routeCoordinates.length < 2 ||
+      !routeRequestCoordinates
+    ) {
+      setRoadRouteCoordinates([]);
+      setRoadRouteState('idle');
+      return;
+    }
+
+    if (!ROUTING_BASE_URL) {
+      setRoadRouteCoordinates([]);
+      setRoadRouteState('fallback');
+      return;
+    }
+
+    const controller =
+      new AbortController();
+
+    setRoadRouteCoordinates([]);
+    setRoadRouteState('loading');
+
+    const url =
+      `${ROUTING_BASE_URL}/route/v1/driving/` +
+      `${routeRequestCoordinates}` +
+      '?overview=full&geometries=geojson&steps=false';
+
+    window.fetch(
+      url,
+      {
+        signal: controller.signal
+      }
+    )
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(
+            `Routing service returned ${response.status}`
+          );
+        }
+
+        return response.json();
+      })
+      .then((data) => {
+        const coordinates =
+          data?.routes?.[0]
+            ?.geometry
+            ?.coordinates;
+
+        if (
+          data?.code !== 'Ok' ||
+          !Array.isArray(coordinates)
+        ) {
+          throw new Error(
+            'Routing service returned no usable route'
+          );
+        }
+
+        const roadCoordinates =
+          coordinates
+            .map((coordinate) => {
+              const longitude =
+                Number(coordinate?.[0]);
+
+              const latitude =
+                Number(coordinate?.[1]);
+
+              return [
+                latitude,
+                longitude
+              ];
+            })
+            .filter(
+              ([latitude, longitude]) =>
+                Number.isFinite(latitude) &&
+                Number.isFinite(longitude)
+            );
+
+        if (
+          roadCoordinates.length < 2
+        ) {
+          throw new Error(
+            'Routing service returned an empty route'
+          );
+        }
+
+        setRoadRouteCoordinates(
+          roadCoordinates
+        );
+
+        setRoadRouteState('ready');
+      })
+      .catch((error) => {
+        if (
+          error?.name ===
+          'AbortError'
+        ) {
+          return;
+        }
+
+        setRoadRouteCoordinates([]);
+        setRoadRouteState('fallback');
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [routeRequestCoordinates]);
+
+  const displayedRouteCoordinates =
+    roadRouteCoordinates.length > 1
+      ? roadRouteCoordinates
+      : routeCoordinates;
+
+  const allCoordinates = [
+    ...displayedRouteCoordinates,
+    ...(
+      liveVehiclePoint
+        ? [liveVehiclePoint]
+        : []
+    )
+  ];
+
+  if (!allCoordinates.length) {
+    return (
+      <div className="booking-map-unavailable">
+        Route coordinates are not available for this booking.
+      </div>
+    );
+  }
+
+  const initialCentre =
+    routeCoordinates[0] ||
+    liveVehiclePoint;
+
+  const pickupIcon =
+    L.divIcon({
+      className:
+        'booking-map-div-icon',
+      html:
+        '<span class="booking-map-stop-marker pickup">P</span>',
+      iconSize: [32, 32],
+      iconAnchor: [16, 16]
+    });
+
+  const destinationIcon =
+    L.divIcon({
+      className:
+        'booking-map-div-icon',
+      html:
+        '<span class="booking-map-stop-marker destination">D</span>',
+      iconSize: [32, 32],
+      iconAnchor: [16, 16]
+    });
+
+  const viaIcon = (label) =>
+    L.divIcon({
+      className:
+        'booking-map-div-icon',
+      html:
+        `<span class="booking-map-stop-marker via">${label}</span>`,
+      iconSize: [30, 30],
+      iconAnchor: [15, 15]
+    });
+
+  const vehicleIcon =
+    L.divIcon({
+      className:
+        'booking-map-div-icon',
+      html:
+        '<span class="booking-map-vehicle-marker">🚕</span>',
+      iconSize: [38, 38],
+      iconAnchor: [19, 19]
+    });
+
+  return (
+    <div className="booking-route-map-shell">
+      <MapContainer
+        className="booking-route-map"
+        center={initialCentre}
+        zoom={13}
+        scrollWheelZoom={false}
+      >
+        {MAP_TILE_URL && (
+          <TileLayer
+            attribution={
+              MAP_TILE_ATTRIBUTION
+            }
+            url={MAP_TILE_URL}
+          />
+        )}
+
+        <BookingMapBounds
+          coordinates={
+            allCoordinates
+          }
+        />
+
+        {displayedRouteCoordinates.length > 1 && (
+          <Polyline
+            positions={
+              displayedRouteCoordinates
+            }
+            pathOptions={{
+              weight: 4,
+              opacity: 0.78
+            }}
+          />
+        )}
+
+        {routePoints.map(
+          (point, index) => {
+            const label =
+              bookingMapStopLabel(
+                point,
+                index,
+                routePoints.length
+              );
+
+            const icon =
+              point.stopType ===
+                'pickup'
+                ? pickupIcon
+                : point.stopType ===
+                    'destination'
+                  ? destinationIcon
+                  : viaIcon(label);
+
+            return (
+              <Marker
+                key={
+                  `${booking.id}-map-${point.stopType}-${point.sequenceNumber ?? index}`
+                }
+                position={[
+                  point.latitude,
+                  point.longitude
+                ]}
+                icon={icon}
+              >
+                <Popup>
+                  <strong>
+                    {bookingMapStopTitle(
+                      point,
+                      index
+                    )}
+                  </strong>
+
+                  <div>
+                    {point.address ||
+                      'Address unavailable'}
+                  </div>
+                </Popup>
+              </Marker>
+            );
+          }
+        )}
+
+        {liveVehiclePoint && (
+          <Marker
+            position={
+              liveVehiclePoint
+            }
+            icon={vehicleIcon}
+            zIndexOffset={1000}
+          >
+            <Popup>
+              <strong>
+                Live taxi
+                {booking.vehicleCallsign
+                  ? ` ${booking.vehicleCallsign}`
+                  : ''}
+              </strong>
+
+              {booking.driverName && (
+                <div>
+                  {booking.driverName}
+                </div>
+              )}
+
+              {booking.vehicleRegistration && (
+                <div>
+                  {booking.vehicleRegistration}
+                </div>
+              )}
+
+              {booking.vehicleSpeedMph !==
+                null &&
+                booking.vehicleSpeedMph !==
+                  undefined && (
+                  <div>
+                    {booking.vehicleSpeedMph} mph
+                    {booking.vehicleHeadingDirection
+                      ? ` · ${booking.vehicleHeadingDirection}`
+                      : ''}
+                  </div>
+                )}
+            </Popup>
+          </Marker>
+        )}
+      </MapContainer>
+
+      <div className="booking-map-legend">
+        <span>
+          <i className="booking-map-legend-dot pickup"/>
+          Pickup
+        </span>
+
+        <span>
+          <i className="booking-map-legend-dot via"/>
+          Via
+        </span>
+
+        <span>
+          <i className="booking-map-legend-dot destination"/>
+          Destination
+        </span>
+
+        {liveVehiclePoint && (
+          <span className="booking-map-live-legend">
+            🚕 Live taxi
+          </span>
+        )}
+      </div>
+
+      {routeCoordinates.length > 1 && (
+        <div
+          className={`booking-map-route-status ${roadRouteState}`}
+        >
+          {roadRouteState === 'ready'
+            ? 'Road route shown between the booked stops.'
+            : roadRouteState === 'loading'
+              ? 'Loading road route…'
+              : roadRouteState === 'fallback'
+                ? 'Road routing is unavailable. Showing the booked stops with an approximate route.'
+                : ''}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function BookingDetailModal({
   booking,
   onClose,
@@ -2033,6 +2601,17 @@ function BookingDetailModal({
 
   const isNac =
     context === 'nac';
+
+  const codingReviewRequired =
+    booking.financialStatus ===
+      'coding_required';
+
+  const hasParsedCoding =
+    Boolean(
+      booking.parsedReasonCode ||
+      booking.parsedBudgetNumber ||
+      booking.parsedBudgetHolder
+    );
 
   const hasOperationalDetail =
     Boolean(
@@ -2281,6 +2860,12 @@ function BookingDetailModal({
                   </div>
                 ))}
               </div>
+
+              <div className="booking-modal-map">
+                <BookingRouteMap
+                  booking={booking}
+                />
+              </div>
             </div>
 
             <div className="booking-modal-section">
@@ -2288,18 +2873,99 @@ function BookingDetailModal({
                 <h3>UHP Coding</h3>
               </div>
 
+              {codingReviewRequired && (
+                <div className="booking-coding-review">
+                  <div className="booking-coding-review-heading">
+                    <strong>
+                      Coding Review Required
+                    </strong>
+
+                    <span>
+                      The coding supplied with this Autocab booking has not yet been matched to portal master data.
+                    </span>
+                  </div>
+
+                  {hasParsedCoding && (
+                    <div className="booking-coding-requested">
+                      <div>
+                        <small>
+                          Requested Reason
+                        </small>
+
+                        <strong>
+                          {booking.parsedReasonCode ||
+                            'Not supplied'}
+                        </strong>
+
+                        {booking.codingReasonStatus && (
+                          <span>
+                            {bookingCodingStatusText(
+                              booking.codingReasonStatus
+                            )}
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <small>
+                          Requested Budget
+                        </small>
+
+                        <strong>
+                          {booking.parsedBudgetNumber ||
+                            'Not supplied'}
+                        </strong>
+
+                        {booking.codingBudgetStatus && (
+                          <span>
+                            {bookingCodingStatusText(
+                              booking.codingBudgetStatus
+                            )}
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <small>
+                          Requested Holder
+                        </small>
+
+                        <strong>
+                          {booking.parsedBudgetHolder ||
+                            'Not supplied'}
+                        </strong>
+
+                        {booking.codingHolderStatus && (
+                          <span>
+                            {bookingCodingStatusText(
+                              booking.codingHolderStatus
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="booking-modal-facts booking-modal-facts-single">
                 <div>
                   <small>Department</small>
                   <strong>
-                    {booking.department || '—'}
+                    {booking.department ||
+                      (codingReviewRequired
+                        ? 'Pending coding assignment'
+                        : '—')}
                   </strong>
                 </div>
 
                 <div>
                   <small>Budget</small>
                   <strong>
-                    {booking.budgetNumber || '—'}
+                    {booking.budgetNumber ||
+                      (codingReviewRequired
+                        ? 'Pending coding review'
+                        : '—')}
                     {booking.budgetName
                       ? ` · ${booking.budgetName}`
                       : ''}
@@ -2309,14 +2975,20 @@ function BookingDetailModal({
                 <div>
                   <small>Budget Holder</small>
                   <strong>
-                    {booking.budgetHolder || '—'}
+                    {booking.budgetHolder ||
+                      (codingReviewRequired
+                        ? 'Pending coding review'
+                        : '—')}
                   </strong>
                 </div>
 
                 <div>
                   <small>Reason</small>
                   <strong>
-                    {booking.reasonCode || '—'}
+                    {booking.reasonCode ||
+                      (codingReviewRequired
+                        ? 'Pending coding review'
+                        : '—')}
                     {booking.reasonDescription
                       ? ` · ${booking.reasonDescription}`
                       : ''}

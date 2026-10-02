@@ -3280,7 +3280,17 @@ function listOperationalBookings() {
       b.cancelled_at AS cancelledAt,
 
       b.created_at AS createdAt,
-      b.updated_at AS updatedAt
+      b.updated_at AS updatedAt,
+
+      cr.raw_reference AS codingRawReference,
+      cr.parsed_reason_code AS parsedReasonCode,
+      cr.parsed_budget_number AS parsedBudgetNumber,
+      cr.parsed_budget_holder AS parsedBudgetHolder,
+      cr.status AS codingReconciliationStatus,
+      cr.reason_status AS codingReasonStatus,
+      cr.budget_status AS codingBudgetStatus,
+      cr.holder_status AS codingHolderStatus,
+      cr.checked_at AS codingCheckedAt
 
     FROM bookings b
 
@@ -3298,6 +3308,9 @@ function listOperationalBookings() {
 
     LEFT JOIN departments d
       ON d.id = b.department_id
+
+    LEFT JOIN booking_coding_reconciliation cr
+      ON cr.booking_id = b.id
 
     ORDER BY
       datetime(b.requested_pickup_at) DESC,
@@ -3403,19 +3416,32 @@ function listOperationalBookings() {
         )
     `);
 
-  const modifiedPayloadStatement =
+  const operationalPayloadStatement =
     db.prepare(`
       SELECT
+        route_suffix AS routeSuffix,
         payload_json AS payloadJson,
         received_at AS receivedAt
       FROM integration_events
-      WHERE booking_id = ?
-        AND provider = 'autocab'
+      WHERE provider = 'autocab'
         AND category = 'booking'
-        AND route_suffix = 'modified'
-        AND processing_status = 'processed'
+        AND (
+          booking_id = ?
+          OR autocab_booking_id = ?
+        )
+        AND processing_status IN (
+          'processed',
+          'received'
+        )
+        AND route_suffix IN (
+          'created',
+          'modified',
+          'accept',
+          'arrived',
+          'pob'
+        )
       ORDER BY id DESC
-      LIMIT 50
+      LIMIT 100
     `);
 
   const vehiclePositionStatement =
@@ -3453,9 +3479,10 @@ function listOperationalBookings() {
         booking.id
       ) ?? {};
 
-    const modifiedEvents =
-      modifiedPayloadStatement.all(
-        booking.id
+    const operationalPayloadEvents =
+      operationalPayloadStatement.all(
+        booking.id,
+        booking.autocabBookingId
       );
 
     let identityEvent = null;
@@ -3466,9 +3493,60 @@ function listOperationalBookings() {
     let passengerOnBoardAt = null;
     let estimatedPickupAt = null;
 
-    let latestModifiedAt = null;
+    let latestOperationalPayloadAt = null;
 
-    for (const candidate of modifiedEvents) {
+    let pickupPoint = null;
+    let destinationPoint = null;
+    let viaPoints = [];
+
+    function normaliseRoutePoint(
+      point,
+      stopType,
+      sequenceNumber
+    ) {
+      if (!point) {
+        return null;
+      }
+
+      const latitude =
+        Number(
+          point?.Latitude ??
+          point?.Position?.Latitude ??
+          point?.Location?.Latitude ??
+          point?.Coordinates?.Latitude
+        );
+
+      const longitude =
+        Number(
+          point?.Longitude ??
+          point?.Position?.Longitude ??
+          point?.Location?.Longitude ??
+          point?.Coordinates?.Longitude
+        );
+
+      if (
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude)
+      ) {
+        return null;
+      }
+
+      return {
+        sequenceNumber,
+        stopType,
+        address:
+          normaliseAutocabScalar(
+            point?.Address
+          ),
+        latitude,
+        longitude
+      };
+    }
+
+    for (
+      const candidate
+      of operationalPayloadEvents
+    ) {
       let candidatePayload = null;
 
       try {
@@ -3480,8 +3558,8 @@ function listOperationalBookings() {
         continue;
       }
 
-      if (!latestModifiedAt) {
-        latestModifiedAt =
+      if (!latestOperationalPayloadAt) {
+        latestOperationalPayloadAt =
           candidate.receivedAt ||
           null;
       }
@@ -3538,7 +3616,60 @@ function listOperationalBookings() {
             candidatePayload;
         }
       }
+
+      if (!pickupPoint) {
+        pickupPoint =
+          normaliseRoutePoint(
+            candidatePayload?.Pickup,
+            'pickup',
+            0
+          );
+      }
+
+      if (!destinationPoint) {
+        destinationPoint =
+          normaliseRoutePoint(
+            candidatePayload?.Destination,
+            'destination',
+            null
+          );
+      }
+
+      if (!viaPoints.length) {
+        const rawVias =
+          Array.isArray(
+            candidatePayload?.Vias
+          )
+            ? candidatePayload.Vias
+            : [];
+
+        viaPoints =
+          rawVias
+            .map(
+              (via, index) =>
+                normaliseRoutePoint(
+                  via,
+                  'via',
+                  index + 1
+                )
+            )
+            .filter(Boolean);
+      }
     }
+
+    if (destinationPoint) {
+      destinationPoint = {
+        ...destinationPoint,
+        sequenceNumber:
+          viaPoints.length + 1
+      };
+    }
+
+    const routePoints = [
+      pickupPoint,
+      ...viaPoints,
+      destinationPoint
+    ].filter(Boolean);
 
     const driver =
       identityPayload
@@ -3752,7 +3883,7 @@ function listOperationalBookings() {
       latestOperationalEventAt:
         operationalTimes
           .latestOperationalEventAt ||
-        latestModifiedAt ||
+        latestOperationalPayloadAt ||
         null,
 
       driverId:
@@ -3886,11 +4017,13 @@ function listOperationalBookings() {
           : null,
 
       operationalSnapshotAt:
-        latestModifiedAt,
+        latestOperationalPayloadAt,
 
       identitySnapshotAt:
         identityEvent?.receivedAt ??
         null,
+
+      routePoints,
 
       hasException:
         exceptionReasons.length > 0,
@@ -4057,7 +4190,41 @@ function getUhpOperationalEnrichment(
       operational.operationalSnapshotAt ?? null,
 
     identitySnapshotAt:
-      operational.identitySnapshotAt ?? null
+      operational.identitySnapshotAt ?? null,
+
+    routePoints:
+      Array.isArray(
+        operational.routePoints
+      )
+        ? operational.routePoints
+        : [],
+
+    codingRawReference:
+      operational.codingRawReference ?? null,
+
+    parsedReasonCode:
+      operational.parsedReasonCode ?? null,
+
+    parsedBudgetNumber:
+      operational.parsedBudgetNumber ?? null,
+
+    parsedBudgetHolder:
+      operational.parsedBudgetHolder ?? null,
+
+    codingReconciliationStatus:
+      operational.codingReconciliationStatus ?? null,
+
+    codingReasonStatus:
+      operational.codingReasonStatus ?? null,
+
+    codingBudgetStatus:
+      operational.codingBudgetStatus ?? null,
+
+    codingHolderStatus:
+      operational.codingHolderStatus ?? null,
+
+    codingCheckedAt:
+      operational.codingCheckedAt ?? null
   };
 }
 
