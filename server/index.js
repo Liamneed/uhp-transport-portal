@@ -730,6 +730,27 @@ function userHasAnyRole(
   );
 }
 
+function userHasRoleById(
+  userId,
+  roleCode
+) {
+  return Boolean(
+    db.prepare(`
+      SELECT 1
+      FROM user_roles ur
+      JOIN roles r
+        ON r.id = ur.role_id
+      WHERE ur.user_id = ?
+        AND r.code = ?
+      LIMIT 1
+    `).get(
+      Number(userId),
+      String(roleCode || '')
+    )
+  );
+}
+
+
 function requireAnyRole(
   req,
   allowedRoles
@@ -843,6 +864,15 @@ function enforceApiAccess(
     return requireAnyRole(
       req,
       ['budget_holder']
+    );
+  }
+
+  if (
+    pathname === '/api/uhp/bookings'
+  ) {
+    return requireAnyRole(
+      req,
+      ['uhp_admin']
     );
   }
 
@@ -2437,11 +2467,18 @@ function getBookingOptions(userId) {
     const error = new Error(
       'Booking user must be an active portal user'
     );
+
     error.statusCode = 403;
     throw error;
   }
 
-  const budgets = db.prepare(`
+  const isUhpAdmin =
+    userHasRoleById(
+      userId,
+      'uhp_admin'
+    );
+
+  const adminBudgetsSql = `
     SELECT
       b.id,
       b.budget_number AS budgetNumber,
@@ -2449,7 +2486,47 @@ function getBookingOptions(userId) {
       d.name AS department,
 
       holder.id AS holderUserId,
-      holder.first_name || ' ' || holder.last_name AS budgetHolder
+      holder.first_name || ' ' ||
+        holder.last_name AS budgetHolder
+
+    FROM budgets b
+
+    LEFT JOIN departments d
+      ON d.id = b.department_id
+
+    JOIN budget_assignments ba
+      ON ba.budget_id = b.id
+      AND ba.assignment_type = 'primary_holder'
+      AND ba.is_active = 1
+      AND (
+        ba.valid_from IS NULL OR
+        ba.valid_from <= date('now')
+      )
+      AND (
+        ba.valid_to IS NULL OR
+        ba.valid_to >= date('now')
+      )
+
+    JOIN users holder
+      ON holder.id = ba.user_id
+      AND holder.status = 'active'
+
+    WHERE b.status = 'active'
+
+    GROUP BY b.id
+    ORDER BY b.budget_number
+  `;
+
+  const userBudgetsSql = `
+    SELECT
+      b.id,
+      b.budget_number AS budgetNumber,
+      b.name,
+      d.name AS department,
+
+      holder.id AS holderUserId,
+      holder.first_name || ' ' ||
+        holder.last_name AS budgetHolder
 
     FROM user_budget_access uba
 
@@ -2474,6 +2551,7 @@ function getBookingOptions(userId) {
 
     JOIN users holder
       ON holder.id = ba.user_id
+      AND holder.status = 'active'
 
     WHERE uba.user_id = ?
       AND uba.can_book = 1
@@ -2489,7 +2567,16 @@ function getBookingOptions(userId) {
 
     GROUP BY b.id
     ORDER BY b.budget_number
-  `).all(userId);
+  `;
+
+  const budgets =
+    isUhpAdmin
+      ? db.prepare(
+          adminBudgetsSql
+        ).all()
+      : db.prepare(
+          userBudgetsSql
+        ).all(userId);
 
   const reasonCodes = db.prepare(`
     SELECT
@@ -3794,7 +3881,13 @@ function validateBookingCoding({
     budgetId
   );
 
-  if (!permission) {
+  if (
+    !permission &&
+    !userHasRoleById(
+      userId,
+      'uhp_admin'
+    )
+  ) {
     const error = new Error(
       'This user is not authorised to book against the selected budget'
     );
@@ -6886,7 +6979,13 @@ function createPortalBooking(payload) {
     budgetId
   );
 
-  if (!permission) {
+  if (
+    !permission &&
+    !userHasRoleById(
+      createdByUserId,
+      'uhp_admin'
+    )
+  ) {
     const error = new Error(
       'This user is not authorised to book against the selected budget'
     );
@@ -7563,6 +7662,21 @@ const server = http.createServer(async (req, res) => {
           listBookingsForUser(
             auth.user.id
           )
+      });
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname === '/api/uhp/bookings'
+    ) {
+      requireAnyRole(
+        req,
+        ['uhp_admin']
+      );
+
+      return sendJson(res, 200, {
+        bookings:
+          listOperationalBookings()
       });
     }
 

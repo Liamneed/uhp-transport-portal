@@ -40,6 +40,8 @@ async function apiFetch(
 const navDefinitions = {
   uhp_admin: [
     ['admin-dashboard', 'Dashboard', LayoutDashboard],
+    ['book-transport', 'Book UHP Transport', CarFront],
+    ['uhp-bookings', 'All Bookings', CalendarDays],
     ['admin-users', 'Users', UserRoundCog],
     ['admin-budgets', 'Budgets', WalletCards],
     ['admin-reasons', 'Reason Codes', Tags],
@@ -55,6 +57,7 @@ const navDefinitions = {
 
   budget_holder: [
     ['holder-dashboard', 'Dashboard', LayoutDashboard],
+    ['book-transport', 'Book UHP Transport', CarFront],
     ['holder-bookings', 'Bookings', CalendarDays],
     ['holder-invoices', 'Invoices', WalletCards],
     ['holder-reports', 'Reports', BarChart3]
@@ -593,6 +596,11 @@ function App() {
           ) : active === 'my-bookings' ? (
             <MyBookingsPage
               currentUser={currentUser}
+            />
+          ) : active === 'uhp-bookings' ? (
+            <MyBookingsPage
+              currentUser={currentUser}
+              scope="all"
             />
           ) : active === 'holder-bookings' ? (
             <MyBookingsPage
@@ -3476,6 +3484,15 @@ function MyBookingsPage({
   const budgetScope =
     scope === 'budget';
 
+  const allScope =
+    scope === 'all';
+
+  const ownScope =
+    scope === 'mine';
+
+  const broaderScope =
+    budgetScope || allScope;
+
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -3514,11 +3531,15 @@ function MyBookingsPage({
     setError('');
 
     try {
-      const response = await apiFetch(
-        budgetScope
-          ? `${API_BASE}/api/budget-bookings`
-          : `${API_BASE}/api/my-bookings?userId=${bookingUserId}`
-      );
+      const endpoint =
+        allScope
+          ? `${API_BASE}/api/uhp/bookings`
+          : budgetScope
+            ? `${API_BASE}/api/budget-bookings`
+            : `${API_BASE}/api/my-bookings`;
+
+      const response =
+        await apiFetch(endpoint);
 
       const data = await response.json();
 
@@ -3542,7 +3563,11 @@ function MyBookingsPage({
 
   useEffect(() => {
     loadBookings();
-  }, [budgetScope, bookingUserId]);
+  }, [
+    allScope,
+    budgetScope,
+    bookingUserId
+  ]);
 
   const filteredBookings = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -4077,15 +4102,19 @@ function MyBookingsPage({
       <div className="page-heading">
         <div>
           <h1>
-            {budgetScope
-              ? 'Budget Bookings'
-              : 'My Bookings'}
+            {allScope
+              ? 'All UHP Bookings'
+              : budgetScope
+                ? 'Budget Bookings'
+                : 'My Bookings'}
           </h1>
 
           <p>
-            {budgetScope
-              ? 'View UHP transport requests charged to budgets you are authorised to oversee.'
-              : 'View and manage UHP transport requests you have created.'}
+            {allScope
+              ? 'View all UHP account transport bookings across the hospital.'
+              : budgetScope
+                ? 'View UHP transport requests charged to budgets you are authorised to oversee.'
+                : 'View and manage UHP transport requests you have created.'}
           </p>
         </div>
       </div>
@@ -4187,9 +4216,11 @@ function MyBookingsPage({
             <strong>No bookings found</strong>
 
             <span>
-              {budgetScope
-                ? 'Bookings charged to your authorised budgets will appear here.'
-                : 'New UHP transport requests will appear here.'}
+              {allScope
+                ? 'UHP account bookings will appear here.'
+                : budgetScope
+                  ? 'Bookings charged to your authorised budgets will appear here.'
+                  : 'New UHP transport requests will appear here.'}
             </span>
           </div>
         ) : (
@@ -4221,7 +4252,7 @@ function MyBookingsPage({
                       ) ?? [];
 
                     const canManage =
-                      !budgetScope &&
+                      ownScope &&
                       booking.operationalStatus ===
                         'draft';
 
@@ -4251,10 +4282,15 @@ function MyBookingsPage({
                               {portalBookingReference(booking)}
                             </small>
 
-                            {budgetScope && (
+                            {broaderScope && (
                               <small>
                                 Booked by{' '}
-                                {booking.createdBy || '—'}
+                                {booking.createdBy ||
+                                  (
+                                    booking.source === 'portal'
+                                      ? 'Portal user unavailable'
+                                      : 'Need-A-Cab / Autocab'
+                                  )}
                               </small>
                             )}
                           </td>
