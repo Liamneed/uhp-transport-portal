@@ -34,16 +34,6 @@ const API_BASE =
     ? 'http://localhost:3001'
     : '';
 
-const ROUTING_BASE_URL =
-  (
-    import.meta.env.VITE_ROUTING_BASE_URL ||
-    (
-      import.meta.env.DEV
-        ? 'https://router.project-osrm.org'
-        : ''
-    )
-  ).replace(/\/$/, '');
-
 const MAP_TILE_URL =
   import.meta.env.VITE_MAP_TILE_URL ||
   (
@@ -2379,12 +2369,6 @@ function BookingRouteMap({
       return;
     }
 
-    if (!ROUTING_BASE_URL) {
-      setRoadRouteCoordinates([]);
-      setRoadRouteState('fallback');
-      return;
-    }
-
     const controller =
       new AbortController();
 
@@ -2392,11 +2376,13 @@ function BookingRouteMap({
     setRoadRouteState('loading');
 
     const url =
-      `${ROUTING_BASE_URL}/route/v1/driving/` +
-      `${routeRequestCoordinates}` +
-      '?overview=full&geometries=geojson&steps=false';
+      `${API_BASE}/api/routing/route?` +
+      new URLSearchParams({
+        coordinates:
+          routeRequestCoordinates
+      }).toString();
 
-    window.fetch(
+    apiFetch(
       url,
       {
         signal: controller.signal
@@ -2413,7 +2399,7 @@ function BookingRouteMap({
       })
       .then((data) => {
         const coordinates =
-          data?.routes?.[0]
+          data?.route
             ?.geometry
             ?.coordinates;
 

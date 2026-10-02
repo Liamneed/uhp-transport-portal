@@ -48,6 +48,16 @@ const FRONTEND_ORIGIN =
     )
   ).replace(/\/$/, '');
 
+const OSRM_BASE_URL =
+  String(
+    process.env.OSRM_BASE_URL ||
+    (
+      IS_PRODUCTION
+        ? ''
+        : 'https://router.project-osrm.org'
+    )
+  ).replace(/\/$/, '');
+
 if (
   IS_PRODUCTION &&
   !String(
@@ -885,7 +895,9 @@ function enforceApiAccess(
       '/api/bookings' ||
     pathname.startsWith(
       '/api/bookings/'
-    )
+    ) ||
+    pathname ===
+      '/api/routing/route'
   ) {
     return requireAuth(req);
   }
@@ -8651,6 +8663,198 @@ function serveFrontend(
   return true;
 }
 
+function parseRoutingCoordinates(
+  rawCoordinates
+) {
+  const value =
+    String(rawCoordinates || '')
+      .trim();
+
+  if (!value) {
+    const error = new Error(
+      'Routing coordinates are required'
+    );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const points =
+    value.split(';');
+
+  if (
+    points.length < 2 ||
+    points.length > 50
+  ) {
+    const error = new Error(
+      'Routing requires between 2 and 50 coordinates'
+    );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const normalised =
+    points.map((point) => {
+      const parts =
+        point.split(',');
+
+      if (parts.length !== 2) {
+        const error =
+          new Error(
+            'Invalid routing coordinate'
+          );
+
+        error.statusCode = 400;
+
+        throw error;
+      }
+
+      const longitude =
+        Number(parts[0]);
+
+      const latitude =
+        Number(parts[1]);
+
+      if (
+        !Number.isFinite(longitude) ||
+        !Number.isFinite(latitude) ||
+        longitude < -180 ||
+        longitude > 180 ||
+        latitude < -90 ||
+        latitude > 90
+      ) {
+        const error =
+          new Error(
+            'Invalid routing coordinate'
+          );
+
+        error.statusCode = 400;
+
+        throw error;
+      }
+
+      return (
+        `${longitude},${latitude}`
+      );
+    });
+
+  return normalised.join(';');
+}
+
+
+async function fetchRoadRoute(
+  coordinates,
+  signal
+) {
+  if (!OSRM_BASE_URL) {
+    const error = new Error(
+      'Routing service is not configured'
+    );
+
+    error.statusCode = 503;
+
+    throw error;
+  }
+
+  const url =
+    `${OSRM_BASE_URL}/route/v1/driving/` +
+    `${coordinates}` +
+    '?overview=full&geometries=geojson&steps=false';
+
+  let response;
+
+  try {
+    response =
+      await fetch(
+        url,
+        {
+          signal
+        }
+      );
+  } catch (cause) {
+    const error = new Error(
+      'Routing service is unavailable'
+    );
+
+    error.statusCode = 503;
+    error.cause = cause;
+
+    throw error;
+  }
+
+  if (!response.ok) {
+    const error = new Error(
+      `Routing service returned ${response.status}`
+    );
+
+    error.statusCode = 502;
+
+    throw error;
+  }
+
+  let data;
+
+  try {
+    data =
+      await response.json();
+  } catch {
+    const error = new Error(
+      'Routing service returned invalid data'
+    );
+
+    error.statusCode = 502;
+
+    throw error;
+  }
+
+  const geometry =
+    data?.routes?.[0]?.geometry;
+
+  if (
+    data?.code !== 'Ok' ||
+    !geometry ||
+    geometry.type !== 'LineString' ||
+    !Array.isArray(
+      geometry.coordinates
+    )
+  ) {
+    const error = new Error(
+      'Routing service returned no usable route'
+    );
+
+    error.statusCode = 502;
+
+    throw error;
+  }
+
+  return {
+    code: 'Ok',
+    route: {
+      geometry: {
+        type: 'LineString',
+        coordinates:
+          geometry.coordinates
+      },
+
+      distance:
+        Number(
+          data.routes[0]
+            ?.distance
+        ) || null,
+
+      duration:
+        Number(
+          data.routes[0]
+            ?.duration
+        ) || null
+    }
+  };
+}
+
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(
@@ -8908,6 +9112,50 @@ const server = http.createServer(async (req, res) => {
           )
       });
     }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/routing/route'
+    ) {
+      requireAuth(req);
+
+      const coordinates =
+        parseRoutingCoordinates(
+          url.searchParams.get(
+            'coordinates'
+          )
+        );
+
+      const controller =
+        new AbortController();
+
+      const timeoutId =
+        setTimeout(
+          () =>
+            controller.abort(),
+          8000
+        );
+
+      try {
+        const route =
+          await fetchRoadRoute(
+            coordinates,
+            controller.signal
+          );
+
+        return sendJson(
+          res,
+          200,
+          route
+        );
+      } finally {
+        clearTimeout(
+          timeoutId
+        );
+      }
+    }
+
 
     const liveBookingMatch =
       url.pathname.match(
