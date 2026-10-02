@@ -4033,6 +4033,68 @@ function listOperationalBookings() {
   });
 }
 
+function getOperationalBookingById(
+  bookingId
+) {
+  return (
+    listOperationalBookings()
+      .find(
+        (booking) =>
+          Number(booking.id) ===
+          Number(bookingId)
+      ) || null
+  );
+}
+
+
+function canViewLiveBooking(
+  bookingId,
+  auth
+) {
+  const roleCodes =
+    new Set(
+      Array.isArray(auth?.user?.roles)
+        ? auth.user.roles
+            .map(
+              (role) =>
+                typeof role === 'string'
+                  ? role
+                  : role?.code
+            )
+            .filter(Boolean)
+        : []
+    );
+
+  if (
+    roleCodes.has('nac_admin') ||
+    roleCodes.has('nac_controller') ||
+    roleCodes.has('uhp_admin')
+  ) {
+    return true;
+  }
+
+  if (
+    roleCodes.has('budget_holder')
+  ) {
+    return listBudgetVisibleBookings(
+      auth.user.id
+    ).some(
+      (booking) =>
+        Number(booking.id) ===
+        Number(bookingId)
+    );
+  }
+
+  return listBookingsForUser(
+    auth.user.id
+  ).some(
+    (booking) =>
+      Number(booking.id) ===
+      Number(bookingId)
+  );
+}
+
+
 function getControlSummary() {
   const bookings = listOperationalBookings();
 
@@ -8846,6 +8908,141 @@ const server = http.createServer(async (req, res) => {
           )
       });
     }
+
+    const liveBookingMatch =
+      url.pathname.match(
+        /^\/api\/bookings\/(\d+)\/live-state$/
+      );
+
+    if (
+      req.method === 'GET' &&
+      liveBookingMatch
+    ) {
+      const auth =
+        requireAuth(req);
+
+      const bookingId =
+        Number(liveBookingMatch[1]);
+
+      if (
+        !canViewLiveBooking(
+          bookingId,
+          auth
+        )
+      ) {
+        return sendJson(
+          res,
+          403,
+          {
+            error:
+              'You do not have access to this booking'
+          }
+        );
+      }
+
+      const operational =
+        getOperationalBookingById(
+          bookingId
+        );
+
+      if (!operational) {
+        return sendJson(
+          res,
+          404,
+          {
+            error:
+              'Booking operational state not found'
+          }
+        );
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          booking: {
+            id:
+              operational.id,
+
+            operationalStatus:
+              operational.operationalStatus,
+
+            acceptedAt:
+              operational.acceptedAt ?? null,
+
+            arrivedAt:
+              operational.arrivedAt ?? null,
+
+            passengerOnBoardAt:
+              operational.passengerOnBoardAt ?? null,
+
+            completedEventAt:
+              operational.completedEventAt ?? null,
+
+            cancelledEventAt:
+              operational.cancelledEventAt ?? null,
+
+            noFareAt:
+              operational.noFareAt ?? null,
+
+            driverCallsign:
+              operational.driverCallsign ?? null,
+
+            driverName:
+              operational.driverName ?? null,
+
+            vehicleCallsign:
+              operational.vehicleCallsign ?? null,
+
+            vehicleRegistration:
+              operational.vehicleRegistration ?? null,
+
+            vehiclePlateNumber:
+              operational.vehiclePlateNumber ?? null,
+
+            vehicleStatus:
+              operational.vehicleStatus ?? null,
+
+            liveState:
+              operational.liveState ?? null,
+
+            liveStateReason:
+              operational.liveStateReason ?? null,
+
+            fleetStateAt:
+              operational.fleetStateAt ?? null,
+
+            fleetAgeSeconds:
+              operational.fleetAgeSeconds ?? null,
+
+            vehicleLongitude:
+              operational.vehicleLongitude ?? null,
+
+            vehicleLatitude:
+              operational.vehicleLatitude ?? null,
+
+            vehicleSpeedMph:
+              operational.vehicleSpeedMph ?? null,
+
+            vehicleHeadingDegrees:
+              operational.vehicleHeadingDegrees ?? null,
+
+            vehicleHeadingDirection:
+              operational.vehicleHeadingDirection ?? null,
+
+            vehiclePositionAt:
+              operational.vehiclePositionAt ?? null,
+
+            vehiclePositionUpdatedAt:
+              operational.vehiclePositionUpdatedAt ?? null,
+
+            operationalSnapshotAt:
+              operational.operationalSnapshotAt ?? null
+          }
+        }
+      );
+    }
+
 
     if (
       req.method === 'GET' &&

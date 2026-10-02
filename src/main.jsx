@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import L from 'leaflet';
 import {
@@ -55,6 +55,8 @@ const MAP_TILE_URL =
 const MAP_TILE_ATTRIBUTION =
   import.meta.env.VITE_MAP_TILE_ATTRIBUTION ||
   '&copy; OpenStreetMap contributors';
+
+const LIVE_BOOKING_REFRESH_MS = 10000;
 
 async function apiFetch(
   input,
@@ -2094,6 +2096,149 @@ function bookingCodingStatusText(status) {
 }
 
 
+function AnimatedVehicleMarker({
+  position,
+  icon,
+  children
+}) {
+  const markerRef =
+    useRef(null);
+
+  const previousPositionRef =
+    useRef(position);
+
+  useEffect(() => {
+    const marker =
+      markerRef.current;
+
+    if (
+      !marker ||
+      !Array.isArray(position) ||
+      position.length !== 2
+    ) {
+      return;
+    }
+
+    const previous =
+      previousPositionRef.current;
+
+    previousPositionRef.current =
+      position;
+
+    if (
+      !Array.isArray(previous) ||
+      previous.length !== 2
+    ) {
+      marker.setLatLng(position);
+      return;
+    }
+
+    const fromLat =
+      Number(previous[0]);
+
+    const fromLng =
+      Number(previous[1]);
+
+    const toLat =
+      Number(position[0]);
+
+    const toLng =
+      Number(position[1]);
+
+    if (
+      !Number.isFinite(fromLat) ||
+      !Number.isFinite(fromLng) ||
+      !Number.isFinite(toLat) ||
+      !Number.isFinite(toLng)
+    ) {
+      marker.setLatLng(position);
+      return;
+    }
+
+    if (
+      fromLat === toLat &&
+      fromLng === toLng
+    ) {
+      return;
+    }
+
+    const durationMs = 1400;
+    const startedAt =
+      performance.now();
+
+    let animationFrame = null;
+
+    function animate(now) {
+      const elapsed =
+        now - startedAt;
+
+      const progress =
+        Math.min(
+          elapsed / durationMs,
+          1
+        );
+
+      const eased =
+        1 -
+        Math.pow(
+          1 - progress,
+          3
+        );
+
+      const nextLat =
+        fromLat +
+        (
+          toLat - fromLat
+        ) * eased;
+
+      const nextLng =
+        fromLng +
+        (
+          toLng - fromLng
+        ) * eased;
+
+      marker.setLatLng([
+        nextLat,
+        nextLng
+      ]);
+
+      if (progress < 1) {
+        animationFrame =
+          requestAnimationFrame(
+            animate
+          );
+      }
+    }
+
+    animationFrame =
+      requestAnimationFrame(
+        animate
+      );
+
+    return () => {
+      if (animationFrame) {
+        cancelAnimationFrame(
+          animationFrame
+        );
+      }
+    };
+  }, [position]);
+
+  return (
+    <Marker
+      ref={markerRef}
+      position={
+        previousPositionRef.current
+      }
+      icon={icon}
+      zIndexOffset={1000}
+    >
+      {children}
+    </Marker>
+  );
+}
+
+
 function BookingMapBounds({
   coordinates
 }) {
@@ -2358,44 +2503,141 @@ function BookingRouteMap({
     routeCoordinates[0] ||
     liveVehiclePoint;
 
-  const pickupIcon =
+  const createStopPinIcon = (
+    markerClass,
+    label
+  ) =>
     L.divIcon({
       className:
-        'booking-map-div-icon',
-      html:
-        '<span class="booking-map-stop-marker pickup">P</span>',
-      iconSize: [32, 32],
-      iconAnchor: [16, 16]
+        'booking-map-div-icon booking-map-pin-wrapper',
+      html: `
+        <span class="booking-map-pin ${markerClass}">
+          <span class="booking-map-pin-label">
+            ${label}
+          </span>
+        </span>
+      `,
+      iconSize: [32, 44],
+      iconAnchor: [16, 44],
+      popupAnchor: [0, -39]
     });
+
+  const pickupIcon =
+    createStopPinIcon(
+      'pickup',
+      'P'
+    );
 
   const destinationIcon =
-    L.divIcon({
-      className:
-        'booking-map-div-icon',
-      html:
-        '<span class="booking-map-stop-marker destination">D</span>',
-      iconSize: [32, 32],
-      iconAnchor: [16, 16]
-    });
+    createStopPinIcon(
+      'destination',
+      'D'
+    );
 
   const viaIcon = (label) =>
-    L.divIcon({
-      className:
-        'booking-map-div-icon',
-      html:
-        `<span class="booking-map-stop-marker via">${label}</span>`,
-      iconSize: [30, 30],
-      iconAnchor: [15, 15]
-    });
+    createStopPinIcon(
+      'via',
+      label
+    );
+
+  const vehicleHeading =
+    Number.isFinite(
+      Number(
+        booking.vehicleHeadingDegrees
+      )
+    )
+      ? Number(
+          booking.vehicleHeadingDegrees
+        )
+      : 0;
 
   const vehicleIcon =
     L.divIcon({
       className:
-        'booking-map-div-icon',
-      html:
-        '<span class="booking-map-vehicle-marker">🚕</span>',
-      iconSize: [38, 38],
-      iconAnchor: [19, 19]
+        'booking-map-div-icon booking-live-vehicle-icon',
+      html: `
+        <span class="booking-live-vehicle-marker">
+          <span class="booking-live-vehicle-badge">
+            <svg
+              class="booking-live-vehicle-svg"
+              viewBox="0 0 32 32"
+              aria-hidden="true"
+              focusable="false"
+              style="transform:rotate(${vehicleHeading}deg)"
+            >
+              <g class="booking-live-vehicle-shape">
+                <rect
+                  x="10"
+                  y="5"
+                  width="12"
+                  height="22"
+                  rx="4"
+                />
+                <rect
+                  x="12"
+                  y="8"
+                  width="8"
+                  height="5"
+                  rx="1.5"
+                  class="booking-live-vehicle-glass"
+                />
+                <rect
+                  x="12"
+                  y="15"
+                  width="8"
+                  height="5"
+                  rx="1.5"
+                  class="booking-live-vehicle-glass"
+                />
+                <rect
+                  x="8"
+                  y="9"
+                  width="3"
+                  height="5"
+                  rx="1"
+                />
+                <rect
+                  x="21"
+                  y="9"
+                  width="3"
+                  height="5"
+                  rx="1"
+                />
+                <rect
+                  x="8"
+                  y="18"
+                  width="3"
+                  height="5"
+                  rx="1"
+                />
+                <rect
+                  x="21"
+                  y="18"
+                  width="3"
+                  height="5"
+                  rx="1"
+                />
+                <path
+                  d="
+                    M13 5
+                    L16 2
+                    L19 5
+                    Z
+                  "
+                />
+              </g>
+            </svg>
+          </span>
+
+          <span
+            class="booking-live-vehicle-status"
+            aria-hidden="true"
+          />
+        </span>
+      `,
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
+      popupAnchor: [0, -18]
     });
 
   return (
@@ -2481,12 +2723,11 @@ function BookingRouteMap({
         )}
 
         {liveVehiclePoint && (
-          <Marker
+          <AnimatedVehicleMarker
             position={
               liveVehiclePoint
             }
             icon={vehicleIcon}
-            zIndexOffset={1000}
           >
             <Popup>
               <strong>
@@ -2520,7 +2761,7 @@ function BookingRouteMap({
                   </div>
                 )}
             </Popup>
-          </Marker>
+          </AnimatedVehicleMarker>
         )}
       </MapContainer>
 
@@ -2542,7 +2783,11 @@ function BookingRouteMap({
 
         {liveVehiclePoint && (
           <span className="booking-map-live-legend">
-            🚕 Live taxi
+            <i
+              className="booking-map-live-car-symbol"
+              aria-hidden="true"
+            />
+            Live taxi
           </span>
         )}
       </div>
@@ -2566,17 +2811,125 @@ function BookingRouteMap({
 
 
 function BookingDetailModal({
-  booking,
+  booking: initialBooking,
   onClose,
   context = 'uhp',
   children
 }) {
+  const [
+    liveOperational,
+    setLiveOperational
+  ] = useState({});
+
   useEscapeClose(
-    Boolean(booking),
+    Boolean(initialBooking),
     onClose
   );
 
-  if (!booking) return null;
+  useEffect(() => {
+    setLiveOperational({});
+
+    if (!initialBooking?.id) {
+      return;
+    }
+
+    const shouldTrack =
+      LIVE_OPERATIONAL_STATUSES.has(
+        initialBooking.operationalStatus
+      ) ||
+      initialBooking.liveState === 'live' ||
+      initialBooking.liveState === 'stale';
+
+    if (!shouldTrack) {
+      return;
+    }
+
+    let cancelled = false;
+    let timerId = null;
+
+    async function refreshLiveState() {
+      try {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/bookings/${initialBooking.id}/live-state`
+          );
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data =
+          await response.json();
+
+        if (
+          cancelled ||
+          !data?.booking
+        ) {
+          return;
+        }
+
+        setLiveOperational(
+          data.booking
+        );
+
+        const nextStatus =
+          data.booking
+            .operationalStatus;
+
+        const stillOperational =
+          LIVE_OPERATIONAL_STATUSES.has(
+            nextStatus
+          ) ||
+          data.booking.liveState ===
+            'live' ||
+          data.booking.liveState ===
+            'stale';
+
+        if (
+          !stillOperational &&
+          timerId
+        ) {
+          window.clearInterval(
+            timerId
+          );
+
+          timerId = null;
+        }
+      } catch {
+        // Keep the last known operational
+        // state if a refresh temporarily fails.
+      }
+    }
+
+    refreshLiveState();
+
+    timerId =
+      window.setInterval(
+        refreshLiveState,
+        LIVE_BOOKING_REFRESH_MS
+      );
+
+    return () => {
+      cancelled = true;
+
+      if (timerId) {
+        window.clearInterval(
+          timerId
+        );
+      }
+    };
+  }, [
+    initialBooking?.id,
+    initialBooking?.operationalStatus,
+    initialBooking?.liveState
+  ]);
+
+  if (!initialBooking) return null;
+
+  const booking = {
+    ...initialBooking,
+    ...liveOperational
+  };
 
   const stops =
     booking.stops?.length

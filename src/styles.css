@@ -2641,44 +2641,153 @@ button:disabled {
   border: 0;
 }
 
-.booking-map-stop-marker,
-.booking-map-vehicle-marker {
+.booking-map-pin-wrapper {
+  overflow: visible;
+}
+
+.booking-map-pin {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  border: 3px solid #fff;
+  border-radius: 50% 50% 50% 0;
+  box-shadow:
+    0 4px 12px
+    rgba(20, 34, 55, 0.28);
+  transform: rotate(-45deg);
+  transform-origin: 50% 50%;
+}
+
+.booking-map-pin::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 1px solid
+    rgba(255, 255, 255, 0.28);
+  border-radius: 50%;
+}
+
+.booking-map-pin.pickup {
+  background: #1d7a4f;
+}
+
+.booking-map-pin.via {
+  background: #e3a11f;
+}
+
+.booking-map-pin.destination {
+  background: #243b67;
+}
+
+.booking-map-pin-label {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  transform: rotate(45deg);
+}
+
+.booking-live-vehicle-icon {
+  overflow: visible;
+}
+
+.booking-live-vehicle-marker {
+  position: relative;
+  display: block;
+  width: 40px;
+  height: 40px;
+  filter:
+    drop-shadow(
+      0 4px 8px
+      rgba(20, 34, 55, 0.28)
+    );
+}
+
+.booking-live-vehicle-badge {
   display: flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   border: 3px solid #fff;
-  border-radius: 999px;
-  box-shadow: 0 3px 10px rgba(20, 34, 55, 0.28);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.booking-map-stop-marker.pickup {
-  background: #1d7a4f;
-  color: #fff;
-}
-
-.booking-map-stop-marker.via {
-  width: 30px;
-  height: 30px;
-  background: #f0ad2d;
-  color: #172033;
-}
-
-.booking-map-stop-marker.destination {
+  border-radius: 50%;
   background: #243b67;
-  color: #fff;
+  box-shadow:
+    0 0 0 2px
+    rgba(36, 59, 103, 0.18);
 }
 
-.booking-map-vehicle-marker {
-  width: 38px;
-  height: 38px;
-  background: #fff;
-  border-color: #1d7a4f;
-  font-size: 20px;
+.booking-live-vehicle-svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+  fill: #fff;
+  transform-origin: 50% 50%;
+  transition:
+    transform 0.35s ease;
+}
+
+.booking-live-vehicle-glass {
+  fill: #243b67;
+}
+
+.booking-live-vehicle-status {
+  position: absolute;
+  right: -1px;
+  bottom: 1px;
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #22a06b;
+  box-shadow:
+    0 1px 4px
+    rgba(20, 34, 55, 0.2);
+}
+
+
+.booking-map-live-car-symbol {
+  position: relative;
+  display: inline-block;
+  width: 16px;
+  height: 9px;
+  margin-right: 1px;
+  border-radius: 3px 3px 2px 2px;
+  background: #1d7a4f;
+}
+
+.booking-map-live-car-symbol::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: -4px;
+  width: 10px;
+  height: 6px;
+  border-radius: 5px 5px 1px 1px;
+  background: #1d7a4f;
+}
+
+.booking-map-live-car-symbol::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  bottom: -3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #23364d;
+  box-shadow:
+    8px 0 0 #23364d;
 }
 
 .booking-map-legend {
