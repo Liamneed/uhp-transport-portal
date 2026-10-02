@@ -2465,3 +2465,56 @@ button:disabled {
     text-align: left;
   }
 }
+
+/* 20B.3B dashboard coding compact rows */
+
+.uhp-dashboard-grid > aside .dashboard-booking-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.uhp-dashboard-grid > aside .dashboard-booking-time {
+  grid-column: 1;
+}
+
+.uhp-dashboard-grid > aside .dashboard-booking-main {
+  grid-column: 1;
+}
+
+.uhp-dashboard-grid > aside .dashboard-booking-meta {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  min-width: 92px;
+}
+
+.uhp-dashboard-grid > aside .dashboard-booking-main small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@media (max-width: 1000px) {
+  .uhp-dashboard-grid > aside .dashboard-booking-row {
+    grid-template-columns:
+      minmax(0, 1fr) auto;
+  }
+
+  .uhp-dashboard-grid > aside .dashboard-booking-meta {
+    text-align: right;
+  }
+}
+
+@media (max-width: 620px) {
+  .uhp-dashboard-grid > aside .dashboard-booking-row {
+    grid-template-columns: 1fr;
+  }
+
+  .uhp-dashboard-grid > aside .dashboard-booking-meta {
+    grid-column: 1;
+    grid-row: auto;
+    text-align: left;
+  }
+}
