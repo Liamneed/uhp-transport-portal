@@ -5555,6 +5555,313 @@ function importAutocabCreatedBooking(
 }
 
 
+const AUTOCAB_OPERATIONAL_STATUS_BY_ROUTE = {
+  accept: 'driver_allocated',
+  arrived: 'driver_arrived',
+  pob: 'passenger_on_board',
+  complete: 'completed',
+  cancelled: 'cancelled',
+  nofare: 'no_fare'
+};
+
+
+const AUTOCAB_TERMINAL_OPERATIONAL_STATUSES =
+  new Set([
+    'completed',
+    'cancelled',
+    'no_show',
+    'no_fare'
+  ]);
+
+
+const AUTOCAB_OPERATIONAL_STATUS_RANK = {
+  draft: 0,
+  submitting: 0,
+  booked: 1,
+  confirmed: 1,
+  requires_review: 1,
+  driver_allocated: 2,
+  driver_en_route: 3,
+  driver_arrived: 4,
+  passenger_on_board: 5,
+  completed: 6,
+  cancelled: 6,
+  no_show: 6,
+  no_fare: 6,
+  failed: 6
+};
+
+
+function findBookingForAutocabEvent(
+  autocabBookingId,
+  autocabReference
+) {
+  if (autocabBookingId) {
+    const byId =
+      db.prepare(`
+        SELECT
+          id,
+          public_reference AS publicReference,
+          operational_status AS operationalStatus
+        FROM bookings
+        WHERE autocab_booking_id = ?
+        LIMIT 1
+      `).get(autocabBookingId);
+
+    if (byId) {
+      return byId;
+    }
+  }
+
+  if (!autocabReference) {
+    return null;
+  }
+
+  const matches =
+    db.prepare(`
+      SELECT
+        id,
+        public_reference AS publicReference,
+        operational_status AS operationalStatus
+      FROM bookings
+      WHERE autocab_reference = ?
+      ORDER BY id
+      LIMIT 2
+    `).all(autocabReference);
+
+  return matches.length === 1
+    ? matches[0]
+    : null;
+}
+
+
+function shouldApplyAutocabOperationalStatus(
+  currentStatus,
+  nextStatus
+) {
+  if (!nextStatus) {
+    return false;
+  }
+
+  if (currentStatus === nextStatus) {
+    return false;
+  }
+
+  if (
+    AUTOCAB_TERMINAL_OPERATIONAL_STATUSES
+      .has(currentStatus)
+  ) {
+    return false;
+  }
+
+  if (
+    AUTOCAB_TERMINAL_OPERATIONAL_STATUSES
+      .has(nextStatus)
+  ) {
+    return true;
+  }
+
+  const currentRank =
+    AUTOCAB_OPERATIONAL_STATUS_RANK[
+      currentStatus
+    ] ?? 0;
+
+  const nextRank =
+    AUTOCAB_OPERATIONAL_STATUS_RANK[
+      nextStatus
+    ] ?? 0;
+
+  return nextRank >= currentRank;
+}
+
+
+function reconcileAutocabBookingEvent({
+  routeSuffix,
+  payload,
+  eventId,
+  definition,
+  autocabBookingId,
+  autocabReference
+}) {
+  const booking =
+    findBookingForAutocabEvent(
+      autocabBookingId,
+      autocabReference
+    );
+
+  if (!booking) {
+    db.prepare(`
+      UPDATE integration_events
+      SET
+        processing_status = 'ignored',
+        processing_error =
+          'No linked portal booking',
+        processed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(eventId);
+
+    return {
+      linked: false,
+      statusChanged: false
+    };
+  }
+
+  const requestedStatus =
+    AUTOCAB_OPERATIONAL_STATUS_BY_ROUTE[
+      routeSuffix
+    ] || null;
+
+  const statusChanged =
+    shouldApplyAutocabOperationalStatus(
+      booking.operationalStatus,
+      requestedStatus
+    );
+
+  const nextStatus =
+    statusChanged
+      ? requestedStatus
+      : booking.operationalStatus;
+
+  const noteByRoute = {
+    modified:
+      'Booking modified by Autocab',
+    accept:
+      'Dispatch accepted by Autocab driver',
+    arrived:
+      'Driver arrived',
+    pob:
+      'Passenger on board',
+    late:
+      'Booking reported running late',
+    complete:
+      'Booking completed',
+    cancelled:
+      'Booking cancelled',
+    nofare:
+      'Booking closed as No Fare'
+  };
+
+  db.exec('BEGIN');
+
+  try {
+    if (statusChanged) {
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status = ?,
+
+          completed_at =
+            CASE
+              WHEN ? = 'completed'
+                THEN COALESCE(
+                  completed_at,
+                  CURRENT_TIMESTAMP
+                )
+              ELSE completed_at
+            END,
+
+          cancelled_at =
+            CASE
+              WHEN ? = 'cancelled'
+                THEN COALESCE(
+                  cancelled_at,
+                  CURRENT_TIMESTAMP
+                )
+              ELSE cancelled_at
+            END,
+
+          updated_at = CURRENT_TIMESTAMP
+
+        WHERE id = ?
+      `).run(
+        nextStatus,
+        nextStatus,
+        nextStatus,
+        booking.id
+      );
+    }
+
+    db.prepare(`
+      INSERT INTO booking_events
+        (
+          booking_id,
+          event_type,
+          event_source,
+          old_status,
+          new_status,
+          notes,
+          raw_payload
+        )
+      VALUES (?, ?, 'autocab', ?, ?, ?, ?)
+    `).run(
+      booking.id,
+      definition.eventType,
+      booking.operationalStatus,
+      nextStatus,
+      noteByRoute[routeSuffix] ||
+        'Autocab booking event received',
+      JSON.stringify(payload)
+    );
+
+    db.prepare(`
+      UPDATE integration_events
+      SET
+        booking_id = ?,
+        processing_status = 'processed',
+        processing_error = NULL,
+        processed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      booking.id,
+      eventId
+    );
+
+    if (statusChanged) {
+      writeAudit({
+        action: 'STATUS_CHANGE',
+        entityType: 'booking',
+        entityId: booking.id,
+        fieldName: 'operational_status',
+        oldValue:
+          booking.operationalStatus,
+        newValue:
+          nextStatus,
+        source: 'autocab',
+        actorUserId: null
+      });
+    }
+
+    db.exec('COMMIT');
+
+    return {
+      linked: true,
+      bookingId: booking.id,
+      statusChanged,
+      operationalStatus: nextStatus
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+
+    db.prepare(`
+      UPDATE integration_events
+      SET
+        processing_status = 'failed',
+        processing_error = ?,
+        processed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      String(
+        error?.message ||
+        'Operational event reconciliation failed'
+      ),
+      eventId
+    );
+
+    throw error;
+  }
+}
+
+
 function captureAutocabWebhook(
   routeSuffix,
   payload
@@ -5711,6 +6018,22 @@ function captureAutocabWebhook(
     }
   }
 
+  let reconciliation = null;
+
+  if (
+    definition.category === 'booking'
+  ) {
+    reconciliation =
+      reconcileAutocabBookingEvent({
+        routeSuffix,
+        payload,
+        eventId,
+        definition,
+        autocabBookingId,
+        autocabReference
+      });
+  }
+
   return {
     received: true,
     eventId,
@@ -5719,7 +6042,8 @@ function captureAutocabWebhook(
     category:
       definition.category,
     autocabBookingId,
-    autocabReference
+    autocabReference,
+    reconciliation
   };
 }
 
