@@ -2613,6 +2613,9 @@ function listCodingReviewBookings() {
         b.public_reference AS publicReference,
         b.autocab_booking_id AS autocabBookingId,
         b.autocab_reference AS autocabReference,
+      b.autocab_booked_by AS autocabBookedBy,
+      b.autocab_booking_source AS autocabBookingSource,
+      b.autocab_booked_at AS autocabBookedAt,
         b.source,
         b.operational_status AS operationalStatus,
         b.financial_status AS financialStatus,
@@ -3231,6 +3234,9 @@ function listOperationalBookings() {
 
       b.autocab_booking_id AS autocabBookingId,
       b.autocab_reference AS autocabReference,
+      b.autocab_booked_by AS autocabBookedBy,
+      b.autocab_booking_source AS autocabBookingSource,
+      b.autocab_booked_at AS autocabBookedAt,
 
       b.source,
       b.operational_status AS operationalStatus,
@@ -3475,6 +3481,9 @@ function listBookingsForUser(userId) {
       b.public_reference AS publicReference,
       b.autocab_booking_id AS autocabBookingId,
       b.autocab_reference AS autocabReference,
+      b.autocab_booked_by AS autocabBookedBy,
+      b.autocab_booking_source AS autocabBookingSource,
+      b.autocab_booked_at AS autocabBookedAt,
       b.operational_status AS operationalStatus,
       b.financial_status AS financialStatus,
       b.requested_pickup_at AS requestedPickupAt,
@@ -3540,6 +3549,9 @@ function listBudgetVisibleBookings(userId) {
       b.public_reference AS publicReference,
       b.autocab_booking_id AS autocabBookingId,
       b.autocab_reference AS autocabReference,
+      b.autocab_booked_by AS autocabBookedBy,
+      b.autocab_booking_source AS autocabBookingSource,
+      b.autocab_booked_at AS autocabBookedAt,
 
       b.operational_status AS operationalStatus,
       b.financial_status AS financialStatus,
@@ -3683,6 +3695,9 @@ function getBookingById(bookingId) {
       b.public_reference AS publicReference,
       b.autocab_booking_id AS autocabBookingId,
       b.autocab_reference AS autocabReference,
+      b.autocab_booked_by AS autocabBookedBy,
+      b.autocab_booking_source AS autocabBookingSource,
+      b.autocab_booked_at AS autocabBookedAt,
       b.source,
       b.operational_status AS operationalStatus,
       b.financial_status AS financialStatus,
@@ -5173,6 +5188,21 @@ function importAutocabCreatedBooking(
       payload?.OurReference
     );
 
+  const autocabBookedBy =
+    normaliseAutocabScalar(
+      payload?.BookedBy
+    );
+
+  const autocabBookingSource =
+    normaliseAutocabScalar(
+      payload?.BookingSource
+    );
+
+  const autocabBookedAt =
+    normaliseAutocabScalar(
+      payload?.BookedAtTime
+    );
+
   const existing =
     db.prepare(`
       SELECT
@@ -5188,23 +5218,44 @@ function importAutocabCreatedBooking(
     );
 
   if (existing) {
-    if (autocabReference) {
-      db.prepare(`
-        UPDATE bookings
-        SET
-          autocab_reference =
-            COALESCE(
-              autocab_reference,
-              ?
-            ),
-          updated_at =
-            CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(
-        autocabReference,
-        existing.id
-      );
-    }
+    db.prepare(`
+      UPDATE bookings
+      SET
+        autocab_reference =
+          COALESCE(
+            autocab_reference,
+            ?
+          ),
+
+        autocab_booked_by =
+          COALESCE(
+            autocab_booked_by,
+            ?
+          ),
+
+        autocab_booking_source =
+          COALESCE(
+            autocab_booking_source,
+            ?
+          ),
+
+        autocab_booked_at =
+          COALESCE(
+            autocab_booked_at,
+            ?
+          ),
+
+        updated_at =
+          CURRENT_TIMESTAMP
+
+      WHERE id = ?
+    `).run(
+      autocabReference,
+      autocabBookedBy,
+      autocabBookingSource,
+      autocabBookedAt,
+      existing.id
+    );
 
     return {
       bookingId:
@@ -5286,9 +5337,7 @@ function importAutocabCreatedBooking(
     );
 
   const bookedAt =
-    normaliseAutocabScalar(
-      payload?.BookedAtTime
-    );
+    autocabBookedAt;
 
   db.exec('BEGIN');
 
@@ -5299,6 +5348,9 @@ function importAutocabCreatedBooking(
           (
             autocab_booking_id,
             autocab_reference,
+            autocab_booked_by,
+            autocab_booking_source,
+            autocab_booked_at,
             source,
             operational_status,
             financial_status,
@@ -5318,7 +5370,7 @@ function importAutocabCreatedBooking(
             submitted_at
           )
         VALUES (
-          ?, ?,
+          ?, ?, ?, ?, ?,
           'import',
           'booked',
           ?,
@@ -5331,6 +5383,9 @@ function importAutocabCreatedBooking(
       `).run(
         autocabBookingId,
         autocabReference,
+        autocabBookedBy,
+        autocabBookingSource,
+        autocabBookedAt,
         financialStatus,
         requestedPickupAt,
         passengerName,
