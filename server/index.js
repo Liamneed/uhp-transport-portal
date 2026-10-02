@@ -897,7 +897,9 @@ function enforceApiAccess(
       '/api/bookings/'
     ) ||
     pathname ===
-      '/api/routing/route'
+      '/api/routing/route' ||
+    pathname ===
+      '/api/booking-map/clear-vehicles'
   ) {
     return requireAuth(req);
   }
@@ -8663,6 +8665,145 @@ function serveFrontend(
   return true;
 }
 
+function listFreshClearVehicles() {
+  const rows =
+    db.prepare(`
+      SELECT
+        state.vehicle_id AS vehicleId,
+        state.callsign,
+        state.registration,
+        state.plate_number AS plateNumber,
+        state.vehicle_status AS vehicleStatus,
+        state.booking_id AS bookingId,
+
+        COALESCE(
+          position.longitude,
+          state.longitude
+        ) AS longitude,
+
+        COALESCE(
+          position.latitude,
+          state.latitude
+        ) AS latitude,
+
+        position.speed_mph AS speedMph,
+        position.heading_degrees AS headingDegrees,
+        position.heading_direction AS headingDirection,
+
+        COALESCE(
+          position.source_timestamp,
+          state.source_timestamp
+        ) AS sourceTimestamp,
+
+        COALESCE(
+          position.updated_at,
+          state.updated_at
+        ) AS updatedAt
+
+      FROM autocab_vehicle_state AS state
+
+      LEFT JOIN autocab_vehicle_position AS position
+        ON position.vehicle_id =
+          state.vehicle_id
+
+      WHERE state.vehicle_status = 'Clear'
+        AND (
+          state.booking_id IS NULL OR
+          TRIM(state.booking_id) = ''
+        )
+
+      ORDER BY
+        CAST(state.callsign AS INTEGER),
+        state.callsign
+    `).all();
+
+  const now =
+    Date.now();
+
+  return rows
+    .map((row) => {
+      const latitude =
+        Number(row.latitude);
+
+      const longitude =
+        Number(row.longitude);
+
+      const timestamp =
+        row.sourceTimestamp ||
+        row.updatedAt ||
+        null;
+
+      const timestampMs =
+        timestamp
+          ? Date.parse(timestamp)
+          : NaN;
+
+      const ageSeconds =
+        Number.isFinite(timestampMs)
+          ? Math.max(
+              0,
+              Math.round(
+                (now - timestampMs) / 1000
+              )
+            )
+          : null;
+
+      return {
+        vehicleId:
+          Number(row.vehicleId),
+
+        callsign:
+          row.callsign ?? null,
+
+        registration:
+          row.registration ?? null,
+
+        plateNumber:
+          row.plateNumber ?? null,
+
+        vehicleStatus:
+          row.vehicleStatus,
+
+        latitude,
+        longitude,
+
+        speedMph:
+          Number.isFinite(
+            Number(row.speedMph)
+          )
+            ? Number(row.speedMph)
+            : null,
+
+        headingDegrees:
+          Number.isFinite(
+            Number(row.headingDegrees)
+          )
+            ? Number(row.headingDegrees)
+            : null,
+
+        headingDirection:
+          row.headingDirection ?? null,
+
+        positionAt:
+          timestamp,
+
+        ageSeconds
+      };
+    })
+    .filter((vehicle) =>
+      vehicle.vehicleStatus === 'Clear' &&
+      Number.isFinite(vehicle.latitude) &&
+      Number.isFinite(vehicle.longitude) &&
+      vehicle.latitude >= -90 &&
+      vehicle.latitude <= 90 &&
+      vehicle.longitude >= -180 &&
+      vehicle.longitude <= 180 &&
+      vehicle.ageSeconds !== null &&
+      vehicle.ageSeconds <= 120
+    );
+}
+
+
 function parseRoutingCoordinates(
   rawCoordinates
 ) {
@@ -9112,6 +9253,26 @@ const server = http.createServer(async (req, res) => {
           )
       });
     }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/booking-map/clear-vehicles'
+    ) {
+      requireAuth(req);
+
+      return sendJson(
+        res,
+        200,
+        {
+          vehicles:
+            listFreshClearVehicles(),
+          generatedAt:
+            new Date().toISOString()
+        }
+      );
+    }
+
 
     if (
       req.method === 'GET' &&
