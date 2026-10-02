@@ -2261,8 +2261,8 @@ function BookingMapBounds({
     map.fitBounds(
       bounds,
       {
-        padding: [34, 34],
-        maxZoom: 15
+        padding: [48, 48],
+        maxZoom: 14
       }
     );
   }, [map, coordinates]);
