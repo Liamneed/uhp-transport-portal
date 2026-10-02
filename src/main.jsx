@@ -1252,11 +1252,420 @@ function formatBookingDateTime(value) {
     .slice(0, 16);
 }
 
+
+function bookingDisplayBooker(booking) {
+  if (
+    booking?.source === 'portal' &&
+    booking?.createdBy
+  ) {
+    return booking.createdBy;
+  }
+
+  return (
+    booking?.autocabBookedBy ||
+    booking?.createdBy ||
+    (
+      booking?.source === 'portal'
+        ? 'Portal user unavailable'
+        : 'Autocab / external booking'
+    )
+  );
+}
+
+
+function bookingDisplaySource(booking) {
+  if (booking?.source === 'portal') {
+    return 'UHP Transport Portal';
+  }
+
+  if (booking?.autocabBookingSource) {
+    return booking.autocabBookingSource;
+  }
+
+  return booking?.source
+    ? formatStatus(booking.source)
+    : '—';
+}
+
+
+function bookingDisplayBookedAt(booking) {
+  return (
+    booking?.autocabBookedAt ||
+    booking?.submittedAt ||
+    booking?.createdAt ||
+    '—'
+  );
+}
+
+
+function BookingDetailModal({
+  booking,
+  onClose,
+  context = 'uhp',
+  children
+}) {
+  if (!booking) return null;
+
+  const stops =
+    booking.stops?.length
+      ? booking.stops
+      : [
+          {
+            sequenceNumber: 0,
+            stopType: 'pickup',
+            address: booking.pickupAddress,
+            postcode: booking.pickupPostcode
+          },
+          {
+            sequenceNumber: 999,
+            stopType: 'destination',
+            address: booking.destinationAddress,
+            postcode: booking.destinationPostcode
+          }
+        ].filter((stop) => stop.address);
+
+  const history =
+    booking.events ?? [];
+
+  const isNac =
+    context === 'nac';
+
+  return (
+    <div
+      className="modal-backdrop booking-detail-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div
+        className="modal-card booking-detail-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Booking details"
+      >
+        <div className="booking-modal-header">
+          <div>
+            <div className="booking-modal-eyebrow">
+              {portalBookingReference(booking)}
+            </div>
+
+            <div className="booking-modal-title-row">
+              <h2>
+                {autocabBookingPrimary(booking)}
+              </h2>
+
+              <span
+                className={
+                  `badge ${booking.operationalStatus}`
+                }
+              >
+                {formatOperationalStatus(
+                  booking.operationalStatus
+                )}
+              </span>
+
+              {booking.hasException && (
+                <span className="exception-chip">
+                  Attention
+                </span>
+              )}
+            </div>
+
+            <p>
+              {formatBookingDateTime(
+                booking.requestedPickupAt
+              )}
+              {' · '}
+              {booking.passengerName || 'Passenger'}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            className="modal-close booking-detail-close"
+            onClick={onClose}
+            aria-label="Close booking details"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="booking-modal-body">
+          {booking.hasException && (
+            <div className="exception-panel">
+              <strong>
+                Attention Required
+              </strong>
+
+              {booking.exceptionReasons?.map(
+                (reason) => (
+                  <span key={reason}>
+                    {reason}
+                  </span>
+                )
+              )}
+            </div>
+          )}
+
+          <div className="booking-modal-section">
+            <div className="booking-modal-section-heading">
+              <h3>Passenger & Booking</h3>
+            </div>
+
+            <div className="booking-modal-facts">
+              <div>
+                <small>Passenger</small>
+                <strong>
+                  {booking.passengerName || '—'}
+                </strong>
+              </div>
+
+              <div>
+                <small>Contact Number</small>
+                <strong>
+                  {booking.passengerMobile || '—'}
+                </strong>
+              </div>
+
+              <div>
+                <small>Passengers</small>
+                <strong>
+                  {booking.passengerCount ?? '—'}
+                </strong>
+              </div>
+
+              <div>
+                <small>Booked By</small>
+                <strong>
+                  {bookingDisplayBooker(booking)}
+                </strong>
+              </div>
+
+              <div>
+                <small>Booking Source</small>
+                <strong>
+                  {bookingDisplaySource(booking)}
+                </strong>
+              </div>
+
+              <div>
+                <small>Booked At</small>
+                <strong>
+                  {formatBookingDateTime(
+                    bookingDisplayBookedAt(booking)
+                  )}
+                </strong>
+              </div>
+
+              <div>
+                <small>Autocab Booking</small>
+                <strong>
+                  {booking.autocabBookingId || 'Pending'}
+                </strong>
+              </div>
+
+              <div>
+                <small>Portal Reference</small>
+                <strong>
+                  {booking.publicReference || '—'}
+                </strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="booking-modal-columns">
+            <div className="booking-modal-section">
+              <div className="booking-modal-section-heading">
+                <h3>Journey</h3>
+              </div>
+
+              <div className="booking-route-detail booking-modal-route">
+                {stops.map((stop, index) => (
+                  <div
+                    className="detail-stop"
+                    key={
+                      `${booking.id}-${stop.sequenceNumber ?? index}`
+                    }
+                  >
+                    <span
+                      className={
+                        `detail-stop-dot ${stop.stopType}`
+                      }
+                    />
+
+                    <div>
+                      <small>
+                        {stop.stopType === 'pickup'
+                          ? 'Pickup'
+                          : stop.stopType === 'destination'
+                            ? 'Destination'
+                            : `Via ${index}`}
+                      </small>
+
+                      <strong>
+                        {stop.address || '—'}
+                      </strong>
+
+                      {stop.postcode && (
+                        <span>
+                          {stop.postcode}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="booking-modal-section">
+              <div className="booking-modal-section-heading">
+                <h3>UHP Coding</h3>
+              </div>
+
+              <div className="booking-modal-facts booking-modal-facts-single">
+                <div>
+                  <small>Department</small>
+                  <strong>
+                    {booking.department || '—'}
+                  </strong>
+                </div>
+
+                <div>
+                  <small>Budget</small>
+                  <strong>
+                    {booking.budgetNumber || '—'}
+                    {booking.budgetName
+                      ? ` · ${booking.budgetName}`
+                      : ''}
+                  </strong>
+                </div>
+
+                <div>
+                  <small>Budget Holder</small>
+                  <strong>
+                    {booking.budgetHolder || '—'}
+                  </strong>
+                </div>
+
+                <div>
+                  <small>Reason</small>
+                  <strong>
+                    {booking.reasonCode || '—'}
+                    {booking.reasonDescription
+                      ? ` · ${booking.reasonDescription}`
+                      : ''}
+                  </strong>
+                </div>
+
+                <div>
+                  <small>Financial Status</small>
+                  <strong>
+                    {booking.financialStatus
+                      ? formatStatus(
+                          booking.financialStatus
+                        )
+                      : '—'}
+                  </strong>
+                </div>
+
+                {isNac && (
+                  <div>
+                    <small>OurReference</small>
+                    <strong>
+                      {booking.autocabReference || '—'}
+                    </strong>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="booking-modal-section">
+            <div className="booking-modal-section-heading">
+              <h3>Notes</h3>
+            </div>
+
+            <div className="booking-modal-notes">
+              <div>
+                <small>Driver Notes</small>
+                <p>
+                  {booking.driverNotes || 'No driver notes.'}
+                </p>
+              </div>
+
+              {isNac && (
+                <div>
+                  <small>Office / Internal Notes</small>
+                  <p>
+                    {booking.internalNotes ||
+                      'No internal notes.'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {isNac && (
+            <div className="booking-modal-section">
+              <div className="booking-modal-section-heading">
+                <h3>Job History</h3>
+              </div>
+
+              <div className="booking-history-panel booking-modal-history">
+                {history.length ? (
+                  history.map((event) => (
+                    <div
+                      className="history-event"
+                      key={event.id}
+                    >
+                      <strong>
+                        {formatStatus(
+                          event.eventType
+                        )}
+                      </strong>
+
+                      <span>
+                        {event.eventAt}
+                      </span>
+
+                      {event.notes && (
+                        <small>
+                          {event.notes}
+                        </small>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <span className="history-empty">
+                    No recorded events.
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {children && (
+            <div className="booking-modal-actions-area">
+              {children}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function NacControlPage() {
   const [summary, setSummary] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const [selectedBooking, setSelectedBooking] =
+    useState(null);
 
   async function loadControl() {
     setLoading(true);
@@ -1416,8 +1825,22 @@ function NacControlPage() {
             <div className="control-booking-list">
               {upcoming.map((booking) => (
                 <div
-                  className="control-booking-item"
+                  className="control-booking-item booking-row-clickable"
                   key={booking.id}
+                  role="button"
+                  tabIndex="0"
+                  onClick={() =>
+                    setSelectedBooking(booking)
+                  }
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Enter' ||
+                      event.key === ' '
+                    ) {
+                      event.preventDefault();
+                      setSelectedBooking(booking);
+                    }
+                  }}
                 >
                   <div className="control-time">
                     <strong>
@@ -1491,13 +1914,22 @@ function NacControlPage() {
           </div>
 
           <div className="control-note">
-            Autocab dispatch integration is
-            not yet enabled. Portal requests
-            remain local until that integration
-            is switched on.
+            Autocab-linked UHP bookings and
+            portal requests are shown together
+            in this operational view.
           </div>
         </aside>
       </div>
+
+      {selectedBooking && (
+        <BookingDetailModal
+          booking={selectedBooking}
+          context="nac"
+          onClose={() =>
+            setSelectedBooking(null)
+          }
+        />
+      )}
     </>
   );
 }
@@ -1522,7 +1954,7 @@ function NacBookingsPage({
   const [dateFilter, setDateFilter] =
     useState('');
 
-  const [expandedId, setExpandedId] =
+  const [selectedBooking, setSelectedBooking] =
     useState(null);
 
   async function loadOperationalBookings() {
@@ -1862,7 +2294,7 @@ function NacBookingsPage({
           </div>
         ) : (
           <div className="table-wrap">
-            <table className="bookings-table nac-bookings-table">
+            <table className="bookings-table booking-list-compact nac-bookings-table">
               <thead>
                 <tr>
                   <th>Date / Time</th>
@@ -1872,26 +2304,38 @@ function NacBookingsPage({
                   <th>Department</th>
                   <th>Budget</th>
                   <th>Status</th>
-                  <th/>
                 </tr>
               </thead>
 
               <tbody>
                 {filteredBookings.map(
                   (booking) => {
-                    const isExpanded =
-                      expandedId === booking.id;
-
                     return (
                       <React.Fragment
                         key={booking.id}
                       >
                         <tr
                           className={
-                            booking.hasException
-                              ? 'exception-row'
-                              : ''
+                            `booking-row-clickable ${
+                              booking.hasException
+                                ? 'exception-row'
+                                : ''
+                            }`
                           }
+                          role="button"
+                          tabIndex="0"
+                          onClick={() =>
+                            setSelectedBooking(booking)
+                          }
+                          onKeyDown={(event) => {
+                            if (
+                              event.key === 'Enter' ||
+                              event.key === ' '
+                            ) {
+                              event.preventDefault();
+                              setSelectedBooking(booking);
+                            }
+                          }}
                         >
                           <td>
                             <strong>
@@ -1941,7 +2385,7 @@ function NacBookingsPage({
                             </strong>
 
                             <small>
-                              Booked by {booking.createdBy}
+                              Booked by {bookingDisplayBooker(booking)}
                             </small>
                           </td>
 
@@ -1973,277 +2417,8 @@ function NacBookingsPage({
                             )}
                           </td>
 
-                          <td>
-                            <button
-                              type="button"
-                              className="text-action"
-                              onClick={() =>
-                                setExpandedId(
-                                  isExpanded
-                                    ? null
-                                    : booking.id
-                                )
-                              }
-                            >
-                              {isExpanded
-                                ? 'Hide'
-                                : 'Details'}
-                            </button>
-                          </td>
                         </tr>
 
-                        {isExpanded && (
-                          <tr className="booking-detail-row">
-                            <td colSpan="8">
-                              <div className="booking-detail-panel">
-                                <div className="booking-detail-grid nac-detail-grid">
-                                  <div>
-                                    <small>
-                                      Autocab Booking
-                                    </small>
-
-                                    <strong>
-                                      {booking.autocabBookingId || 'Pending'}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Portal Reference
-                                    </small>
-
-                                    <strong>
-                                      {booking.publicReference || '—'}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      OurReference
-                                    </small>
-
-                                    <strong>
-                                      {booking.autocabReference || '—'}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Passenger Mobile
-                                    </small>
-
-                                    <strong>
-                                      {booking.passengerMobile || '—'}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Department
-                                    </small>
-
-                                    <strong>
-                                      {booking.department || '—'}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Budget
-                                    </small>
-
-                                    <strong>
-                                      {booking.budgetNumber || '—'}
-                                      {booking.budgetName
-                                        ? ` · ${booking.budgetName}`
-                                        : ''}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Passenger Count
-                                    </small>
-
-                                    <strong>
-                                      {booking.passengerCount}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Budget Holder
-                                    </small>
-
-                                    <strong>
-                                      {booking.budgetHolder}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Reason
-                                    </small>
-
-                                    <strong>
-                                      {booking.reasonCode}
-                                      {' · '}
-                                      {booking.reasonDescription}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Financial Status
-                                    </small>
-
-                                    <strong>
-                                      {formatStatus(
-                                        booking.financialStatus
-                                      )}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Portal Source
-                                    </small>
-
-                                    <strong>
-                                      {formatStatus(
-                                        booking.source
-                                      )}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Last Updated
-                                    </small>
-
-                                    <strong>
-                                      {booking.updatedAt}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Driver Notes
-                                    </small>
-
-                                    <strong>
-                                      {booking.driverNotes || '—'}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Internal Notes
-                                    </small>
-
-                                    <strong>
-                                      {booking.internalNotes || '—'}
-                                    </strong>
-                                  </div>
-                                </div>
-
-                                {booking.hasException && (
-                                  <div className="exception-panel">
-                                    <strong>
-                                      Attention Required
-                                    </strong>
-
-                                    {booking.exceptionReasons.map(
-                                      (reason) => (
-                                        <span key={reason}>
-                                          {reason}
-                                        </span>
-                                      )
-                                    )}
-                                  </div>
-                                )}
-
-                                <div className="nac-detail-columns">
-                                  <div className="booking-route-detail">
-                                    <h4>Journey</h4>
-
-                                    {booking.stops?.map(
-                                      (stop) => (
-                                        <div
-                                          className="detail-stop"
-                                          key={
-                                            `${booking.id}-${stop.sequenceNumber}`
-                                          }
-                                        >
-                                          <span
-                                            className={
-                                              `detail-stop-dot ${stop.stopType}`
-                                            }
-                                          />
-
-                                          <div>
-                                            <small>
-                                              {stop.stopType === 'pickup'
-                                                ? 'Pickup'
-                                                : stop.stopType === 'destination'
-                                                  ? 'Destination'
-                                                  : `Via ${stop.sequenceNumber}`}
-                                            </small>
-
-                                            <strong>
-                                              {stop.address}
-                                            </strong>
-
-                                            {stop.postcode && (
-                                              <span>
-                                                {stop.postcode}
-                                              </span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )
-                                    )}
-                                  </div>
-
-                                  <div className="booking-history-panel">
-                                    <h4>History</h4>
-
-                                    {booking.events?.length ? (
-                                      booking.events.map(
-                                        (event) => (
-                                          <div
-                                            className="history-event"
-                                            key={event.id}
-                                          >
-                                            <strong>
-                                              {formatStatus(
-                                                event.eventType
-                                              )}
-                                            </strong>
-
-                                            <span>
-                                              {event.eventAt}
-                                            </span>
-
-                                            {event.notes && (
-                                              <small>
-                                                {event.notes}
-                                              </small>
-                                            )}
-                                          </div>
-                                        )
-                                      )
-                                    ) : (
-                                      <span className="history-empty">
-                                        No recorded events.
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
                       </React.Fragment>
                     );
                   }
@@ -2253,6 +2428,16 @@ function NacBookingsPage({
           </div>
         )}
       </div>
+
+      {selectedBooking && (
+        <BookingDetailModal
+          booking={selectedBooking}
+          context="nac"
+          onClose={() =>
+            setSelectedBooking(null)
+          }
+        />
+      )}
     </>
   );
 }
@@ -3499,7 +3684,8 @@ function MyBookingsPage({
   const [notice, setNotice] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [expandedId, setExpandedId] = useState(null);
+  const [selectedBooking, setSelectedBooking] =
+    useState(null);
 
   const [editingBooking, setEditingBooking] = useState(null);
   const [editOptions, setEditOptions] = useState({
@@ -3887,8 +4073,6 @@ function MyBookingsPage({
       setNotice(
         `${bookingNoticeReference(data.booking)} has been amended successfully.`
       );
-
-      setExpandedId(data.booking.id);
     } catch (err) {
       setError(
         err instanceof Error
@@ -3953,8 +4137,6 @@ function MyBookingsPage({
       setNotice(
         `${bookingNoticeReference(data.booking)} has been cancelled.`
       );
-
-      setExpandedId(data.booking.id);
     } catch (err) {
       setError(
         err instanceof Error
@@ -4000,7 +4182,7 @@ function MyBookingsPage({
         `${bookingNoticeReference(booking)} has been approved for invoice.`
       );
 
-      setExpandedId(booking.id);
+      setSelectedBooking(null);
     } catch (err) {
       setFinancialActionError(
         err instanceof Error
@@ -4225,7 +4407,7 @@ function MyBookingsPage({
           </div>
         ) : (
           <div className="table-wrap">
-            <table className="bookings-table">
+            <table className="bookings-table booking-list-compact">
               <thead>
                 <tr>
                   <th>Date / Time</th>
@@ -4235,32 +4417,33 @@ function MyBookingsPage({
                   <th>Budget</th>
                   <th>Reason</th>
                   <th>Status</th>
-                  <th/>
                 </tr>
               </thead>
 
               <tbody>
                 {filteredBookings.map(
                   (booking) => {
-                    const isExpanded =
-                      expandedId === booking.id;
-
-                    const viaStops =
-                      booking.stops?.filter(
-                        (stop) =>
-                          stop.stopType === 'via'
-                      ) ?? [];
-
-                    const canManage =
-                      ownScope &&
-                      booking.operationalStatus ===
-                        'draft';
-
                     return (
                       <React.Fragment
                         key={booking.id}
                       >
-                        <tr>
+                        <tr
+                          className="booking-row-clickable"
+                          role="button"
+                          tabIndex="0"
+                          onClick={() =>
+                            setSelectedBooking(booking)
+                          }
+                          onKeyDown={(event) => {
+                            if (
+                              event.key === 'Enter' ||
+                              event.key === ' '
+                            ) {
+                              event.preventDefault();
+                              setSelectedBooking(booking);
+                            }
+                          }}
+                        >
                           <td>
                             <strong>
                               {formatPickup(
@@ -4285,12 +4468,7 @@ function MyBookingsPage({
                             {broaderScope && (
                               <small>
                                 Booked by{' '}
-                                {booking.createdBy ||
-                                  (
-                                    booking.source === 'portal'
-                                      ? 'Portal user unavailable'
-                                      : 'Need-A-Cab / Autocab'
-                                  )}
+                                {bookingDisplayBooker(booking)}
                               </small>
                             )}
                           </td>
@@ -4347,212 +4525,8 @@ function MyBookingsPage({
                             </span>
                           </td>
 
-                          <td>
-                            <button
-                              type="button"
-                              className="text-action"
-                              onClick={() =>
-                                setExpandedId(
-                                  isExpanded
-                                    ? null
-                                    : booking.id
-                                )
-                              }
-                            >
-                              {isExpanded
-                                ? 'Hide'
-                                : 'Details'}
-                            </button>
-                          </td>
                         </tr>
 
-                        {isExpanded && (
-                          <tr className="booking-detail-row">
-                            <td colSpan="8">
-                              <div className="booking-detail-panel">
-                                <div className="booking-detail-grid">
-                                  <div>
-                                    <small>
-                                      Passenger Count
-                                    </small>
-
-                                    <strong>
-                                      {booking.passengerCount}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Budget Holder
-                                    </small>
-
-                                    <strong>
-                                      {booking.budgetHolder}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Financial Status
-                                    </small>
-
-                                    <strong>
-                                      {formatStatus(
-                                        booking.financialStatus
-                                      )}
-                                    </strong>
-                                  </div>
-
-                                  <div>
-                                    <small>
-                                      Driver Notes
-                                    </small>
-
-                                    <strong>
-                                      {booking.driverNotes || '—'}
-                                    </strong>
-                                  </div>
-                                </div>
-
-                                <div className="booking-route-detail">
-                                  <h4>Journey</h4>
-
-                                  {booking.stops?.map(
-                                    (stop) => (
-                                      <div
-                                        className="detail-stop"
-                                        key={
-                                          `${booking.id}-${stop.sequenceNumber}`
-                                        }
-                                      >
-                                        <span
-                                          className={
-                                            `detail-stop-dot ${stop.stopType}`
-                                          }
-                                        />
-
-                                        <div>
-                                          <small>
-                                            {stop.stopType === 'pickup'
-                                              ? 'Pickup'
-                                              : stop.stopType === 'destination'
-                                                ? 'Destination'
-                                                : `Via ${stop.sequenceNumber}`}
-                                          </small>
-
-                                          <strong>
-                                            {stop.address}
-                                          </strong>
-
-                                          {stop.postcode && (
-                                            <span>
-                                              {stop.postcode}
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )
-                                  )}
-
-                                  {viaStops.length === 0 && (
-                                    <small className="no-vias">
-                                      Direct journey — no vias.
-                                    </small>
-                                  )}
-                                </div>
-
-                                {budgetScope &&
-                                  booking.operationalStatus === 'completed' &&
-                                  booking.financialStatus === 'pending_review' && (
-                                    <div className="financial-review-actions">
-                                      <div className="financial-review-copy">
-                                        <strong>
-                                          Financial review required
-                                        </strong>
-
-                                        <span>
-                                          Confirm this completed journey is correct before it proceeds to invoicing, or dispute it for review.
-                                        </span>
-                                      </div>
-
-                                      <div className="financial-review-buttons">
-                                        <button
-                                          type="button"
-                                          className="secondary"
-                                          disabled={
-                                            financialActionId ===
-                                            booking.id
-                                          }
-                                          onClick={() =>
-                                            openDisputeFinancialBooking(
-                                              booking
-                                            )
-                                          }
-                                        >
-                                          Dispute
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          className="financial-approve-button"
-                                          disabled={
-                                            financialActionId ===
-                                            booking.id
-                                          }
-                                          onClick={() =>
-                                            approveFinancialBooking(
-                                              booking
-                                            )
-                                          }
-                                        >
-                                          {financialActionId ===
-                                          booking.id
-                                            ? 'Processing...'
-                                            : 'Approve for Invoice'}
-                                        </button>
-                                      </div>
-                                    </div>
-                                )}
-
-                                {canManage && (
-                                  <div className="booking-actions">
-                                    <button
-                                      type="button"
-                                      className="secondary"
-                                      onClick={() =>
-                                        openAmend(
-                                          booking.id
-                                        )
-                                      }
-                                    >
-                                      Amend Booking
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      className="danger-button"
-                                      onClick={() =>
-                                        openCancel(
-                                          booking
-                                        )
-                                      }
-                                    >
-                                      Cancel Booking
-                                    </button>
-                                  </div>
-                                )}
-
-                                {!canManage &&
-                                  booking.operationalStatus === 'cancelled' && (
-                                    <div className="managed-booking-note">
-                                      This booking has been cancelled
-                                      and can no longer be amended.
-                                    </div>
-                                  )}
-                              </div>
-                            </td>
-                          </tr>
-                        )}
                       </React.Fragment>
                     );
                   }
@@ -4562,6 +4536,116 @@ function MyBookingsPage({
           </div>
         )}
       </div>
+
+      {selectedBooking && (
+        <BookingDetailModal
+          booking={selectedBooking}
+          context="uhp"
+          onClose={() =>
+            setSelectedBooking(null)
+          }
+        >
+          {budgetScope &&
+            selectedBooking.operationalStatus ===
+              'completed' &&
+            selectedBooking.financialStatus ===
+              'pending_review' && (
+              <div className="financial-review-actions">
+                <div className="financial-review-copy">
+                  <strong>
+                    Financial review required
+                  </strong>
+
+                  <span>
+                    Confirm this completed journey is
+                    correct before it proceeds to
+                    invoicing, or dispute it for review.
+                  </span>
+                </div>
+
+                <div className="financial-review-buttons">
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={
+                      financialActionId ===
+                      selectedBooking.id
+                    }
+                    onClick={() => {
+                      setSelectedBooking(null);
+                      openDisputeFinancialBooking(
+                        selectedBooking
+                      );
+                    }}
+                  >
+                    Dispute
+                  </button>
+
+                  <button
+                    type="button"
+                    className="financial-approve-button"
+                    disabled={
+                      financialActionId ===
+                      selectedBooking.id
+                    }
+                    onClick={() =>
+                      approveFinancialBooking(
+                        selectedBooking
+                      )
+                    }
+                  >
+                    {financialActionId ===
+                    selectedBooking.id
+                      ? 'Processing...'
+                      : 'Approve for Invoice'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+          {ownScope &&
+            selectedBooking.operationalStatus ===
+              'draft' && (
+              <div className="booking-actions booking-modal-footer-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    const id =
+                      selectedBooking.id;
+
+                    setSelectedBooking(null);
+                    openAmend(id);
+                  }}
+                >
+                  Amend Booking
+                </button>
+
+                <button
+                  type="button"
+                  className="danger-button"
+                  onClick={() => {
+                    const booking =
+                      selectedBooking;
+
+                    setSelectedBooking(null);
+                    openCancel(booking);
+                  }}
+                >
+                  Cancel Booking
+                </button>
+              </div>
+            )}
+
+          {selectedBooking.operationalStatus ===
+            'cancelled' && (
+            <div className="managed-booking-note">
+              This booking has been cancelled and can
+              no longer be amended.
+            </div>
+          )}
+        </BookingDetailModal>
+      )}
 
       {disputeBooking && (
         <div className="modal-backdrop">
