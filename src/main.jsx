@@ -7345,6 +7345,327 @@ function MyBookingsPage({
   );
 }
 
+function BookingPlanningMap() {
+  const [
+    clearVehicles,
+    setClearVehicles
+  ] = useState([]);
+
+  const [
+    fleetState,
+    setFleetState
+  ] = useState('loading');
+
+  const [
+    fleetUpdatedAt,
+    setFleetUpdatedAt
+  ] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let intervalId = null;
+
+    async function loadClearVehicles() {
+      try {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/booking-map/clear-vehicles`
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+            'Unable to load clear vehicles'
+          );
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setClearVehicles(
+          Array.isArray(data.vehicles)
+            ? data.vehicles
+            : []
+        );
+
+        setFleetUpdatedAt(
+          data.generatedAt ||
+          new Date().toISOString()
+        );
+
+        setFleetState('ready');
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setFleetState('error');
+      }
+    }
+
+    loadClearVehicles();
+
+    intervalId =
+      window.setInterval(
+        loadClearVehicles,
+        10000
+      );
+
+    return () => {
+      cancelled = true;
+
+      if (intervalId) {
+        window.clearInterval(
+          intervalId
+        );
+      }
+    };
+  }, []);
+
+  const defaultCentre =
+    [50.4169, -4.1138];
+
+  const clearVehicleIcon =
+    (vehicle) => {
+      const heading =
+        Number.isFinite(
+          Number(
+            vehicle.headingDegrees
+          )
+        )
+          ? Number(
+              vehicle.headingDegrees
+            )
+          : 0;
+
+      const callsign =
+        String(
+          vehicle.callsign || '?'
+        )
+          .replace(
+            /[<>&"']/g,
+            ''
+          );
+
+      return L.divIcon({
+        className:
+          'booking-map-div-icon booking-clear-vehicle-icon',
+
+        html: `
+          <span class="booking-clear-vehicle-marker">
+            <span class="booking-clear-vehicle-badge">
+              <svg
+                class="booking-clear-vehicle-svg"
+                viewBox="0 0 32 32"
+                aria-hidden="true"
+                focusable="false"
+                style="transform:rotate(${heading}deg)"
+              >
+                <rect
+                  x="10"
+                  y="5"
+                  width="12"
+                  height="22"
+                  rx="4"
+                />
+                <rect
+                  x="12"
+                  y="8"
+                  width="8"
+                  height="5"
+                  rx="1.5"
+                  class="booking-clear-vehicle-glass"
+                />
+                <rect
+                  x="12"
+                  y="15"
+                  width="8"
+                  height="5"
+                  rx="1.5"
+                  class="booking-clear-vehicle-glass"
+                />
+                <rect
+                  x="8"
+                  y="9"
+                  width="3"
+                  height="5"
+                  rx="1"
+                />
+                <rect
+                  x="21"
+                  y="9"
+                  width="3"
+                  height="5"
+                  rx="1"
+                />
+                <rect
+                  x="8"
+                  y="18"
+                  width="3"
+                  height="5"
+                  rx="1"
+                />
+                <rect
+                  x="21"
+                  y="18"
+                  width="3"
+                  height="5"
+                  rx="1"
+                />
+                <path
+                  d="
+                    M13 5
+                    L16 2
+                    L19 5
+                    Z
+                  "
+                />
+              </svg>
+
+              <span
+                class="booking-clear-vehicle-status"
+                aria-hidden="true"
+              ></span>
+            </span>
+
+            <span class="booking-clear-vehicle-callsign">
+              ${callsign}
+            </span>
+          </span>
+        `,
+
+        iconSize: [54, 48],
+        iconAnchor: [20, 20],
+        popupAnchor: [0, -17]
+      });
+    };
+
+  return (
+    <div className="booking-planning-map-card">
+      <div className="booking-planning-map-heading">
+        <div>
+          <span className="booking-planning-eyebrow">
+            Live Fleet
+          </span>
+
+          <h3>Journey Map</h3>
+
+          <p>
+            Clear vehicles update automatically every 10 seconds.
+          </p>
+        </div>
+
+        <div
+          className={`booking-clear-count ${fleetState}`}
+        >
+          <strong>
+            {fleetState === 'ready'
+              ? clearVehicles.length
+              : '—'}
+          </strong>
+
+          <span>
+            Clear
+          </span>
+        </div>
+      </div>
+
+      <div className="booking-route-map-shell booking-planning-map-shell">
+        <MapContainer
+          className="booking-route-map booking-planning-map"
+          center={defaultCentre}
+          zoom={12}
+          scrollWheelZoom={false}
+        >
+          {MAP_TILE_URL && (
+            <TileLayer
+              attribution={
+                MAP_TILE_ATTRIBUTION
+              }
+              url={MAP_TILE_URL}
+            />
+          )}
+
+          {clearVehicles.map(
+            (vehicle) => (
+              <Marker
+                key={
+                  `clear-${vehicle.vehicleId}`
+                }
+                position={[
+                  vehicle.latitude,
+                  vehicle.longitude
+                ]}
+                icon={
+                  clearVehicleIcon(
+                    vehicle
+                  )
+                }
+              >
+                <Popup>
+                  <strong>
+                    Clear car {vehicle.callsign || '—'}
+                  </strong>
+
+                  {vehicle.registration && (
+                    <div>
+                      {vehicle.registration}
+                    </div>
+                  )}
+
+                  {vehicle.plateNumber && (
+                    <div>
+                      Plate {vehicle.plateNumber}
+                    </div>
+                  )}
+
+                  <div>
+                    Available
+                    {vehicle.ageSeconds !== null &&
+                    vehicle.ageSeconds !== undefined
+                      ? ` · updated ${vehicle.ageSeconds}s ago`
+                      : ''}
+                  </div>
+                </Popup>
+              </Marker>
+            )
+          )}
+        </MapContainer>
+
+        <div className="booking-planning-map-footer">
+          <span className="booking-clear-legend">
+            <i
+              className="booking-map-live-car-symbol"
+              aria-hidden="true"
+            />
+            Clear vehicles
+          </span>
+
+          <span>
+            {fleetState === 'loading'
+              ? 'Loading live fleet…'
+              : fleetState === 'error'
+                ? 'Live fleet temporarily unavailable'
+                : fleetUpdatedAt
+                  ? 'Live fleet connected'
+                  : ''}
+          </span>
+        </div>
+      </div>
+
+      <div className="booking-planning-route-hint">
+        Enter the journey below. The road route will appear here
+        once pickup and destination locations are selected.
+      </div>
+    </div>
+  );
+}
+
+
 function BookTransportPage({ currentUser }) {
   const bookingUserId = currentUser.id;
 
@@ -8039,6 +8360,8 @@ function BookTransportPage({ currentUser }) {
         </div>
 
         <aside className="booking-summary">
+          <BookingPlanningMap/>
+
           <div className="card summary-card">
             <h3>UHP Account Booking</h3>
 
