@@ -4815,6 +4815,7 @@ function getControlSummary() {
     new Set([
       'draft',
       'submitting',
+      'cancelling',
       'booked',
       'confirmed',
       'requires_review'
@@ -7372,6 +7373,7 @@ const AUTOCAB_TERMINAL_OPERATIONAL_STATUSES =
 const AUTOCAB_OPERATIONAL_STATUS_RANK = {
   draft: 0,
   submitting: 0,
+  cancelling: 1,
   booked: 1,
   confirmed: 1,
   requires_review: 1,
@@ -7447,6 +7449,22 @@ function shouldApplyAutocabOperationalStatus(
       .has(currentStatus)
   ) {
     return false;
+  }
+
+  /*
+    While a portal cancellation DELETE is
+    in flight, do not let ordinary Autocab
+    progress events move the booking out of
+    'cancelling'.
+
+    A terminal Autocab event remains
+    authoritative and may resolve the job.
+  */
+  if (currentStatus === 'cancelling') {
+    return (
+      AUTOCAB_TERMINAL_OPERATIONAL_STATUSES
+        .has(nextStatus)
+    );
   }
 
   if (
@@ -8923,87 +8941,810 @@ function updateBudgetBookingFinancialStatus(
 }
 
 
-function cancelPortalBooking(
+function createAutocabCancellationOutboundEvent({
+  bookingId,
+  autocabBookingId,
+  autocabReference,
+  reason
+}) {
+  const result =
+    db.prepare(`
+      INSERT INTO integration_events
+        (
+          provider,
+          direction,
+          event_type,
+          route_suffix,
+          category,
+          booking_id,
+          autocab_booking_id,
+          autocab_reference,
+          payload_json,
+          processing_status
+        )
+      VALUES (
+        'autocab',
+        'outbound',
+        'booking_cancel',
+        'booking',
+        'booking',
+        ?,
+        ?,
+        ?,
+        ?,
+        'received'
+      )
+    `).run(
+      bookingId,
+      autocabBookingId,
+      autocabReference,
+      JSON.stringify({
+        request: {
+          method: 'DELETE',
+          bookingId:
+            autocabBookingId,
+          reason
+        }
+      })
+    );
+
+  return Number(
+    result.lastInsertRowid
+  );
+}
+
+
+function writeAutocabCancellationBookingEvent({
+  bookingId,
+  eventType,
+  oldStatus,
+  newStatus,
+  userId,
+  notes,
+  rawPayload = null
+}) {
+  db.prepare(`
+    INSERT INTO booking_events
+      (
+        booking_id,
+        event_type,
+        event_source,
+        old_status,
+        new_status,
+        user_id,
+        notes,
+        raw_payload
+      )
+    VALUES (
+      ?,
+      ?,
+      'portal',
+      ?,
+      ?,
+      ?,
+      ?,
+      ?
+    )
+  `).run(
+    bookingId,
+    eventType,
+    oldStatus,
+    newStatus,
+    userId,
+    notes,
+    rawPayload
+      ? JSON.stringify(rawPayload)
+      : null
+  );
+}
+
+
+async function cancelPortalBooking(
   bookingId,
   userId,
   payload
 ) {
-  const booking = getOwnedEditableBooking(
-    bookingId,
-    userId
-  );
+  const booking =
+    db.prepare(`
+      SELECT
+        *
+      FROM bookings
+      WHERE id = ?
+        AND created_by_user_id = ?
+    `).get(
+      bookingId,
+      userId
+    );
 
-  const reason = String(
-    payload.reason || ''
-  ).trim();
+  if (!booking) {
+    const error =
+      new Error(
+        'Booking not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const reason =
+    String(
+      payload.reason || ''
+    ).trim();
 
   if (!reason) {
-    const error = new Error(
-      'Cancellation reason is required'
-    );
+    const error =
+      new Error(
+        'Cancellation reason is required'
+      );
+
     error.statusCode = 400;
     throw error;
   }
 
+  /*
+    Draft requests have never reached
+    Autocab, so they remain a local-only
+    cancellation.
+  */
+  if (
+    booking.operational_status ===
+      'draft'
+  ) {
+    db.exec('BEGIN');
+
+    try {
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status =
+            'cancelled',
+          financial_status =
+            'authorisation_withdrawn',
+          cancelled_at =
+            CURRENT_TIMESTAMP,
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND operational_status =
+            'draft'
+      `).run(
+        bookingId
+      );
+
+      writeAutocabCancellationBookingEvent({
+        bookingId,
+        eventType:
+          'booking_cancelled',
+        oldStatus:
+          'draft',
+        newStatus:
+          'cancelled',
+        userId,
+        notes:
+          reason
+      });
+
+      writeAudit({
+        action:
+          'STATUS_CHANGE',
+        entityType:
+          'booking',
+        entityId:
+          bookingId,
+        fieldName:
+          'operational_status',
+        oldValue:
+          'draft',
+        newValue:
+          'cancelled',
+        source:
+          'portal'
+      });
+
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+
+    return {
+      ...getBookingById(
+        bookingId
+      ),
+      stops:
+        getBookingStops(
+          bookingId
+        )
+    };
+  }
+
+  if (
+    booking.operational_status ===
+      'cancelled'
+  ) {
+    return {
+      ...getBookingById(
+        bookingId
+      ),
+      stops:
+        getBookingStops(
+          bookingId
+        )
+    };
+  }
+
+  const cancellableStatuses =
+    new Set([
+      'booked',
+      'confirmed',
+      'driver_allocated',
+      'driver_en_route',
+      'driver_arrived'
+    ]);
+
+  if (
+    !cancellableStatuses.has(
+      booking.operational_status
+    )
+  ) {
+    const error =
+      new Error(
+        `Booking cannot be cancelled from status ${booking.operational_status}`
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const autocabBookingId =
+    String(
+      booking.autocab_booking_id ||
+      ''
+    ).trim();
+
+  if (
+    !/^\d+$/.test(
+      autocabBookingId
+    ) ||
+    autocabBookingId === '0'
+  ) {
+    const error =
+      new Error(
+        'This live booking has no valid Autocab booking ID and requires manual review'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (!AUTOCAB_SUBSCRIPTION_KEY) {
+    const error =
+      new Error(
+        'Autocab cancellation is not configured'
+      );
+
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const previousStatus =
+    booking.operational_status;
+
+  const eventId =
+    createAutocabCancellationOutboundEvent({
+      bookingId,
+      autocabBookingId,
+      autocabReference:
+        booking.autocab_reference,
+      reason
+    });
+
+  /*
+    Lock this booking into a dedicated
+    cancellation-in-progress state before
+    contacting Autocab.
+
+    This prevents two portal requests from
+    deleting the same live booking at once.
+  */
   db.exec('BEGIN');
 
   try {
-    db.prepare(`
-      UPDATE bookings
-      SET
-        operational_status = 'cancelled',
-        financial_status = 'authorisation_withdrawn',
-        cancelled_at = CURRENT_TIMESTAMP,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(bookingId);
+    const update =
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status =
+            'cancelling',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND operational_status = ?
+          AND autocab_booking_id = ?
+      `).run(
+        bookingId,
+        previousStatus,
+        autocabBookingId
+      );
 
-    db.prepare(`
-      INSERT INTO booking_events
-        (
-          booking_id,
-          event_type,
-          event_source,
-          old_status,
-          new_status,
-          user_id,
-          notes
-        )
-      VALUES (
-        ?,
-        'booking_cancelled',
-        'portal',
-        'draft',
-        'cancelled',
-        ?,
-        ?
-      )
-    `).run(
+    if (update.changes !== 1) {
+      const error =
+        new Error(
+          'Booking cancellation state changed before cancellation started'
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    writeAutocabCancellationBookingEvent({
       bookingId,
+      eventType:
+        'autocab_cancellation_started',
+      oldStatus:
+        previousStatus,
+      newStatus:
+        'cancelling',
       userId,
-      reason
-    );
-
-    writeAudit({
-      action: 'STATUS_CHANGE',
-      entityType: 'booking',
-      entityId: bookingId,
-      fieldName: 'operational_status',
-      oldValue: booking.operational_status,
-      newValue: 'cancelled',
-      source: 'portal'
+      notes:
+        reason,
+      rawPayload: {
+        autocabBookingId
+      }
     });
 
     db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
 
-    return {
-      ...getBookingById(bookingId),
-      stops: getBookingStops(bookingId)
-    };
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+        autocabBookingId,
+        autocabReference:
+          booking.autocab_reference,
+        processingError:
+          String(
+            error?.message ||
+            'Cancellation state update failed'
+          )
+      }
+    );
+
+    throw error;
+  }
+
+  let response;
+  let responseText = '';
+
+  try {
+    response =
+      await fetch(
+        `${AUTOCAB_BOOKING_API_URL}/booking/v1/booking/${encodeURIComponent(
+          String(
+            autocabBookingId
+          )
+        )}`,
+        {
+          method:
+            'DELETE',
+
+          headers: {
+            'Cache-Control':
+              'no-cache',
+
+            'Ocp-Apim-Subscription-Key':
+              AUTOCAB_SUBSCRIPTION_KEY
+          },
+
+          signal:
+            AbortSignal.timeout(
+              15000
+            )
+        }
+      );
+
+    responseText =
+      await response.text();
+  } catch (error) {
+    /*
+      Network/time-out is ambiguous:
+      Autocab may have processed the DELETE
+      before the connection failed.
+
+      Never retry automatically.
+    */
+    db.exec('BEGIN');
+
+    try {
+      const transition =
+        db.prepare(`
+          UPDATE bookings
+          SET
+            operational_status =
+              'requires_review',
+            updated_at =
+              CURRENT_TIMESTAMP
+          WHERE id = ?
+            AND operational_status =
+              'cancelling'
+        `).run(
+          bookingId
+        );
+
+      if (transition.changes === 1) {
+        writeAutocabCancellationBookingEvent({
+          bookingId,
+          eventType:
+            'autocab_cancellation_uncertain',
+          oldStatus:
+            'cancelling',
+          newStatus:
+            'requires_review',
+          userId,
+          notes:
+            'Autocab cancellation result is uncertain and requires manual review',
+          rawPayload: {
+            autocabBookingId,
+            reason,
+            error:
+              String(
+                error?.message ||
+                'Network error'
+              )
+          }
+        });
+      }
+
+      db.exec('COMMIT');
+    } catch (dbError) {
+      db.exec('ROLLBACK');
+      throw dbError;
+    }
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+        autocabBookingId,
+        autocabReference:
+          booking.autocab_reference,
+        payload: {
+          request: {
+            method:
+              'DELETE',
+            bookingId:
+              autocabBookingId,
+            reason
+          },
+          networkError:
+            String(
+              error?.message ||
+              'Network error'
+            )
+        },
+        processingError:
+          'Autocab cancellation result is uncertain'
+      }
+    );
+
+    const uncertainError =
+      new Error(
+        'Autocab cancellation result is uncertain. Check Autocab before retrying.'
+      );
+
+    uncertainError.statusCode =
+      502;
+
+    throw uncertainError;
+  }
+
+  let responseBody = null;
+
+  if (responseText) {
+    try {
+      responseBody =
+        JSON.parse(
+          responseText
+        );
+    } catch {
+      responseBody =
+        responseText;
+    }
+  }
+
+  /*
+    A 4xx response is a definitive rejection
+    of this DELETE request. Restore the exact
+    previous operational state, but only if
+    no webhook changed it meanwhile.
+  */
+  if (
+    !response.ok &&
+    response.status >= 400 &&
+    response.status < 500
+  ) {
+    db.exec('BEGIN');
+
+    try {
+      const transition =
+        db.prepare(`
+          UPDATE bookings
+          SET
+            operational_status = ?,
+            updated_at =
+              CURRENT_TIMESTAMP
+          WHERE id = ?
+            AND operational_status =
+              'cancelling'
+        `).run(
+          previousStatus,
+          bookingId
+        );
+
+      if (transition.changes === 1) {
+        writeAutocabCancellationBookingEvent({
+          bookingId,
+          eventType:
+            'autocab_cancellation_rejected',
+          oldStatus:
+            'cancelling',
+          newStatus:
+            previousStatus,
+          userId,
+          notes:
+            `Autocab rejected cancellation with HTTP ${response.status}`,
+          rawPayload: {
+            autocabBookingId,
+            reason,
+            status:
+              response.status,
+            response:
+              responseBody
+          }
+        });
+      }
+
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+        autocabBookingId,
+        autocabReference:
+          booking.autocab_reference,
+        payload: {
+          request: {
+            method:
+              'DELETE',
+            bookingId:
+              autocabBookingId,
+            reason
+          },
+          responseStatus:
+            response.status,
+          response:
+            responseBody
+        },
+        processingError:
+          `Autocab rejected cancellation with HTTP ${response.status}`
+      }
+    );
+
+    const error =
+      new Error(
+        `Autocab rejected the cancellation with HTTP ${response.status}`
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  /*
+    5xx and any other non-success response
+    are ambiguous. Do not retry.
+  */
+  if (!response.ok) {
+    db.exec('BEGIN');
+
+    try {
+      const transition =
+        db.prepare(`
+          UPDATE bookings
+          SET
+            operational_status =
+              'requires_review',
+            updated_at =
+              CURRENT_TIMESTAMP
+          WHERE id = ?
+            AND operational_status =
+              'cancelling'
+        `).run(
+          bookingId
+        );
+
+      if (transition.changes === 1) {
+        writeAutocabCancellationBookingEvent({
+          bookingId,
+          eventType:
+            'autocab_cancellation_uncertain',
+          oldStatus:
+            'cancelling',
+          newStatus:
+            'requires_review',
+          userId,
+          notes:
+            'Autocab returned an uncertain cancellation result',
+          rawPayload: {
+            autocabBookingId,
+            reason,
+            status:
+              response.status,
+            response:
+              responseBody
+          }
+        });
+      }
+
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+        autocabBookingId,
+        autocabReference:
+          booking.autocab_reference,
+        payload: {
+          request: {
+            method:
+              'DELETE',
+            bookingId:
+              autocabBookingId,
+            reason
+          },
+          responseStatus:
+            response.status,
+          response:
+            responseBody
+        },
+        processingError:
+          'Autocab cancellation requires manual review'
+      }
+    );
+
+    const error =
+      new Error(
+        'Autocab cancellation requires manual review before retrying'
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  /*
+    Any HTTP 2xx is treated as successful.
+    The DELETE documentation supplied for
+    this endpoint does not require a
+    response body.
+  */
+  db.exec('BEGIN');
+
+  try {
+    const transition =
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status =
+            'cancelled',
+          financial_status =
+            'authorisation_withdrawn',
+          cancelled_at =
+            COALESCE(
+              cancelled_at,
+              CURRENT_TIMESTAMP
+            ),
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND operational_status =
+            'cancelling'
+      `).run(
+        bookingId
+      );
+
+    if (transition.changes === 1) {
+      writeAutocabCancellationBookingEvent({
+        bookingId,
+        eventType:
+          'autocab_cancellation_succeeded',
+        oldStatus:
+          'cancelling',
+        newStatus:
+          'cancelled',
+        userId,
+        notes:
+          reason,
+        rawPayload: {
+          autocabBookingId,
+          status:
+            response.status,
+          response:
+            responseBody
+        }
+      });
+
+      writeAudit({
+        action:
+          'STATUS_CHANGE',
+        entityType:
+          'booking',
+        entityId:
+          bookingId,
+        fieldName:
+          'operational_status',
+        oldValue:
+          previousStatus,
+        newValue:
+          'cancelled',
+        source:
+          'portal'
+      });
+    }
+
+    db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
   }
+
+  updateAutocabOutboundEvent(
+    eventId,
+    {
+      processingStatus:
+        'processed',
+      autocabBookingId,
+      autocabReference:
+        booking.autocab_reference,
+      payload: {
+        request: {
+          method:
+            'DELETE',
+          bookingId:
+            autocabBookingId,
+          reason
+        },
+        responseStatus:
+          response.status,
+        response:
+          responseBody
+      }
+    }
+  );
+
+  return {
+    ...getBookingById(
+      bookingId
+    ),
+    stops:
+      getBookingStops(
+        bookingId
+      )
+  };
 }
 
 function createPortalBooking(payload) {
@@ -12539,7 +13280,7 @@ const server = http.createServer(async (req, res) => {
         requireAuth(req);
 
       const booking =
-        cancelPortalBooking(
+        await cancelPortalBooking(
           bookingId,
           auth.user.id,
           payload
