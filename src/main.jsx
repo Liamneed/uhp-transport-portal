@@ -10017,7 +10017,7 @@ function BookTransportPage({ currentUser }) {
             pickupEta.durationSeconds /
               60
           )
-        )
+        ) + 5
       : null;
 
   const pickupEtaTone =
@@ -10989,7 +10989,7 @@ function BookTransportPage({ currentUser }) {
                 className={`booking-eta-preview pickup-eta-preview ${pickupEtaTone}`}
               >
                 <small>
-                  Current pickup estimate
+                  Nearest clear car
                 </small>
 
                 <strong>
