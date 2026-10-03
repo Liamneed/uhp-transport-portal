@@ -3235,11 +3235,14 @@ function getBookingOptions(userId) {
       SELECT
         id,
         name,
+        parent_site AS parentSite,
         address,
         postcode,
         latitude,
         longitude,
         category,
+        pickup_instructions AS pickupInstructions,
+        driver_instructions AS driverInstructions,
         display_order AS displayOrder
       FROM saved_locations
       WHERE is_active = 1
@@ -3312,7 +3315,12 @@ function listCodingReviewBookings() {
         stop_type AS stopType,
         address,
         postcode,
-        notes
+        notes,
+        latitude,
+        longitude,
+        saved_location_id AS savedLocationId,
+        location_name AS locationName,
+        pickup_instructions AS pickupInstructions
       FROM booking_stops
       WHERE booking_id = ?
       ORDER BY sequence_number
@@ -3976,7 +3984,12 @@ function listOperationalBookings() {
       stop_type AS stopType,
       address,
       postcode,
-      notes
+      notes,
+      latitude,
+      longitude,
+      saved_location_id AS savedLocationId,
+      location_name AS locationName,
+      pickup_instructions AS pickupInstructions
     FROM booking_stops
     WHERE booking_id = ?
     ORDER BY sequence_number
@@ -5015,7 +5028,12 @@ function listBookingsForUser(userId) {
       stop_type AS stopType,
       address,
       postcode,
-      notes
+      notes,
+      latitude,
+      longitude,
+      saved_location_id AS savedLocationId,
+      location_name AS locationName,
+      pickup_instructions AS pickupInstructions
     FROM booking_stops
     WHERE booking_id = ?
     ORDER BY sequence_number
@@ -5154,7 +5172,12 @@ function listBudgetVisibleBookings(userId) {
       stop_type AS stopType,
       address,
       postcode,
-      notes
+      notes,
+      latitude,
+      longitude,
+      saved_location_id AS savedLocationId,
+      location_name AS locationName,
+      pickup_instructions AS pickupInstructions
 
     FROM booking_stops
 
@@ -5282,7 +5305,12 @@ function getBookingStops(bookingId) {
       stop_type AS stopType,
       address,
       postcode,
-      notes
+      notes,
+      latitude,
+      longitude,
+      saved_location_id AS savedLocationId,
+      location_name AS locationName,
+      pickup_instructions AS pickupInstructions
     FROM booking_stops
     WHERE booking_id = ?
     ORDER BY sequence_number
@@ -5294,15 +5322,162 @@ function normaliseStop(rawStop) {
     return {
       address: rawStop.trim(),
       postcode: '',
-      notes: ''
+      notes: '',
+      latitude: null,
+      longitude: null,
+      savedLocationId: null,
+      locationName: null,
+      pickupInstructions: null
     };
   }
 
-  return {
-    address: String(rawStop?.address || '').trim(),
-    postcode: String(rawStop?.postcode || '').trim(),
-    notes: String(rawStop?.notes || '').trim()
+  const coordinate = (value) => {
+    if (
+      value === null ||
+      value === undefined ||
+      (
+        typeof value === 'string' &&
+        !value.trim()
+      )
+    ) {
+      return null;
+    }
+
+    const number = Number(value);
+
+    return Number.isFinite(number)
+      ? number
+      : null;
   };
+
+  const savedLocationId =
+    Number(rawStop?.savedLocationId);
+
+  return {
+    address:
+      String(rawStop?.address || '').trim(),
+
+    postcode:
+      String(rawStop?.postcode || '')
+        .trim()
+        .toUpperCase(),
+
+    notes:
+      String(rawStop?.notes || '').trim(),
+
+    latitude:
+      coordinate(rawStop?.latitude),
+
+    longitude:
+      coordinate(rawStop?.longitude),
+
+    savedLocationId:
+      Number.isInteger(savedLocationId) &&
+      savedLocationId > 0
+        ? savedLocationId
+        : null,
+
+    locationName:
+      String(
+        rawStop?.locationName || ''
+      ).trim() || null,
+
+    pickupInstructions:
+      String(
+        rawStop?.pickupInstructions || ''
+      ).trim() || null
+  };
+}
+
+function resolveBookingStop(rawStop) {
+  const stop =
+    normaliseStop(rawStop);
+
+  if (
+    stop.latitude !== null &&
+    (
+      stop.latitude < -90 ||
+      stop.latitude > 90
+    )
+  ) {
+    const error =
+      new Error(
+        'Stop latitude is not valid'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    stop.longitude !== null &&
+    (
+      stop.longitude < -180 ||
+      stop.longitude > 180
+    )
+  ) {
+    const error =
+      new Error(
+        'Stop longitude is not valid'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (stop.savedLocationId) {
+    const savedLocation =
+      db.prepare(`
+        SELECT
+          id,
+          name,
+          address,
+          postcode,
+          latitude,
+          longitude,
+          pickup_instructions
+            AS pickupInstructions,
+          is_active AS isActive
+        FROM saved_locations
+        WHERE id = ?
+      `).get(
+        stop.savedLocationId
+      );
+
+    if (
+      !savedLocation ||
+      savedLocation.isActive !== 1
+    ) {
+      const error =
+        new Error(
+          'The selected shared UHP location is not active'
+        );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return {
+      ...stop,
+      address:
+        savedLocation.address,
+      postcode:
+        savedLocation.postcode || '',
+      latitude:
+        savedLocation.latitude,
+      longitude:
+        savedLocation.longitude,
+      savedLocationId:
+        savedLocation.id,
+      locationName:
+        savedLocation.name,
+      pickupInstructions:
+        savedLocation.pickupInstructions ||
+        null
+    };
+  }
+
+  return stop;
 }
 
 function parseRequiredPositiveInteger(value, label) {
@@ -5513,13 +5688,13 @@ function amendPortalBooking(
       'Passenger count'
     );
 
-  const pickup = normaliseStop(payload.pickup);
+  const pickup = resolveBookingStop(payload.pickup);
   const destination =
-    normaliseStop(payload.destination);
+    resolveBookingStop(payload.destination);
 
   const vias = Array.isArray(payload.vias)
     ? payload.vias
-        .map(normaliseStop)
+        .map(resolveBookingStop)
         .filter((stop) => stop.address)
     : [];
 
@@ -5697,9 +5872,14 @@ function amendPortalBooking(
           stop_type,
           address,
           postcode,
-          notes
+          notes,
+          latitude,
+          longitude,
+          saved_location_id,
+          location_name,
+          pickup_instructions
         )
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     let sequenceNumber = 0;
@@ -5710,7 +5890,12 @@ function amendPortalBooking(
       'pickup',
       pickup.address,
       pickup.postcode || null,
-      pickup.notes || null
+      pickup.notes || null,
+      pickup.latitude,
+      pickup.longitude,
+      pickup.savedLocationId,
+      pickup.locationName,
+      pickup.pickupInstructions
     );
 
     for (const via of vias) {
@@ -5720,7 +5905,12 @@ function amendPortalBooking(
         'via',
         via.address,
         via.postcode || null,
-        via.notes || null
+        via.notes || null,
+        via.latitude,
+        via.longitude,
+        via.savedLocationId,
+        via.locationName,
+        via.pickupInstructions
       );
     }
 
@@ -5730,7 +5920,12 @@ function amendPortalBooking(
       'destination',
       destination.address,
       destination.postcode || null,
-      destination.notes || null
+      destination.notes || null,
+      destination.latitude,
+      destination.longitude,
+      destination.savedLocationId,
+      destination.locationName,
+      destination.pickupInstructions
     );
 
     db.prepare(`
@@ -8736,12 +8931,12 @@ function createPortalBooking(payload) {
     'Passenger count'
   );
 
-  const pickup = normaliseStop(payload.pickup);
-  const destination = normaliseStop(payload.destination);
+  const pickup = resolveBookingStop(payload.pickup);
+  const destination = resolveBookingStop(payload.destination);
 
   const vias = Array.isArray(payload.vias)
     ? payload.vias
-        .map(normaliseStop)
+        .map(resolveBookingStop)
         .filter((stop) => stop.address)
     : [];
 
@@ -9045,9 +9240,14 @@ function createPortalBooking(payload) {
           stop_type,
           address,
           postcode,
-          notes
+          notes,
+          latitude,
+          longitude,
+          saved_location_id,
+          location_name,
+          pickup_instructions
         )
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     let sequenceNumber = 0;
@@ -9058,7 +9258,12 @@ function createPortalBooking(payload) {
       'pickup',
       pickup.address,
       pickup.postcode || null,
-      pickup.notes || null
+      pickup.notes || null,
+      pickup.latitude,
+      pickup.longitude,
+      pickup.savedLocationId,
+      pickup.locationName,
+      pickup.pickupInstructions
     );
 
     for (const via of vias) {
@@ -9068,7 +9273,12 @@ function createPortalBooking(payload) {
         'via',
         via.address,
         via.postcode || null,
-        via.notes || null
+        via.notes || null,
+        via.latitude,
+        via.longitude,
+        via.savedLocationId,
+        via.locationName,
+        via.pickupInstructions
       );
     }
 
@@ -9078,7 +9288,12 @@ function createPortalBooking(payload) {
       'destination',
       destination.address,
       destination.postcode || null,
-      destination.notes || null
+      destination.notes || null,
+      destination.latitude,
+      destination.longitude,
+      destination.savedLocationId,
+      destination.locationName,
+      destination.pickupInstructions
     );
 
     db.prepare(`

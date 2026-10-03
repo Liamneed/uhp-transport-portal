@@ -5786,6 +5786,12 @@ function MyBookingsPage({
   });
   const [editForm, setEditForm] = useState(null);
   const [editVias, setEditVias] = useState([]);
+
+  const [
+    editSavedLocations,
+    setEditSavedLocations
+  ] = useState([]);
+
   const [savingEdit, setSavingEdit] = useState(false);
 
   const [cancelBooking, setCancelBooking] = useState(null);
@@ -5816,6 +5822,60 @@ function MyBookingsPage({
       }
     }
   );
+
+  useEffect(() => {
+    if (!editingBooking?.id) {
+      setEditSavedLocations([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadEditSavedLocations() {
+      try {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/booking-options?userId=${bookingUserId}`
+          );
+
+        const data =
+          await response.json();
+
+        if (
+          cancelled ||
+          !response.ok
+        ) {
+          return;
+        }
+
+        setEditSavedLocations(
+          Array.isArray(data.savedLocations)
+            ? data.savedLocations
+            : []
+        );
+      } catch {
+        if (!cancelled) {
+          /*
+            Amendment remains usable with
+            external address search if the
+            shared directory is temporarily
+            unavailable.
+          */
+          setEditSavedLocations([]);
+        }
+      }
+    }
+
+    loadEditSavedLocations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    editingBooking?.id,
+    bookingUserId
+  ]);
+
 
   useEscapeClose(
     Boolean(editingBooking),
@@ -6088,7 +6148,62 @@ function MyBookingsPage({
           booking.driverNotes || ''
       });
 
-      setEditVias(vias);
+      setEditForm(
+        (current) => ({
+          ...current,
+
+          pickupLatitude:
+            pickup.latitude ?? null,
+          pickupLongitude:
+            pickup.longitude ?? null,
+          pickupSavedLocationId:
+            pickup.savedLocationId ?? null,
+          pickupLocationName:
+            pickup.locationName ?? null,
+          pickupPickupInstructions:
+            pickup.pickupInstructions ?? null,
+
+          destinationLatitude:
+            destination.latitude ?? null,
+          destinationLongitude:
+            destination.longitude ?? null,
+          destinationSavedLocationId:
+            destination.savedLocationId ?? null,
+          destinationLocationName:
+            destination.locationName ?? null,
+          destinationPickupInstructions:
+            destination.pickupInstructions ?? null
+        })
+      );
+
+      setEditVias(
+        (
+          Array.isArray(booking.stops)
+            ? booking.stops
+            : []
+        )
+          .filter(
+            (stop) =>
+              stop.stopType === 'via'
+          )
+          .map((stop) => ({
+            address:
+              stop.address || '',
+            postcode:
+              stop.postcode || '',
+            latitude:
+              stop.latitude ?? null,
+            longitude:
+              stop.longitude ?? null,
+            savedLocationId:
+              stop.savedLocationId ?? null,
+            locationName:
+              stop.locationName ?? null,
+            pickupInstructions:
+              stop.pickupInstructions ?? null
+          }))
+      );
+
       setEditingBooking(booking);
     } catch (err) {
       setError(
@@ -6111,7 +6226,12 @@ function MyBookingsPage({
       ...current,
       {
         address: '',
-        postcode: ''
+        postcode: '',
+        latitude: null,
+        longitude: null,
+        savedLocationId: null,
+        locationName: null,
+        pickupInstructions: null
       }
     ]);
   }
@@ -6147,6 +6267,7 @@ function MyBookingsPage({
     setEditingBooking(null);
     setEditForm(null);
     setEditVias([]);
+    setEditSavedLocations([]);
   }
 
   async function submitAmendment(event) {
@@ -6185,7 +6306,17 @@ function MyBookingsPage({
               address:
                 editForm.pickupAddress,
               postcode:
-                editForm.pickupPostcode
+                editForm.pickupPostcode,
+              latitude:
+                editForm.pickupLatitude,
+              longitude:
+                editForm.pickupLongitude,
+              savedLocationId:
+                editForm.pickupSavedLocationId,
+              locationName:
+                editForm.pickupLocationName,
+              pickupInstructions:
+                editForm.pickupPickupInstructions
             },
 
             vias: editVias
@@ -6193,15 +6324,37 @@ function MyBookingsPage({
                 (via) => via.address.trim()
               )
               .map((via) => ({
-                address: via.address,
-                postcode: via.postcode
+                address:
+                  via.address,
+                postcode:
+                  via.postcode,
+                latitude:
+                  via.latitude,
+                longitude:
+                  via.longitude,
+                savedLocationId:
+                  via.savedLocationId,
+                locationName:
+                  via.locationName,
+                pickupInstructions:
+                  via.pickupInstructions
               })),
 
             destination: {
               address:
                 editForm.destinationAddress,
               postcode:
-                editForm.destinationPostcode
+                editForm.destinationPostcode,
+              latitude:
+                editForm.destinationLatitude,
+              longitude:
+                editForm.destinationLongitude,
+              savedLocationId:
+                editForm.destinationSavedLocationId,
+              locationName:
+                editForm.destinationLocationName,
+              pickupInstructions:
+                editForm.destinationPickupInstructions
             },
 
             driverNotes:
@@ -7018,13 +7171,67 @@ function MyBookingsPage({
               <div className="form-grid two">
                 <label>
                   Pickup
-                  <input
+
+                  <BookingAddressAutocomplete
+                    savedLocations={
+                      editSavedLocations
+                    }
                     required
-                    value={editForm.pickupAddress}
-                    onChange={(e) =>
-                      updateEditForm(
-                        'pickupAddress',
-                        e.target.value
+                    searchEnabled={
+                      editForm.pickupLatitude === null ||
+                      editForm.pickupLongitude === null
+                    }
+                    placeholder="Start typing pickup address"
+                    value={
+                      editForm.pickupAddress
+                    }
+                    onChange={(value) =>
+                      setEditForm(
+                        (current) => ({
+                          ...current,
+                          pickupAddress:
+                            value,
+                          pickupPostcode:
+                            current.pickupLatitude !== null &&
+                            current.pickupLongitude !== null
+                              ? ''
+                              : current.pickupPostcode,
+                          pickupLatitude:
+                            null,
+                          pickupLongitude:
+                            null,
+                          pickupSavedLocationId:
+                            null,
+                          pickupLocationName:
+                            null,
+                          pickupPickupInstructions:
+                            null
+                        })
+                      )
+                    }
+                    onSelect={(result) =>
+                      setEditForm(
+                        (current) => ({
+                          ...current,
+                          pickupAddress:
+                            result.address,
+                          pickupPostcode:
+                            result.postcode ||
+                            current.pickupPostcode,
+                          pickupLatitude:
+                            result.latitude,
+                          pickupLongitude:
+                            result.longitude,
+                          pickupSavedLocationId:
+                            result.savedLocationId ||
+                            null,
+                          pickupLocationName:
+                            result.locationName ||
+                            null,
+                          pickupPickupInstructions:
+                            result.pickupInstructions ||
+                            null
+                        })
                       )
                     }
                   />
@@ -7035,9 +7242,22 @@ function MyBookingsPage({
                   <input
                     value={editForm.pickupPostcode}
                     onChange={(e) =>
-                      updateEditForm(
-                        'pickupPostcode',
-                        e.target.value.toUpperCase()
+                      setEditForm(
+                        (current) => ({
+                          ...current,
+                          pickupPostcode:
+                            e.target.value.toUpperCase(),
+                          pickupLatitude:
+                            null,
+                          pickupLongitude:
+                            null,
+                          pickupSavedLocationId:
+                            null,
+                          pickupLocationName:
+                            null,
+                          pickupPickupInstructions:
+                            null
+                        })
                       )
                     }
                   />
@@ -7052,13 +7272,84 @@ function MyBookingsPage({
                   >
                     <label>
                       Via {index + 1}
-                      <input
-                        value={via.address}
-                        onChange={(e) =>
-                          updateEditVia(
-                            index,
-                            'address',
-                            e.target.value
+
+                      <BookingAddressAutocomplete
+                        savedLocations={
+                          editSavedLocations
+                        }
+                        searchEnabled={
+                          via.latitude === null ||
+                          via.longitude === null
+                        }
+                        placeholder="Start typing via address"
+                        value={
+                          via.address
+                        }
+                        onChange={(value) =>
+                          setEditVias(
+                            (current) =>
+                              current.map(
+                                (
+                                  currentVia,
+                                  viaIndex
+                                ) =>
+                                  viaIndex === index
+                                    ? {
+                                        ...currentVia,
+                                        address:
+                                          value,
+                                        postcode:
+                                          currentVia.latitude !== null &&
+                                          currentVia.longitude !== null
+                                            ? ''
+                                            : currentVia.postcode,
+                                        latitude:
+                                          null,
+                                        longitude:
+                                          null,
+                                        savedLocationId:
+                                          null,
+                                        locationName:
+                                          null,
+                                        pickupInstructions:
+                                          null
+                                      }
+                                    : currentVia
+                              )
+                          )
+                        }
+                        onSelect={(result) =>
+                          setEditVias(
+                            (current) =>
+                              current.map(
+                                (
+                                  currentVia,
+                                  viaIndex
+                                ) =>
+                                  viaIndex === index
+                                    ? {
+                                        ...currentVia,
+                                        address:
+                                          result.address,
+                                        postcode:
+                                          result.postcode ||
+                                          currentVia.postcode,
+                                        latitude:
+                                          result.latitude,
+                                        longitude:
+                                          result.longitude,
+                                        savedLocationId:
+                                          result.savedLocationId ||
+                                          null,
+                                        locationName:
+                                          result.locationName ||
+                                          null,
+                                        pickupInstructions:
+                                          result.pickupInstructions ||
+                                          null
+                                      }
+                                    : currentVia
+                              )
                           )
                         }
                       />
@@ -7069,10 +7360,31 @@ function MyBookingsPage({
                       <input
                         value={via.postcode}
                         onChange={(e) =>
-                          updateEditVia(
-                            index,
-                            'postcode',
-                            e.target.value.toUpperCase()
+                          setEditVias(
+                            (current) =>
+                              current.map(
+                                (
+                                  currentVia,
+                                  viaIndex
+                                ) =>
+                                  viaIndex === index
+                                    ? {
+                                        ...currentVia,
+                                        postcode:
+                                          e.target.value.toUpperCase(),
+                                        latitude:
+                                          null,
+                                        longitude:
+                                          null,
+                                        savedLocationId:
+                                          null,
+                                        locationName:
+                                          null,
+                                        pickupInstructions:
+                                          null
+                                      }
+                                    : currentVia
+                              )
                           )
                         }
                       />
@@ -7103,13 +7415,67 @@ function MyBookingsPage({
               <div className="form-grid two">
                 <label>
                   Destination
-                  <input
+
+                  <BookingAddressAutocomplete
+                    savedLocations={
+                      editSavedLocations
+                    }
                     required
-                    value={editForm.destinationAddress}
-                    onChange={(e) =>
-                      updateEditForm(
-                        'destinationAddress',
-                        e.target.value
+                    searchEnabled={
+                      editForm.destinationLatitude === null ||
+                      editForm.destinationLongitude === null
+                    }
+                    placeholder="Start typing destination address"
+                    value={
+                      editForm.destinationAddress
+                    }
+                    onChange={(value) =>
+                      setEditForm(
+                        (current) => ({
+                          ...current,
+                          destinationAddress:
+                            value,
+                          destinationPostcode:
+                            current.destinationLatitude !== null &&
+                            current.destinationLongitude !== null
+                              ? ''
+                              : current.destinationPostcode,
+                          destinationLatitude:
+                            null,
+                          destinationLongitude:
+                            null,
+                          destinationSavedLocationId:
+                            null,
+                          destinationLocationName:
+                            null,
+                          destinationPickupInstructions:
+                            null
+                        })
+                      )
+                    }
+                    onSelect={(result) =>
+                      setEditForm(
+                        (current) => ({
+                          ...current,
+                          destinationAddress:
+                            result.address,
+                          destinationPostcode:
+                            result.postcode ||
+                            current.destinationPostcode,
+                          destinationLatitude:
+                            result.latitude,
+                          destinationLongitude:
+                            result.longitude,
+                          destinationSavedLocationId:
+                            result.savedLocationId ||
+                            null,
+                          destinationLocationName:
+                            result.locationName ||
+                            null,
+                          destinationPickupInstructions:
+                            result.pickupInstructions ||
+                            null
+                        })
                       )
                     }
                   />
@@ -7122,9 +7488,22 @@ function MyBookingsPage({
                       editForm.destinationPostcode
                     }
                     onChange={(e) =>
-                      updateEditForm(
-                        'destinationPostcode',
-                        e.target.value.toUpperCase()
+                      setEditForm(
+                        (current) => ({
+                          ...current,
+                          destinationPostcode:
+                            e.target.value.toUpperCase(),
+                          destinationLatitude:
+                            null,
+                          destinationLongitude:
+                            null,
+                          destinationSavedLocationId:
+                            null,
+                          destinationLocationName:
+                            null,
+                          destinationPickupInstructions:
+                            null
+                        })
                       )
                     }
                   />
@@ -7368,11 +7747,17 @@ function createInitialBookingForm() {
     pickupPostcode: '',
     pickupLatitude: null,
     pickupLongitude: null,
+    pickupSavedLocationId: null,
+    pickupLocationName: null,
+    pickupPickupInstructions: null,
 
     destinationAddress: '',
     destinationPostcode: '',
     destinationLatitude: null,
     destinationLongitude: null,
+    destinationSavedLocationId: null,
+    destinationLocationName: null,
+    destinationPickupInstructions: null,
 
     passengerName: '',
     passengerMobile: '',
@@ -7384,11 +7769,41 @@ function createInitialBookingForm() {
 }
 
 
+function sharedLocationSearchResult(
+  location
+) {
+  return {
+    id:
+      `uhp-${location.id}`,
+    source: 'uhp',
+    savedLocationId:
+      location.id,
+    label:
+      location.name,
+    locationName:
+      location.name,
+    parentSite:
+      location.parentSite || null,
+    address:
+      location.address,
+    postcode:
+      location.postcode || '',
+    latitude:
+      location.latitude,
+    longitude:
+      location.longitude,
+    pickupInstructions:
+      location.pickupInstructions || null
+  };
+}
+
+
 function BookingAddressAutocomplete({
   value,
   placeholder,
   required = false,
   searchEnabled = true,
+  savedLocations = [],
   onChange,
   onSelect
 }) {
@@ -7416,6 +7831,9 @@ function BookingAddressAutocomplete({
         .trim();
 
     if (!searchEnabled) {
+      suppressNextSearch.current =
+        false;
+
       setResults([]);
       setSearchState('idle');
       setOpen(false);
@@ -7424,7 +7842,9 @@ function BookingAddressAutocomplete({
     }
 
     if (suppressNextSearch.current) {
-      suppressNextSearch.current = false;
+      suppressNextSearch.current =
+        false;
+
       return;
     }
 
@@ -7432,8 +7852,57 @@ function BookingAddressAutocomplete({
       setResults([]);
       setSearchState('idle');
       setOpen(false);
+
       return;
     }
+
+    const normalisedQuery =
+      query.toLowerCase();
+
+    const sharedMatches =
+      (
+        Array.isArray(savedLocations)
+          ? savedLocations
+          : []
+      )
+        .filter((location) => {
+          const searchable =
+            [
+              location.name,
+              location.parentSite,
+              location.address,
+              location.postcode,
+              location.category
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .toLowerCase();
+
+          return searchable.includes(
+            normalisedQuery
+          );
+        })
+        .slice(0, 8)
+        .map(
+          sharedLocationSearchResult
+        );
+
+    /*
+      Shared UHP locations are available
+      immediately and always rank above
+      external address results.
+    */
+    setResults(sharedMatches);
+
+    setSearchState(
+      sharedMatches.length
+        ? 'ready'
+        : 'loading'
+    );
+
+    setOpen(
+      sharedMatches.length > 0
+    );
 
     const controller =
       new AbortController();
@@ -7441,7 +7910,11 @@ function BookingAddressAutocomplete({
     const timer =
       window.setTimeout(
         async () => {
-          setSearchState('loading');
+          if (!sharedMatches.length) {
+            setSearchState(
+              'loading'
+            );
+          }
 
           try {
             const response =
@@ -7466,10 +7939,60 @@ function BookingAddressAutocomplete({
               );
             }
 
-            const nextResults =
-              Array.isArray(data.results)
-                ? data.results
-                : [];
+            const sharedAddresses =
+              new Set(
+                sharedMatches
+                  .map(
+                    (result) =>
+                      String(
+                        result.address ||
+                        ''
+                      )
+                        .trim()
+                        .toLowerCase()
+                  )
+                  .filter(Boolean)
+              );
+
+            const externalResults =
+              (
+                Array.isArray(
+                  data.results
+                )
+                  ? data.results
+                  : []
+              )
+                .map(
+                  (result) => ({
+                    ...result,
+                    source:
+                      'maptiler',
+                    savedLocationId:
+                      null,
+                    locationName:
+                      null,
+                    pickupInstructions:
+                      null,
+                    parentSite:
+                      null
+                  })
+                )
+                .filter(
+                  (result) =>
+                    !sharedAddresses.has(
+                      String(
+                        result.address ||
+                        ''
+                      )
+                        .trim()
+                        .toLowerCase()
+                    )
+                );
+
+            const nextResults = [
+              ...sharedMatches,
+              ...externalResults
+            ];
 
             setResults(
               nextResults
@@ -7490,6 +8013,24 @@ function BookingAddressAutocomplete({
               return;
             }
 
+            /*
+              External lookup failure must
+              not hide valid UHP locations.
+            */
+            if (sharedMatches.length) {
+              setResults(
+                sharedMatches
+              );
+
+              setSearchState(
+                'ready'
+              );
+
+              setOpen(true);
+
+              return;
+            }
+
             setResults([]);
             setSearchState('error');
             setOpen(false);
@@ -7507,7 +8048,8 @@ function BookingAddressAutocomplete({
     };
   }, [
     value,
-    searchEnabled
+    searchEnabled,
+    savedLocations
   ]);
 
   function chooseResult(
@@ -7578,7 +8120,13 @@ function BookingAddressAutocomplete({
               <button
                 key={result.id}
                 type="button"
-                className="booking-address-result"
+                className={
+                  `booking-address-result${
+                    result.source === 'uhp'
+                      ? ' uhp'
+                      : ''
+                  }`
+                }
                 onMouseDown={(event) =>
                   event.preventDefault()
                 }
@@ -7588,12 +8136,33 @@ function BookingAddressAutocomplete({
                   )
                 }
               >
-                <strong>
-                  {result.label}
-                </strong>
+                <div className="booking-address-result-heading">
+                  <strong>
+                    {result.label}
+                  </strong>
+
+                  {result.source === 'uhp' && (
+                    <span className="booking-address-result-badge">
+                      UHP location
+                    </span>
+                  )}
+                </div>
+
+                {result.source === 'uhp' && (
+                  <span className="booking-address-result-context">
+                    {
+                      [
+                        result.parentSite,
+                        result.address
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')
+                    }
+                  </span>
+                )}
 
                 {result.postcode && (
-                  <span>
+                  <span className="booking-address-result-postcode">
                     {result.postcode}
                   </span>
                 )}
@@ -7627,7 +8196,7 @@ function SavedLocationChips({
   return (
     <div className="booking-saved-locations">
       <span className="booking-saved-locations-label">
-        Saved locations
+        Shared UHP locations
       </span>
 
       <div className="booking-saved-location-list">
@@ -8615,7 +9184,10 @@ function BookTransportPage({ currentUser }) {
         address: '',
         postcode: '',
         latitude: null,
-        longitude: null
+        longitude: null,
+        savedLocationId: null,
+        locationName: null,
+        pickupInstructions: null
       }
     ]);
   }
@@ -8679,20 +9251,59 @@ function BookTransportPage({ currentUser }) {
             passengerCount: Number(form.passengerCount),
 
             pickup: {
-              address: form.pickupAddress,
-              postcode: form.pickupPostcode
+              address:
+                form.pickupAddress,
+              postcode:
+                form.pickupPostcode,
+              latitude:
+                form.pickupLatitude,
+              longitude:
+                form.pickupLongitude,
+              savedLocationId:
+                form.pickupSavedLocationId,
+              locationName:
+                form.pickupLocationName,
+              pickupInstructions:
+                form.pickupPickupInstructions
             },
 
             vias: vias
-              .filter((via) => via.address.trim())
+              .filter(
+                (via) =>
+                  via.address.trim()
+              )
               .map((via) => ({
-                address: via.address,
-                postcode: via.postcode
+                address:
+                  via.address,
+                postcode:
+                  via.postcode,
+                latitude:
+                  via.latitude,
+                longitude:
+                  via.longitude,
+                savedLocationId:
+                  via.savedLocationId,
+                locationName:
+                  via.locationName,
+                pickupInstructions:
+                  via.pickupInstructions
               })),
 
             destination: {
-              address: form.destinationAddress,
-              postcode: form.destinationPostcode
+              address:
+                form.destinationAddress,
+              postcode:
+                form.destinationPostcode,
+              latitude:
+                form.destinationLatitude,
+              longitude:
+                form.destinationLongitude,
+              savedLocationId:
+                form.destinationSavedLocationId,
+              locationName:
+                form.destinationLocationName,
+              pickupInstructions:
+                form.destinationPickupInstructions
             },
 
             driverNotes: form.driverNotes,
@@ -8939,13 +9550,23 @@ function BookTransportPage({ currentUser }) {
                           pickupLatitude:
                             location.latitude,
                           pickupLongitude:
-                            location.longitude
+                            location.longitude,
+                          pickupSavedLocationId:
+                            location.id,
+                          pickupLocationName:
+                            location.name,
+                          pickupPickupInstructions:
+                            location.pickupInstructions ||
+                            null
                         })
                       )
                     }
                   />
 
                   <BookingAddressAutocomplete
+                    savedLocations={
+                      savedLocations
+                    }
                     required
                     searchEnabled={
                       form.pickupLatitude === null ||
@@ -8969,6 +9590,12 @@ function BookTransportPage({ currentUser }) {
                           pickupLatitude:
                             null,
                           pickupLongitude:
+                            null,
+                          pickupSavedLocationId:
+                            null,
+                          pickupLocationName:
+                            null,
+                          pickupPickupInstructions:
                             null
                         })
                       )
@@ -8985,7 +9612,16 @@ function BookTransportPage({ currentUser }) {
                           pickupLatitude:
                             result.latitude,
                           pickupLongitude:
-                            result.longitude
+                            result.longitude,
+                          pickupSavedLocationId:
+                            result.savedLocationId ||
+                            null,
+                          pickupLocationName:
+                            result.locationName ||
+                            null,
+                          pickupPickupInstructions:
+                            result.pickupInstructions ||
+                            null
                         })
                       )
                     }
@@ -9001,10 +9637,23 @@ function BookTransportPage({ currentUser }) {
                       form.pickupPostcode
                     }
                     onChange={(event) =>
-                      updateForm(
-                        'pickupPostcode',
-                        event.target.value
-                          .toUpperCase()
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          pickupPostcode:
+                            event.target.value
+                              .toUpperCase(),
+                          pickupLatitude:
+                            null,
+                          pickupLongitude:
+                            null,
+                          pickupSavedLocationId:
+                            null,
+                          pickupLocationName:
+                            null,
+                          pickupPickupInstructions:
+                            null
+                        })
                       )
                     }
                   />
@@ -9049,7 +9698,14 @@ function BookTransportPage({ currentUser }) {
                                         latitude:
                                           location.latitude,
                                         longitude:
-                                          location.longitude
+                                          location.longitude,
+                                        savedLocationId:
+                                          location.id,
+                                        locationName:
+                                          location.name,
+                                        pickupInstructions:
+                                          location.pickupInstructions ||
+                                          null
                                       }
                                     : currentVia
                               )
@@ -9058,6 +9714,9 @@ function BookTransportPage({ currentUser }) {
                       />
 
                       <BookingAddressAutocomplete
+                        savedLocations={
+                          savedLocations
+                        }
                         searchEnabled={
                           via.latitude === null ||
                           via.longitude === null
@@ -9087,6 +9746,12 @@ function BookTransportPage({ currentUser }) {
                                         latitude:
                                           null,
                                         longitude:
+                                          null,
+                                        savedLocationId:
+                                          null,
+                                        locationName:
+                                          null,
+                                        pickupInstructions:
                                           null
                                       }
                                     : currentVia
@@ -9112,7 +9777,16 @@ function BookTransportPage({ currentUser }) {
                                         latitude:
                                           result.latitude,
                                         longitude:
-                                          result.longitude
+                                          result.longitude,
+                                        savedLocationId:
+                                          result.savedLocationId ||
+                                          null,
+                                        locationName:
+                                          result.locationName ||
+                                          null,
+                                        pickupInstructions:
+                                          result.pickupInstructions ||
+                                          null
                                       }
                                     : currentVia
                               )
@@ -9130,11 +9804,32 @@ function BookTransportPage({ currentUser }) {
                           via.postcode
                         }
                         onChange={(event) =>
-                          updateVia(
-                            index,
-                            'postcode',
-                            event.target.value
-                              .toUpperCase()
+                          setVias(
+                            (current) =>
+                              current.map(
+                                (
+                                  currentVia,
+                                  viaIndex
+                                ) =>
+                                  viaIndex === index
+                                    ? {
+                                        ...currentVia,
+                                        postcode:
+                                          event.target.value
+                                            .toUpperCase(),
+                                        latitude:
+                                          null,
+                                        longitude:
+                                          null,
+                                        savedLocationId:
+                                          null,
+                                        locationName:
+                                          null,
+                                        pickupInstructions:
+                                          null
+                                      }
+                                    : currentVia
+                              )
                           )
                         }
                       />
@@ -9192,13 +9887,23 @@ function BookTransportPage({ currentUser }) {
                           destinationLatitude:
                             location.latitude,
                           destinationLongitude:
-                            location.longitude
+                            location.longitude,
+                          destinationSavedLocationId:
+                            location.id,
+                          destinationLocationName:
+                            location.name,
+                          destinationPickupInstructions:
+                            location.pickupInstructions ||
+                            null
                         })
                       )
                     }
                   />
 
                   <BookingAddressAutocomplete
+                    savedLocations={
+                      savedLocations
+                    }
                     required
                     searchEnabled={
                       form.destinationLatitude === null ||
@@ -9222,6 +9927,12 @@ function BookTransportPage({ currentUser }) {
                           destinationLatitude:
                             null,
                           destinationLongitude:
+                            null,
+                          destinationSavedLocationId:
+                            null,
+                          destinationLocationName:
+                            null,
+                          destinationPickupInstructions:
                             null
                         })
                       )
@@ -9238,7 +9949,16 @@ function BookTransportPage({ currentUser }) {
                           destinationLatitude:
                             result.latitude,
                           destinationLongitude:
-                            result.longitude
+                            result.longitude,
+                          destinationSavedLocationId:
+                            result.savedLocationId ||
+                            null,
+                          destinationLocationName:
+                            result.locationName ||
+                            null,
+                          destinationPickupInstructions:
+                            result.pickupInstructions ||
+                            null
                         })
                       )
                     }
@@ -9254,10 +9974,23 @@ function BookTransportPage({ currentUser }) {
                       form.destinationPostcode
                     }
                     onChange={(event) =>
-                      updateForm(
-                        'destinationPostcode',
-                        event.target.value
-                          .toUpperCase()
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          destinationPostcode:
+                            event.target.value
+                              .toUpperCase(),
+                          destinationLatitude:
+                            null,
+                          destinationLongitude:
+                            null,
+                          destinationSavedLocationId:
+                            null,
+                          destinationLocationName:
+                            null,
+                          destinationPickupInstructions:
+                            null
+                        })
                       )
                     }
                   />

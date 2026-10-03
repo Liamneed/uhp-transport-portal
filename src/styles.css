@@ -2736,6 +2736,47 @@ button:disabled {
   font-size: 10px;
 }
 
+.booking-address-result.uhp {
+  background: #f8fcfa;
+}
+
+.booking-address-result-heading {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.booking-address-result-heading strong {
+  min-width: 0;
+}
+
+.booking-address-result .booking-address-result-badge {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 1px solid #cfe4d9;
+  border-radius: 999px;
+  background: #edf8f2;
+  color: #17714d;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.booking-address-result-context {
+  overflow: hidden;
+  width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.booking-address-result-postcode {
+  font-weight: 700;
+}
+
 
 /* Booking page live planning map */
 
