@@ -3247,3 +3247,166 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* UHP shared locations administration */
+
+.location-stats-grid {
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+}
+
+.location-table-address {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 430px;
+}
+
+.location-table-address strong {
+  color: #40536b;
+  font-size: 12px;
+}
+
+.location-table-address span {
+  color: #53647a;
+  line-height: 1.4;
+}
+
+.location-table-address small {
+  color: #8793a2;
+}
+
+.location-pin-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #17714d;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.location-editor-modal {
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+}
+
+.location-editor-layout {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 0.92fr)
+    minmax(420px, 1.08fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.location-editor-fields {
+  min-width: 0;
+}
+
+.location-editor-fields > label,
+.location-editor-fields .form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 16px;
+  color: #42536a;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.location-editor-fields input,
+.location-editor-fields select,
+.location-editor-fields textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d9e2eb;
+  border-radius: 9px;
+  padding: 10px 11px;
+  background: #fff;
+  color: #26384f;
+  font: inherit;
+}
+
+.location-editor-fields textarea {
+  resize: vertical;
+}
+
+.location-editor-fields input[readonly] {
+  background: #f6f8fa;
+  color: #66768a;
+}
+
+.location-display-order {
+  max-width: 180px;
+}
+
+.location-editor-map-column {
+  position: sticky;
+  top: 0;
+}
+
+.location-editor-map-shell {
+  overflow: hidden;
+  border: 1px solid #dfe7ef;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.location-editor-map {
+  width: 100%;
+  height: 480px;
+  min-height: 480px;
+  cursor: crosshair;
+}
+
+.location-editor-map-help {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 13px 15px;
+  border-top: 1px solid #e6ebf0;
+  background: #f8fafc;
+}
+
+.location-editor-map-help strong {
+  color: #31465f;
+  font-size: 12px;
+}
+
+.location-editor-map-help span {
+  color: #758294;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.location-editor-icon {
+  overflow: visible;
+}
+
+@media (max-width: 980px) {
+  .location-editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .location-editor-map-column {
+    position: static;
+  }
+
+  .location-editor-map {
+    height: 390px;
+    min-height: 390px;
+  }
+}
+
+@media (max-width: 700px) {
+  .location-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .location-editor-map {
+    height: 330px;
+    min-height: 330px;
+  }
+}

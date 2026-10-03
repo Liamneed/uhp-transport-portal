@@ -854,6 +854,11 @@ function enforceApiAccess(
       '/api/reason-codes' ||
     pathname.startsWith(
       '/api/reason-codes/'
+    ) ||
+    pathname ===
+      '/api/locations' ||
+    pathname.startsWith(
+      '/api/locations/'
     )
   ) {
     if (req.method === 'GET') {
@@ -1474,6 +1479,613 @@ function listBudgets() {
     ORDER BY b.budget_number
   `).all();
 }
+
+function listLocations() {
+  return db.prepare(`
+    SELECT
+      sl.id,
+      sl.name,
+      sl.parent_site AS parentSite,
+      sl.address,
+      sl.postcode,
+      sl.latitude,
+      sl.longitude,
+      sl.category,
+      sl.pickup_instructions AS pickupInstructions,
+      sl.driver_instructions AS driverInstructions,
+      sl.display_order AS displayOrder,
+
+      CASE
+        WHEN sl.is_active = 1
+        THEN 'active'
+        ELSE 'inactive'
+      END AS status,
+
+      sl.created_by_user_id AS createdByUserId,
+      creator.first_name || ' ' ||
+        creator.last_name AS createdBy,
+
+      sl.updated_by_user_id AS updatedByUserId,
+      updater.first_name || ' ' ||
+        updater.last_name AS updatedBy,
+
+      sl.created_at AS createdAt,
+      sl.updated_at AS updatedAt
+
+    FROM saved_locations sl
+
+    LEFT JOIN users creator
+      ON creator.id =
+        sl.created_by_user_id
+
+    LEFT JOIN users updater
+      ON updater.id =
+        sl.updated_by_user_id
+
+    ORDER BY
+      sl.is_active DESC,
+      sl.display_order,
+      sl.name COLLATE NOCASE
+  `).all();
+}
+
+
+function getLocationById(locationId) {
+  return db.prepare(`
+    SELECT
+      sl.id,
+      sl.name,
+      sl.parent_site AS parentSite,
+      sl.address,
+      sl.postcode,
+      sl.latitude,
+      sl.longitude,
+      sl.category,
+      sl.pickup_instructions AS pickupInstructions,
+      sl.driver_instructions AS driverInstructions,
+      sl.display_order AS displayOrder,
+
+      CASE
+        WHEN sl.is_active = 1
+        THEN 'active'
+        ELSE 'inactive'
+      END AS status,
+
+      sl.created_by_user_id AS createdByUserId,
+      sl.updated_by_user_id AS updatedByUserId,
+
+      sl.created_at AS createdAt,
+      sl.updated_at AS updatedAt
+
+    FROM saved_locations sl
+    WHERE sl.id = ?
+  `).get(
+    Number(locationId)
+  );
+}
+
+
+function normaliseLocationPayload(
+  payload,
+  existing = null
+) {
+  const has = (key) =>
+    Object.prototype.hasOwnProperty.call(
+      payload,
+      key
+    );
+
+  const text = (value) =>
+    value === null ||
+    value === undefined
+      ? ''
+      : String(value).trim();
+
+  const coordinate = (value) => {
+    if (
+      value === null ||
+      value === undefined ||
+      (
+        typeof value === 'string' &&
+        !value.trim()
+      )
+    ) {
+      return NaN;
+    }
+
+    return Number(value);
+  };
+
+  const name =
+    text(
+      has('name')
+        ? payload.name
+        : existing?.name
+    );
+
+  const parentSite =
+    text(
+      has('parentSite')
+        ? payload.parentSite
+        : existing?.parentSite
+    );
+
+  const address =
+    text(
+      has('address')
+        ? payload.address
+        : existing?.address
+    );
+
+  const postcode =
+    text(
+      has('postcode')
+        ? payload.postcode
+        : existing?.postcode
+    ).toUpperCase();
+
+  const category =
+    text(
+      has('category')
+        ? payload.category
+        : existing?.category || 'uhp'
+    ).toLowerCase();
+
+  const pickupInstructions =
+    text(
+      has('pickupInstructions')
+        ? payload.pickupInstructions
+        : existing?.pickupInstructions
+    );
+
+  const driverInstructions =
+    text(
+      has('driverInstructions')
+        ? payload.driverInstructions
+        : existing?.driverInstructions
+    );
+
+  const latitude =
+    coordinate(
+      has('latitude')
+        ? payload.latitude
+        : existing?.latitude
+    );
+
+  const longitude =
+    coordinate(
+      has('longitude')
+        ? payload.longitude
+        : existing?.longitude
+    );
+
+  const displayOrderRaw =
+    has('displayOrder')
+      ? payload.displayOrder
+      : existing?.displayOrder ?? 0;
+
+  const displayOrder =
+    Number(displayOrderRaw);
+
+  if (!name) {
+    const error =
+      new Error(
+        'Location name is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!address) {
+    const error =
+      new Error(
+        'Location address is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    ![
+      'uhp',
+      'hospital',
+      'transport',
+      'other'
+    ].includes(category)
+  ) {
+    const error =
+      new Error(
+        'Invalid location category'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isFinite(latitude) ||
+    latitude < -90 ||
+    latitude > 90
+  ) {
+    const error =
+      new Error(
+        'Valid location latitude is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isFinite(longitude) ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    const error =
+      new Error(
+        'Valid location longitude is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(displayOrder) ||
+    displayOrder < 0
+  ) {
+    const error =
+      new Error(
+        'Display order must be a non-negative whole number'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    name,
+    parentSite:
+      parentSite || null,
+    address,
+    postcode:
+      postcode || null,
+    latitude,
+    longitude,
+    category,
+    pickupInstructions:
+      pickupInstructions || null,
+    driverInstructions:
+      driverInstructions || null,
+    displayOrder
+  };
+}
+
+function createLocation(
+  payload,
+  actorUserId
+) {
+  const location =
+    normaliseLocationPayload(
+      payload
+    );
+
+  const duplicate =
+    db.prepare(`
+      SELECT id
+      FROM saved_locations
+      WHERE name = ? COLLATE NOCASE
+      LIMIT 1
+    `).get(
+      location.name
+    );
+
+  if (duplicate) {
+    const error =
+      new Error(
+        'A shared location with this name already exists'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    const result =
+      db.prepare(`
+        INSERT INTO saved_locations
+          (
+            name,
+            parent_site,
+            address,
+            postcode,
+            latitude,
+            longitude,
+            category,
+            pickup_instructions,
+            driver_instructions,
+            is_active,
+            display_order,
+            created_by_user_id,
+            updated_by_user_id,
+            created_at,
+            updated_at
+          )
+        VALUES (
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          1,
+          ?,
+          ?,
+          ?,
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        )
+      `).run(
+        location.name,
+        location.parentSite,
+        location.address,
+        location.postcode,
+        location.latitude,
+        location.longitude,
+        location.category,
+        location.pickupInstructions,
+        location.driverInstructions,
+        location.displayOrder,
+        actorUserId,
+        actorUserId
+      );
+
+    const locationId =
+      Number(
+        result.lastInsertRowid
+      );
+
+    writeAudit({
+      action: 'CREATE',
+      entityType:
+        'saved_location',
+      entityId:
+        locationId,
+      newValue:
+        JSON.stringify(
+          location
+        ),
+      source:
+        'uhp_admin',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return getLocationById(
+      locationId
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function updateLocation(
+  locationId,
+  payload,
+  actorUserId
+) {
+  const existing =
+    getLocationById(
+      locationId
+    );
+
+  if (!existing) {
+    const error =
+      new Error(
+        'Location not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const location =
+    normaliseLocationPayload(
+      payload,
+      existing
+    );
+
+  const duplicate =
+    db.prepare(`
+      SELECT id
+      FROM saved_locations
+      WHERE name = ? COLLATE NOCASE
+        AND id <> ?
+      LIMIT 1
+    `).get(
+      location.name,
+      Number(locationId)
+    );
+
+  if (duplicate) {
+    const error =
+      new Error(
+        'A shared location with this name already exists'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE saved_locations
+      SET
+        name = ?,
+        parent_site = ?,
+        address = ?,
+        postcode = ?,
+        latitude = ?,
+        longitude = ?,
+        category = ?,
+        pickup_instructions = ?,
+        driver_instructions = ?,
+        display_order = ?,
+        updated_by_user_id = ?,
+        updated_at =
+          CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      location.name,
+      location.parentSite,
+      location.address,
+      location.postcode,
+      location.latitude,
+      location.longitude,
+      location.category,
+      location.pickupInstructions,
+      location.driverInstructions,
+      location.displayOrder,
+      actorUserId,
+      Number(locationId)
+    );
+
+    const updated =
+      getLocationById(
+        locationId
+      );
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType:
+        'saved_location',
+      entityId:
+        locationId,
+      oldValue:
+        JSON.stringify(
+          existing
+        ),
+      newValue:
+        JSON.stringify(
+          updated
+        ),
+      source:
+        'uhp_admin',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return updated;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function setLocationStatus(
+  locationId,
+  nextStatus,
+  actorUserId
+) {
+  if (
+    ![
+      'active',
+      'inactive'
+    ].includes(nextStatus)
+  ) {
+    const error =
+      new Error(
+        'Invalid location status'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const existing =
+    getLocationById(
+      locationId
+    );
+
+  if (!existing) {
+    const error =
+      new Error(
+        'Location not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    existing.status ===
+      nextStatus
+  ) {
+    return existing;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE saved_locations
+      SET
+        is_active = ?,
+        updated_by_user_id = ?,
+        updated_at =
+          CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      nextStatus === 'active'
+        ? 1
+        : 0,
+      actorUserId,
+      Number(locationId)
+    );
+
+    writeAudit({
+      action:
+        'STATUS_CHANGE',
+      entityType:
+        'saved_location',
+      entityId:
+        locationId,
+      fieldName:
+        'status',
+      oldValue:
+        existing.status,
+      newValue:
+        nextStatus,
+      source:
+        'uhp_admin',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return getLocationById(
+      locationId
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 
 function listReasonCodes() {
   return db.prepare(`
@@ -10124,6 +10736,128 @@ const server = http.createServer(async (req, res) => {
         booking
       });
     }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/locations'
+    ) {
+      return sendJson(
+        res,
+        200,
+        {
+          locations:
+            listLocations()
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/locations'
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['uhp_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const location =
+        createLocation(
+          payload,
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        201,
+        {
+          location
+        }
+      );
+    }
+
+
+    const locationStatusMatch =
+      url.pathname.match(
+        /^\/api\/locations\/(\d+)\/status$/
+      );
+
+    if (
+      req.method === 'PATCH' &&
+      locationStatusMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['uhp_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const location =
+        setLocationStatus(
+          Number(
+            locationStatusMatch[1]
+          ),
+          String(
+            payload.status || ''
+          ),
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          location
+        }
+      );
+    }
+
+
+    const locationMatch =
+      url.pathname.match(
+        /^\/api\/locations\/(\d+)$/
+      );
+
+    if (
+      req.method === 'PATCH' &&
+      locationMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['uhp_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const location =
+        updateLocation(
+          Number(
+            locationMatch[1]
+          ),
+          payload,
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          location
+        }
+      );
+    }
+
 
     if (req.method === 'POST' && url.pathname === '/api/budgets') {
       const payload = await readJson(req);

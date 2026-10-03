@@ -7,7 +7,8 @@ import {
   Polyline,
   Popup,
   TileLayer,
-  useMap
+  useMap,
+  useMapEvents
 } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
@@ -25,7 +26,8 @@ import {
   MoreHorizontal,
   CheckCircle2,
   Clock3,
-  UsersRound
+  UsersRound,
+  MapPin
 } from 'lucide-react';
 import './styles.css';
 
@@ -69,6 +71,7 @@ const navDefinitions = {
     ['admin-users', 'Users', UserRoundCog],
     ['admin-budgets', 'Budgets', WalletCards],
     ['admin-reasons', 'Reason Codes', Tags],
+    ['admin-locations', 'Locations', MapPin],
     ['coding-review', 'Coding Review', AlertTriangle],
     ['admin-reports', 'Reports', BarChart3]
   ],
@@ -615,6 +618,8 @@ function App() {
             <BudgetsPage/>
           ) : active === 'admin-reasons' ? (
             <ReasonCodesPage/>
+          ) : active === 'admin-locations' ? (
+            <LocationsPage/>
           ) : active === 'book-transport' ? (
             <BookTransportPage
               currentUser={currentUser}
@@ -10121,6 +10126,1116 @@ function BudgetsPage() {
     </>
   );
 }
+
+function LocationMapClickHandler({
+  onSelect
+}) {
+  useMapEvents({
+    click(event) {
+      onSelect({
+        latitude:
+          event.latlng.lat,
+        longitude:
+          event.latlng.lng
+      });
+    }
+  });
+
+  return null;
+}
+
+
+function LocationMapRecenter({
+  latitude,
+  longitude
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (
+      latitude === null ||
+      latitude === undefined ||
+      longitude === null ||
+      longitude === undefined ||
+      !Number.isFinite(
+        Number(latitude)
+      ) ||
+      !Number.isFinite(
+        Number(longitude)
+      )
+    ) {
+      return;
+    }
+
+    map.setView(
+      [
+        Number(latitude),
+        Number(longitude)
+      ],
+      Math.max(
+        map.getZoom(),
+        16
+      ),
+      {
+        animate: true
+      }
+    );
+  }, [
+    map,
+    latitude,
+    longitude
+  ]);
+
+  return null;
+}
+
+
+function LocationEditorMap({
+  latitude,
+  longitude,
+  onSelect
+}) {
+  const hasCoordinate = (value) =>
+    value !== null &&
+    value !== undefined &&
+    !(
+      typeof value === 'string' &&
+      !value.trim()
+    ) &&
+    Number.isFinite(
+      Number(value)
+    );
+
+  const hasPin =
+    hasCoordinate(latitude) &&
+    hasCoordinate(longitude);
+
+  const defaultCentre = [
+    50.41716618389792,
+    -4.116519158583742
+  ];
+
+  const locationIcon =
+    L.divIcon({
+      className:
+        'booking-map-div-icon location-editor-icon',
+
+      html: `
+        <span class="booking-map-pin-wrapper">
+          <span class="booking-map-pin pickup">
+            <span class="booking-map-pin-label">
+              P
+            </span>
+          </span>
+        </span>
+      `,
+
+      iconSize: [30, 30],
+      iconAnchor: [15, 30],
+      popupAnchor: [0, -28]
+    });
+
+  return (
+    <div className="location-editor-map-shell">
+      <MapContainer
+        className="location-editor-map"
+        center={
+          hasPin
+            ? [
+                Number(latitude),
+                Number(longitude)
+              ]
+            : defaultCentre
+        }
+        zoom={
+          hasPin
+            ? 16
+            : 14
+        }
+        scrollWheelZoom
+      >
+        {MAP_TILE_URL && (
+          <TileLayer
+            attribution={
+              MAP_TILE_ATTRIBUTION
+            }
+            url={MAP_TILE_URL}
+          />
+        )}
+
+        <LocationMapClickHandler
+          onSelect={onSelect}
+        />
+
+        {hasPin && (
+          <>
+            <LocationMapRecenter
+              latitude={latitude}
+              longitude={longitude}
+            />
+
+            <Marker
+              position={[
+                Number(latitude),
+                Number(longitude)
+              ]}
+              icon={locationIcon}
+            >
+              <Popup>
+                Exact transport point
+              </Popup>
+            </Marker>
+          </>
+        )}
+      </MapContainer>
+
+      <div className="location-editor-map-help">
+        <strong>
+          Click the map to set the exact transport point.
+        </strong>
+
+        <span>
+          Use the entrance or roadside position where the taxi should
+          actually collect or drop off — not simply the centre of the
+          postcode.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+
+function LocationsPage() {
+  const emptyForm = {
+    name: '',
+    parentSite: '',
+    address: '',
+    postcode: '',
+    latitude: null,
+    longitude: null,
+    category: 'hospital',
+    pickupInstructions: '',
+    driverInstructions: '',
+    displayOrder: 0
+  };
+
+  const [
+    locations,
+    setLocations
+  ] = useState([]);
+
+  const [
+    loading,
+    setLoading
+  ] = useState(true);
+
+  const [
+    saving,
+    setSaving
+  ] = useState(false);
+
+  const [
+    error,
+    setError
+  ] = useState('');
+
+  const [
+    notice,
+    setNotice
+  ] = useState('');
+
+  const [
+    query,
+    setQuery
+  ] = useState('');
+
+  const [
+    showModal,
+    setShowModal
+  ] = useState(false);
+
+  const [
+    editingLocation,
+    setEditingLocation
+  ] = useState(null);
+
+  const [
+    form,
+    setForm
+  ] = useState(emptyForm);
+
+  async function loadLocations() {
+    setLoading(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/locations`
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          'Unable to load locations'
+        );
+      }
+
+      setLocations(
+        data.locations ?? []
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load locations'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadLocations();
+  }, []);
+
+  const filteredLocations =
+    useMemo(() => {
+      const term =
+        query
+          .trim()
+          .toLowerCase();
+
+      if (!term) {
+        return locations;
+      }
+
+      return locations.filter(
+        (location) =>
+          [
+            location.name,
+            location.parentSite,
+            location.address,
+            location.postcode,
+            location.category,
+            location.status
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(term)
+      );
+    }, [
+      locations,
+      query
+    ]);
+
+  const stats =
+    useMemo(
+      () => ({
+        active:
+          locations.filter(
+            (location) =>
+              location.status ===
+              'active'
+          ).length,
+
+        inactive:
+          locations.filter(
+            (location) =>
+              location.status ===
+              'inactive'
+          ).length,
+
+        hospitals:
+          locations.filter(
+            (location) =>
+              location.category ===
+              'hospital'
+          ).length
+      }),
+      [locations]
+    );
+
+  function openCreate() {
+    setEditingLocation(null);
+    setForm({
+      ...emptyForm
+    });
+
+    setError('');
+    setNotice('');
+    setShowModal(true);
+  }
+
+  function openEdit(location) {
+    setEditingLocation(location);
+
+    setForm({
+      name:
+        location.name || '',
+
+      parentSite:
+        location.parentSite || '',
+
+      address:
+        location.address || '',
+
+      postcode:
+        location.postcode || '',
+
+      latitude:
+        location.latitude ?? null,
+
+      longitude:
+        location.longitude ?? null,
+
+      category:
+        location.category ||
+        'hospital',
+
+      pickupInstructions:
+        location.pickupInstructions ||
+        '',
+
+      driverInstructions:
+        location.driverInstructions ||
+        '',
+
+      displayOrder:
+        location.displayOrder ?? 0
+    });
+
+    setError('');
+    setNotice('');
+    setShowModal(true);
+  }
+
+  function setMapPoint({
+    latitude,
+    longitude
+  }) {
+    setForm(
+      (current) => ({
+        ...current,
+        latitude,
+        longitude
+      })
+    );
+  }
+
+  async function submitLocation(
+    event
+  ) {
+    event.preventDefault();
+
+    setSaving(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const isEditing =
+        Boolean(
+          editingLocation
+        );
+
+      const response =
+        await apiFetch(
+          isEditing
+            ? `${API_BASE}/api/locations/${editingLocation.id}`
+            : `${API_BASE}/api/locations`,
+          {
+            method:
+              isEditing
+                ? 'PATCH'
+                : 'POST',
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify({
+                name:
+                  form.name,
+
+                parentSite:
+                  form.parentSite,
+
+                address:
+                  form.address,
+
+                postcode:
+                  form.postcode,
+
+                latitude:
+                  form.latitude,
+
+                longitude:
+                  form.longitude,
+
+                category:
+                  form.category,
+
+                pickupInstructions:
+                  form.pickupInstructions,
+
+                driverInstructions:
+                  form.driverInstructions,
+
+                displayOrder:
+                  Number(
+                    form.displayOrder
+                  )
+              })
+          }
+        );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+          `Unable to ${
+            isEditing
+              ? 'update'
+              : 'create'
+          } location`
+        );
+      }
+
+      setShowModal(false);
+      setEditingLocation(null);
+
+      setNotice(
+        isEditing
+          ? 'Location updated successfully.'
+          : 'Location created successfully.'
+      );
+
+      await loadLocations();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to save location'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changeStatus(
+    location
+  ) {
+    const nextStatus =
+      location.status ===
+        'active'
+        ? 'inactive'
+        : 'active';
+
+    const verb =
+      nextStatus === 'inactive'
+        ? 'deactivate'
+        : 'reactivate';
+
+    if (
+      !window.confirm(
+        `Are you sure you want to ${verb} ${location.name}?`
+      )
+    ) {
+      return;
+    }
+
+    setError('');
+    setNotice('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/locations/${location.id}/status`,
+          {
+            method: 'PATCH',
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify({
+                status:
+                  nextStatus
+              })
+          }
+        );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+          'Unable to update location status'
+        );
+      }
+
+      setNotice(
+        `${location.name} is now ${nextStatus}.`
+      );
+
+      await loadLocations();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to update location'
+      );
+    }
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>
+            UHP Locations
+          </h1>
+
+          <p>
+            Maintain exact hospital, clinic, entrance and transport
+            pickup points used across UHP transport bookings.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          className="primary"
+          onClick={openCreate}
+        >
+          <Plus size={18}/>
+          Add Location
+        </button>
+      </div>
+
+      {notice && (
+        <div className="notice success">
+          {notice}
+        </div>
+      )}
+
+      {error &&
+      !showModal &&
+      !loading && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="stats-grid location-stats-grid">
+        <Stat
+          icon={<MapPin/>}
+          label="Active Locations"
+          value={stats.active}
+        />
+
+        <Stat
+          icon={<Clock3/>}
+          label="Inactive"
+          value={stats.inactive}
+        />
+
+        <Stat
+          icon={<CarFront/>}
+          label="Hospital Points"
+          value={stats.hospitals}
+        />
+      </div>
+
+      <div className="card">
+        <div className="toolbar">
+          <div className="search compact">
+            <Search size={17}/>
+
+            <input
+              value={query}
+              onChange={(event) =>
+                setQuery(
+                  event.target.value
+                )
+              }
+              placeholder="Search locations, sites or postcodes..."
+            />
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="state-panel">
+            Loading locations...
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Location</th>
+                  <th>Site / Address</th>
+                  <th>Category</th>
+                  <th>Pin</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredLocations.map(
+                  (location) => (
+                    <tr
+                      key={
+                        location.id
+                      }
+                    >
+                      <td>
+                        <strong>
+                          {location.name}
+                        </strong>
+                      </td>
+
+                      <td>
+                        <div className="location-table-address">
+                          {location.parentSite && (
+                            <strong>
+                              {location.parentSite}
+                            </strong>
+                          )}
+
+                          <span>
+                            {location.address}
+                          </span>
+
+                          {location.postcode && (
+                            <small>
+                              {location.postcode}
+                            </small>
+                          )}
+                        </div>
+                      </td>
+
+                      <td>
+                        {formatStatus(
+                          location.category
+                        )}
+                      </td>
+
+                      <td>
+                        <span className="location-pin-status">
+                          <MapPin size={14}/>
+                          Exact
+                        </span>
+                      </td>
+
+                      <td>
+                        <span
+                          className={`badge ${location.status}`}
+                        >
+                          {formatStatus(
+                            location.status
+                          )}
+                        </span>
+                      </td>
+
+                      <td>
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="text-action"
+                            onClick={() =>
+                              openEdit(
+                                location
+                              )
+                            }
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            className={
+                              location.status ===
+                                'active'
+                                ? 'text-action warning'
+                                : 'text-action'
+                            }
+                            onClick={() =>
+                              changeStatus(
+                                location
+                              )
+                            }
+                          >
+                            {location.status ===
+                              'active'
+                              ? 'Deactivate'
+                              : 'Reactivate'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                )}
+
+                {filteredLocations.length ===
+                  0 && (
+                  <tr>
+                    <td colSpan="6">
+                      <div className="empty-table">
+                        No locations match your search.
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {showModal && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (
+              event.target ===
+                event.currentTarget &&
+              !saving
+            ) {
+              setShowModal(false);
+            }
+          }}
+        >
+          <form
+            className="modal-card location-editor-modal"
+            onSubmit={
+              submitLocation
+            }
+          >
+            <div className="modal-header">
+              <div>
+                <h2>
+                  {editingLocation
+                    ? 'Edit UHP Location'
+                    : 'Add UHP Location'}
+                </h2>
+
+                <p>
+                  Define the descriptive location and then place the
+                  pin where the taxi should actually collect or drop off.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() =>
+                  setShowModal(false)
+                }
+                disabled={saving}
+              >
+                ×
+              </button>
+            </div>
+
+            {error && (
+              <div className="notice error">
+                {error}
+              </div>
+            )}
+
+            <div className="location-editor-layout">
+              <div className="location-editor-fields">
+                <div className="form-grid two">
+                  <label>
+                    Location Name
+                    <input
+                      required
+                      value={
+                        form.name
+                      }
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          name:
+                            event.target.value
+                        })
+                      }
+                      placeholder="e.g. Renal Clinic"
+                    />
+                  </label>
+
+                  <label>
+                    Parent Site
+                    <input
+                      value={
+                        form.parentSite
+                      }
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          parentSite:
+                            event.target.value
+                        })
+                      }
+                      placeholder="e.g. Derriford Hospital"
+                    />
+                  </label>
+                </div>
+
+                <label>
+                  Address / Site Search
+
+                  <BookingAddressAutocomplete
+                    required
+                    searchEnabled={
+                      form.latitude ===
+                        null ||
+                      form.longitude ===
+                        null
+                    }
+                    value={
+                      form.address
+                    }
+                    placeholder="Search for the hospital or nearest address"
+                    onChange={(value) =>
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          address:
+                            value,
+                          postcode:
+                            '',
+                          latitude:
+                            null,
+                          longitude:
+                            null
+                        })
+                      )
+                    }
+                    onSelect={(result) =>
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          address:
+                            result.label,
+                          postcode:
+                            result.postcode ||
+                            '',
+                          latitude:
+                            result.latitude,
+                          longitude:
+                            result.longitude
+                        })
+                      )
+                    }
+                  />
+                </label>
+
+                <div className="form-grid two">
+                  <label>
+                    Postcode
+                    <input
+                      value={
+                        form.postcode
+                      }
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          postcode:
+                            event.target.value
+                              .toUpperCase()
+                        })
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Category
+                    <select
+                      value={
+                        form.category
+                      }
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          category:
+                            event.target.value
+                        })
+                      }
+                    >
+                      <option value="hospital">
+                        Hospital / Clinic
+                      </option>
+
+                      <option value="uhp">
+                        UHP
+                      </option>
+
+                      <option value="transport">
+                        Transport
+                      </option>
+
+                      <option value="other">
+                        Other
+                      </option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="form-grid two">
+                  <label>
+                    Latitude
+                    <input
+                      readOnly
+                      value={
+                        form.latitude ===
+                          null
+                          ? ''
+                          : Number(
+                              form.latitude
+                            ).toFixed(6)
+                      }
+                      placeholder="Set using map"
+                    />
+                  </label>
+
+                  <label>
+                    Longitude
+                    <input
+                      readOnly
+                      value={
+                        form.longitude ===
+                          null
+                          ? ''
+                          : Number(
+                              form.longitude
+                            ).toFixed(6)
+                      }
+                      placeholder="Set using map"
+                    />
+                  </label>
+                </div>
+
+                <label>
+                  Pickup Instructions
+                  <textarea
+                    rows="3"
+                    value={
+                      form.pickupInstructions
+                    }
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        pickupInstructions:
+                          event.target.value
+                      })
+                    }
+                    placeholder="What should the UHP booker know about this pickup point?"
+                  />
+                </label>
+
+                <label>
+                  Driver Instructions
+                  <textarea
+                    rows="3"
+                    value={
+                      form.driverInstructions
+                    }
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        driverInstructions:
+                          event.target.value
+                      })
+                    }
+                    placeholder="Operational instructions that help the driver locate the exact point."
+                  />
+                </label>
+
+                <label className="location-display-order">
+                  Display Order
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={
+                      form.displayOrder
+                    }
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        displayOrder:
+                          event.target.value
+                      })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="location-editor-map-column">
+                <LocationEditorMap
+                  latitude={
+                    form.latitude
+                  }
+                  longitude={
+                    form.longitude
+                  }
+                  onSelect={
+                    setMapPoint
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() =>
+                  setShowModal(false)
+                }
+                disabled={saving}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                className="primary"
+                disabled={
+                  saving ||
+                  form.latitude ===
+                    null ||
+                  form.longitude ===
+                    null
+                }
+              >
+                {saving
+                  ? 'Saving...'
+                  : editingLocation
+                    ? 'Save Changes'
+                    : 'Create Location'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </>
+  );
+}
+
 
 function ReasonCodesPage() {
   const [reasonCodes, setReasonCodes] = useState([]);
