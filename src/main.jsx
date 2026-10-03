@@ -2817,6 +2817,7 @@ function BookingRouteMap({
 function formatBookingAuditEvent(event) {
   const labels = {
     booking_created: 'Booking Created',
+    booking_imported: 'Booking Created',
     booking_modified: 'Booking Modified',
     autocab_submission_started: 'Sent to Autocab',
     autocab_booking_created: 'Autocab Booking Created',
@@ -3020,12 +3021,35 @@ function BookingDetailModal({
   const internalAuditHistory =
     booking.auditEvents ?? [];
 
+  const uhpVisibleBookingEvents =
+    new Set([
+      'booking_imported',
+      'booking_created',
+      'autocab_submission_started',
+      'autocab_booking_created',
+      'booking_dispatch_accepted',
+      'booking_arrived',
+      'passenger_on_board',
+      'booking_complete',
+      'booking_completed',
+      'booking_cancelled',
+      'autocab_cancellation_started',
+      'autocab_cancellation_succeeded',
+      'no_fare'
+    ]);
+
   const unifiedAuditHistory = [
-    ...history.map((event) => ({
-      ...event,
-      auditKey: `event-${event.id}`,
-      auditType: 'booking'
-    })),
+    ...history
+      .filter((event) =>
+        uhpVisibleBookingEvents.has(
+          event.eventType
+        )
+      )
+      .map((event) => ({
+        ...event,
+        auditKey: `event-${event.id}`,
+        auditType: 'booking'
+      })),
 
     ...internalAuditHistory.map((event) => ({
       ...event,
@@ -3671,42 +3695,44 @@ function BookingDetailModal({
                   )}
               </div>
 
-              <div className="booking-modal-section">
-                <div className="booking-modal-section-heading">
-                  <h3>Operational Timeline</h3>
-                </div>
-
-                {operationalTimeline.length ? (
-                  <div className="operational-timeline">
-                    {operationalTimeline.map(
-                      (item) => (
-                        <div
-                          className="operational-timeline-item"
-                          key={`${item.label}-${item.at}`}
-                        >
-                          <span className="operational-timeline-dot"/>
-
-                          <div>
-                            <strong>
-                              {item.label}
-                            </strong>
-
-                            <small>
-                              {formatBookingDateTime(
-                                item.at
-                              )}
-                            </small>
-                          </div>
-                        </div>
-                      )
-                    )}
+              {isNac && (
+                <div className="booking-modal-section">
+                  <div className="booking-modal-section-heading">
+                    <h3>Operational Timeline</h3>
                   </div>
-                ) : (
-                  <span className="history-empty">
-                    No operational timestamps recorded yet.
-                  </span>
-                )}
-              </div>
+
+                  {operationalTimeline.length ? (
+                    <div className="operational-timeline">
+                      {operationalTimeline.map(
+                        (item) => (
+                          <div
+                            className="operational-timeline-item"
+                            key={`${item.label}-${item.at}`}
+                          >
+                            <span className="operational-timeline-dot"/>
+
+                            <div>
+                              <strong>
+                                {item.label}
+                              </strong>
+
+                              <small>
+                                {formatBookingDateTime(
+                                  item.at
+                                )}
+                              </small>
+                            </div>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  ) : (
+                    <span className="history-empty">
+                      No operational timestamps recorded yet.
+                    </span>
+                  )}
+                </div>
+              )}
 
             </>
           )}
@@ -3714,29 +3740,52 @@ function BookingDetailModal({
           {!isNac && (
             <div className="booking-modal-section booking-audit-section">
               <div className="booking-modal-section-heading">
-                <h3>Full Audit Log</h3>
-
-                <small className="booking-audit-count">
-                  {unifiedAuditHistory.length} events
-                </small>
+                <h3>Booking History</h3>
               </div>
 
               {compactAuditHistory.length ? (
                 <div className="booking-audit-log">
                   {compactAuditHistory.map((event) => {
-                    const source =
-                      formatAuditSource(
-                        event.eventSource
-                      );
+                    const importedBooker =
+                      booking.autocabBookedBy ||
+                      booking.bookedBy ||
+                      booking.createdBy ||
+                      booking.bookerName ||
+                      null;
 
-                    const actor =
-                      event.actorName ||
-                      (event.eventSource === 'autocab'
-                        ? 'Autocab'
-                        : event.eventSource === 'portal' ||
-                            event.eventSource === 'uhp_admin'
-                          ? 'UHP Portal'
-                          : 'System');
+                    let actor = 'System';
+
+                    if (event.auditType === 'internal') {
+                      actor = event.actorName
+                        ? `${event.actorName} · UHP`
+                        : 'UHP Portal · System';
+                    } else if (
+                      event.eventSource === 'portal'
+                    ) {
+                      actor = event.actorName
+                        ? `${event.actorName} · UHP`
+                        : 'UHP Portal · System';
+                    } else if (
+                      event.eventSource === 'autocab'
+                    ) {
+                      if (event.actorName) {
+                        actor =
+                          `${event.actorName} · Need-A-Cab`;
+                      } else if (
+                        (
+                          event.eventType ===
+                            'booking_imported' ||
+                          event.eventType ===
+                            'booking_created'
+                        ) &&
+                        importedBooker
+                      ) {
+                        actor =
+                          `${importedBooker} · Need-A-Cab`;
+                      } else {
+                        actor = 'Autocab · System';
+                      }
+                    }
 
                     const title =
                       event.auditType === 'internal'
@@ -3765,13 +3814,6 @@ function BookingDetailModal({
 
                           <span className="booking-audit-summary">
                             {actor}
-
-                            {actor !== source && (
-                              <>
-                                {' · '}
-                                {source}
-                              </>
-                            )}
 
                             {event.oldStatus &&
                               event.newStatus &&
