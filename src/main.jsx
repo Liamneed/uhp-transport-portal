@@ -2845,6 +2845,35 @@ function formatBookingAuditEvent(event) {
 }
 
 
+function formatAuditSource(source) {
+  const labels = {
+    autocab: 'Autocab',
+    portal: 'UHP Portal',
+    uhp_admin: 'UHP Portal',
+    system: 'System'
+  };
+
+  return (
+    labels[source] ||
+    String(source || 'System')
+      .replaceAll('_', ' ')
+      .replace(/\b\w/g, (character) =>
+        character.toUpperCase()
+      )
+  );
+}
+
+
+function formatInternalAuditAction(action) {
+  return String(action || 'Internal Action')
+    .replaceAll('_', ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (character) =>
+      character.toUpperCase()
+    );
+}
+
+
 function BookingDetailModal({
   booking: initialBooking,
   onClose,
@@ -2987,6 +3016,89 @@ function BookingDetailModal({
 
   const history =
     booking.events ?? [];
+
+  const internalAuditHistory =
+    booking.auditEvents ?? [];
+
+  const unifiedAuditHistory = [
+    ...history.map((event) => ({
+      ...event,
+      auditKey: `event-${event.id}`,
+      auditType: 'booking'
+    })),
+
+    ...internalAuditHistory.map((event) => ({
+      ...event,
+      auditKey: `audit-${event.id}`,
+      auditType: 'internal',
+      eventSource: event.source || 'system',
+      eventType: event.action || 'internal_action',
+      oldStatus: null,
+      newStatus: null,
+      notes:
+        event.fieldName
+          ? [
+              event.fieldName
+                .replaceAll('_', ' ')
+                .replace(/\b\w/g, (character) =>
+                  character.toUpperCase()
+                ),
+              event.oldValue !== null &&
+              event.oldValue !== undefined &&
+              event.newValue !== null &&
+              event.newValue !== undefined
+                ? `${event.oldValue} → ${event.newValue}`
+                : event.newValue !== null &&
+                    event.newValue !== undefined
+                  ? String(event.newValue)
+                  : null
+            ]
+              .filter(Boolean)
+              .join(': ')
+          : null
+    }))
+  ]
+    .sort((left, right) => {
+      const leftTime =
+        Date.parse(left.eventAt || '') || 0;
+
+      const rightTime =
+        Date.parse(right.eventAt || '') || 0;
+
+      return rightTime - leftTime;
+    });
+
+  const compactAuditHistory =
+    unifiedAuditHistory.reduce(
+      (items, event) => {
+        const previous =
+          items[items.length - 1];
+
+        const groupable =
+          event.auditType === 'booking' &&
+          event.eventType === 'booking_modified' &&
+          event.eventSource === 'autocab';
+
+        if (
+          groupable &&
+          previous &&
+          previous.auditType === 'booking' &&
+          previous.eventType === 'booking_modified' &&
+          previous.eventSource === 'autocab'
+        ) {
+          previous.repeatCount += 1;
+          return items;
+        }
+
+        items.push({
+          ...event,
+          repeatCount: 1
+        });
+
+        return items;
+      },
+      []
+    );
 
   const isNac =
     context === 'nac';
@@ -3600,71 +3712,99 @@ function BookingDetailModal({
           )}
 
           {!isNac && (
-            <div className="booking-modal-section">
+            <div className="booking-modal-section booking-audit-section">
               <div className="booking-modal-section-heading">
                 <h3>Full Audit Log</h3>
+
+                <small className="booking-audit-count">
+                  {unifiedAuditHistory.length} events
+                </small>
               </div>
 
-              {history.length ? (
+              {compactAuditHistory.length ? (
                 <div className="booking-audit-log">
-                  {history.map((event) => (
-                    <div
-                      className="booking-audit-item"
-                      key={event.id}
-                    >
-                      <div className="booking-audit-heading">
-                        <strong>
-                          {formatBookingAuditEvent(
+                  {compactAuditHistory.map((event) => {
+                    const source =
+                      formatAuditSource(
+                        event.eventSource
+                      );
+
+                    const actor =
+                      event.actorName ||
+                      (event.eventSource === 'autocab'
+                        ? 'Autocab'
+                        : event.eventSource === 'portal' ||
+                            event.eventSource === 'uhp_admin'
+                          ? 'UHP Portal'
+                          : 'System');
+
+                    const title =
+                      event.auditType === 'internal'
+                        ? formatInternalAuditAction(
+                            event.eventType
+                          )
+                        : formatBookingAuditEvent(
                             event
-                          )}
-                        </strong>
+                          );
 
-                        <small>
-                          {formatBookingDateTime(
-                            event.eventAt
-                          )}
-                        </small>
-                      </div>
+                    return (
+                      <div
+                        className="booking-audit-item"
+                        key={event.auditKey}
+                      >
+                        <div className="booking-audit-heading">
+                          <strong>
+                            {title}
 
-                      <div className="booking-audit-meta">
-                        <span>
-                          Source:{' '}
-                          {event.eventSource === 'autocab'
-                            ? 'Autocab'
-                            : event.eventSource === 'portal'
-                              ? 'UHP Portal'
-                              : event.eventSource || 'System'}
-                        </span>
-
-                        {event.userId && (
-                          <span>
-                            User ID: {event.userId}
-                          </span>
-                        )}
-
-                        {event.oldStatus &&
-                          event.newStatus &&
-                          event.oldStatus !==
-                            event.newStatus && (
-                          <span>
-                            {formatOperationalStatus(
-                              event.oldStatus
+                            {event.repeatCount > 1 && (
+                              <span className="booking-audit-repeat">
+                                ×{event.repeatCount}
+                              </span>
                             )}
-                            {' → '}
-                            {formatOperationalStatus(
-                              event.newStatus
+                          </strong>
+
+                          <span className="booking-audit-summary">
+                            {actor}
+
+                            {actor !== source && (
+                              <>
+                                {' · '}
+                                {source}
+                              </>
+                            )}
+
+                            {event.oldStatus &&
+                              event.newStatus &&
+                              event.oldStatus !==
+                                event.newStatus && (
+                              <>
+                                {' · '}
+                                {formatOperationalStatus(
+                                  event.oldStatus
+                                )}
+                                {' → '}
+                                {formatOperationalStatus(
+                                  event.newStatus
+                                )}
+                              </>
                             )}
                           </span>
+
+                          <small>
+                            {formatBookingDateTime(
+                              event.eventAt
+                            )}
+                          </small>
+                        </div>
+
+                        {event.notes && (
+                          <div className="booking-audit-notes">
+                            {event.notes}
+                          </div>
                         )}
                       </div>
-
-                      {event.notes && (
-                        <p className="booking-audit-notes">
-                          {event.notes}
-                        </p>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <span className="history-empty">
@@ -3673,6 +3813,7 @@ function BookingDetailModal({
               )}
             </div>
           )}
+
 
           {isNac && (
             <div className="booking-modal-section">

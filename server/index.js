@@ -4039,17 +4039,50 @@ function listOperationalBookings() {
 
   const eventsStatement = db.prepare(`
     SELECT
-      id,
-      event_type AS eventType,
-      event_source AS eventSource,
-      event_at AS eventAt,
-      old_status AS oldStatus,
-      new_status AS newStatus,
-      user_id AS userId,
-      notes
-    FROM booking_events
-    WHERE booking_id = ?
-    ORDER BY id DESC
+      be.id,
+      be.event_type AS eventType,
+      be.event_source AS eventSource,
+      be.event_at AS eventAt,
+      be.old_status AS oldStatus,
+      be.new_status AS newStatus,
+      be.user_id AS userId,
+      CASE
+        WHEN u.id IS NULL THEN NULL
+        ELSE TRIM(
+          u.first_name || ' ' || u.last_name
+        )
+      END AS actorName,
+      be.notes
+    FROM booking_events be
+    LEFT JOIN users u
+      ON u.id = be.user_id
+    WHERE be.booking_id = ?
+    ORDER BY be.id DESC
+  `);
+
+  const auditEventsStatement = db.prepare(`
+    SELECT
+      al.id,
+      al.action,
+      al.field_name AS fieldName,
+      al.old_value AS oldValue,
+      al.new_value AS newValue,
+      al.source,
+      al.actor_user_id AS userId,
+      CASE
+        WHEN u.id IS NULL THEN NULL
+        ELSE TRIM(
+          u.first_name || ' ' || u.last_name
+        )
+      END AS actorName,
+      al.created_at AS eventAt
+    FROM audit_log al
+    LEFT JOIN users u
+      ON u.id = al.actor_user_id
+    WHERE al.entity_type = 'booking'
+      AND al.entity_id = CAST(? AS TEXT)
+      AND al.action <> 'STATUS_CHANGE'
+    ORDER BY al.id DESC
   `);
 
   const operationalTimesStatement =
@@ -4553,6 +4586,9 @@ function listOperationalBookings() {
 
       events:
         eventsStatement.all(booking.id),
+
+      auditEvents:
+        auditEventsStatement.all(booking.id),
 
       acceptedAt:
         dispatchedAt ||
