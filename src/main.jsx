@@ -9120,6 +9120,11 @@ function BookTransportPage({ currentUser }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [confirmation, setConfirmation] = useState(null);
+  const [pendingBookingId, setPendingBookingId] = useState(null);
+  const [
+    pendingBookingReference,
+    setPendingBookingReference
+  ] = useState('');
 
   useEffect(() => {
     loadBookingOptions();
@@ -9218,6 +9223,8 @@ function BookTransportPage({ currentUser }) {
 
     setVias([]);
     setConfirmation(null);
+    setPendingBookingId(null);
+    setPendingBookingReference('');
     setError('');
   }
 
@@ -9235,95 +9242,133 @@ function BookTransportPage({ currentUser }) {
         );
       }
 
-      const response = await apiFetch(
-        `${API_BASE}/api/bookings`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            requestedPickupAt:
-              `${form.pickupDate}T${form.pickupTime}:00`,
+      let bookingId =
+        pendingBookingId;
 
-            passengerName: form.passengerName,
-            passengerMobile: form.passengerMobile,
-            passengerCount: Number(form.passengerCount),
-
-            pickup: {
-              address:
-                form.pickupAddress,
-              postcode:
-                form.pickupPostcode,
-              latitude:
-                form.pickupLatitude,
-              longitude:
-                form.pickupLongitude,
-              savedLocationId:
-                form.pickupSavedLocationId,
-              locationName:
-                form.pickupLocationName,
-              pickupInstructions:
-                form.pickupPickupInstructions
+      if (!bookingId) {
+        const response = await apiFetch(
+          `${API_BASE}/api/bookings`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
             },
+            body: JSON.stringify({
+              requestedPickupAt:
+                `${form.pickupDate}T${form.pickupTime}:00`,
 
-            vias: vias
-              .filter(
-                (via) =>
-                  via.address.trim()
-              )
-              .map((via) => ({
+              passengerName: form.passengerName,
+              passengerMobile: form.passengerMobile,
+              passengerCount: Number(form.passengerCount),
+
+              pickup: {
                 address:
-                  via.address,
+                  form.pickupAddress,
                 postcode:
-                  via.postcode,
+                  form.pickupPostcode,
                 latitude:
-                  via.latitude,
+                  form.pickupLatitude,
                 longitude:
-                  via.longitude,
+                  form.pickupLongitude,
                 savedLocationId:
-                  via.savedLocationId,
+                  form.pickupSavedLocationId,
                 locationName:
-                  via.locationName,
+                  form.pickupLocationName,
                 pickupInstructions:
-                  via.pickupInstructions
-              })),
+                  form.pickupPickupInstructions
+              },
 
-            destination: {
-              address:
-                form.destinationAddress,
-              postcode:
-                form.destinationPostcode,
-              latitude:
-                form.destinationLatitude,
-              longitude:
-                form.destinationLongitude,
-              savedLocationId:
-                form.destinationSavedLocationId,
-              locationName:
-                form.destinationLocationName,
-              pickupInstructions:
-                form.destinationPickupInstructions
-            },
+              vias: vias
+                .filter(
+                  (via) =>
+                    via.address.trim()
+                )
+                .map((via) => ({
+                  address:
+                    via.address,
+                  postcode:
+                    via.postcode,
+                  latitude:
+                    via.latitude,
+                  longitude:
+                    via.longitude,
+                  savedLocationId:
+                    via.savedLocationId,
+                  locationName:
+                    via.locationName,
+                  pickupInstructions:
+                    via.pickupInstructions
+                })),
 
-            driverNotes: form.driverNotes,
+              destination: {
+                address:
+                  form.destinationAddress,
+                postcode:
+                  form.destinationPostcode,
+                latitude:
+                  form.destinationLatitude,
+                longitude:
+                  form.destinationLongitude,
+                savedLocationId:
+                  form.destinationSavedLocationId,
+                locationName:
+                  form.destinationLocationName,
+                pickupInstructions:
+                  form.destinationPickupInstructions
+              },
 
-            budgetId: Number(form.budgetId),
-            reasonCodeId: Number(form.reasonCodeId),
-            createdByUserId: bookingUserId
-          })
+              driverNotes: form.driverNotes,
+
+              budgetId: Number(form.budgetId),
+              reasonCodeId: Number(form.reasonCodeId),
+              createdByUserId: bookingUserId
+            })
+          }
+        );
+
+        const result =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ||
+            'Unable to create booking'
+          );
         }
-      );
 
-      const result = await response.json();
+        bookingId =
+          result.booking.id;
 
-      if (!response.ok) {
-        throw new Error(
-          result.error || 'Unable to create booking'
+        setPendingBookingId(
+          bookingId
+        );
+
+        setPendingBookingReference(
+          result.booking.publicReference ||
+          `Booking ${bookingId}`
         );
       }
 
-      setConfirmation(result.booking);
+      const submitResponse = await apiFetch(
+        `${API_BASE}/api/bookings/${bookingId}/submit`,
+        {
+          method: 'POST'
+        }
+      );
+
+      const submitResult =
+        await submitResponse.json();
+
+      if (!submitResponse.ok) {
+        throw new Error(
+          submitResult.error ||
+          'Unable to submit booking to dispatch'
+        );
+      }
+
+      setConfirmation(
+        submitResult.booking
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -9350,10 +9395,10 @@ function BookTransportPage({ currentUser }) {
           <CheckCircle2 size={34}/>
         </div>
 
-        <h1>Transport request created</h1>
+        <h1>Transport booked</h1>
 
         <p className="confirmation-lead">
-          The UHP transport request has been recorded successfully.
+          The UHP transport booking has been sent to dispatch successfully.
         </p>
 
         <div className="confirmation-reference">
@@ -9414,8 +9459,7 @@ function BookTransportPage({ currentUser }) {
         </div>
 
         <div className="confirmation-note">
-          This request is currently stored in the UHP Transport Portal.
-          Autocab dispatch integration has not yet been enabled.
+          This booking has been sent to Autocab dispatch and linked to the UHP Transport Portal.
         </div>
 
         <button
@@ -10240,17 +10284,41 @@ function BookTransportPage({ currentUser }) {
               UHP account process.
             </div>
 
+            {error && pendingBookingId && (
+              <div className="notice error">
+                <strong>
+                  Dispatch confirmation needs review.
+                </strong>
+
+                <div>
+                  This transport request has already been recorded
+                  in the UHP Transport Portal
+                  {pendingBookingReference
+                    ? ` as ${pendingBookingReference}`
+                    : ''}.
+                  {' '}Do not create another request for the same journey.
+                </div>
+
+                <div>
+                  {error}
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
               className="primary booking-submit"
               disabled={
                 saving ||
-                budgets.length === 0
+                budgets.length === 0 ||
+                Boolean(pendingBookingId)
               }
             >
               {saving
                 ? 'Creating Request...'
-                : 'Create Transport Request'}
+                : pendingBookingId
+                  ? 'Dispatch Review Required'
+                  : 'Create Transport Request'}
             </button>
           </div>
         </aside>

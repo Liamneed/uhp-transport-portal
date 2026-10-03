@@ -15,6 +15,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '..');
 
+const ENV_FILE =
+  path.join(ROOT, '.env');
+
+if (
+  fs.existsSync(ENV_FILE)
+) {
+  process.loadEnvFile(
+    ENV_FILE
+  );
+}
+
 const NODE_ENV =
   String(process.env.NODE_ENV || 'development');
 
@@ -53,6 +64,37 @@ const MAPTILER_GEOCODING_API_KEY =
     process.env.MAPTILER_GEOCODING_API_KEY ||
     ''
   ).trim();
+
+const AUTOCAB_BOOKING_API_URL =
+  String(
+    process.env.AUTOCAB_BOOKING_API_URL ||
+    'https://autocab-api.azure-api.net'
+  ).replace(/\/$/, '');
+
+const AUTOCAB_SUBSCRIPTION_KEY =
+  String(
+    process.env.AUTOCAB_SUBSCRIPTION_KEY ||
+    ''
+  ).trim();
+
+const AUTOCAB_COMPANY_ID =
+  Number(
+    process.env.AUTOCAB_COMPANY_ID || 1
+  );
+
+const AUTOCAB_UHP_CUSTOMER_ID =
+  Number(
+    process.env.AUTOCAB_UHP_CUSTOMER_ID ||
+    2139
+  );
+
+const AUTOCAB_UHP_XMAS_CUSTOMER_ID =
+  Number(
+    process.env
+      .AUTOCAB_UHP_XMAS_CUSTOMER_ID ||
+    2023
+  );
+
 
 const OSRM_BASE_URL =
   String(
@@ -5264,6 +5306,8 @@ function getBookingById(bookingId) {
       creator.first_name || ' ' || creator.last_name AS createdBy,
       b.department_id AS departmentId,
       d.name AS department,
+      b.submitted_at AS submittedAt,
+      b.confirmed_at AS confirmedAt,
       b.created_at AS createdAt
     FROM bookings b
     LEFT JOIN budgets bu ON bu.id = b.budget_id
@@ -7521,10 +7565,18 @@ function reconcileAutocabBookingEvent({
               ELSE cancelled_at
             END,
 
+          financial_status =
+            CASE
+              WHEN ? = 'cancelled'
+                THEN 'authorisation_withdrawn'
+              ELSE financial_status
+            END,
+
           updated_at = CURRENT_TIMESTAMP
 
         WHERE id = ?
       `).run(
+        nextStatus,
         nextStatus,
         nextStatus,
         nextStatus,
@@ -7662,7 +7714,10 @@ function captureAutocabWebhook(
   const autocabBookingId =
     definition.category === 'booking'
       ? normaliseAutocabScalar(
-          payload?.Id
+          routeSuffix === 'cancelled'
+            ? payload?.OriginalBookingId ??
+              payload?.Id
+            : payload?.Id
         )
       : null;
 
@@ -9417,6 +9472,1493 @@ function createPortalBooking(payload) {
   }
 }
 
+function getAutocabPortalCustomerId(
+  accountType = 'uhp'
+) {
+  if (accountType === 'xmas_staff') {
+    return AUTOCAB_UHP_XMAS_CUSTOMER_ID;
+  }
+
+  return AUTOCAB_UHP_CUSTOMER_ID;
+}
+
+
+function buildAutocabRoutePoint(
+  stop,
+  type
+) {
+  if (!stop?.address) {
+    const error =
+      new Error(
+        `Autocab ${type.toLowerCase()} address is missing`
+      );
+
+    error.statusCode = 409;
+
+    throw error;
+  }
+
+  if (
+    stop.latitude === null ||
+    stop.latitude === undefined ||
+    stop.latitude === '' ||
+    stop.longitude === null ||
+    stop.longitude === undefined ||
+    stop.longitude === '' ||
+    !Number.isFinite(
+      Number(stop.latitude)
+    ) ||
+    !Number.isFinite(
+      Number(stop.longitude)
+    )
+  ) {
+    const error =
+      new Error(
+        `Autocab ${type.toLowerCase()} coordinates are missing`
+      );
+
+    error.statusCode = 409;
+
+    throw error;
+  }
+
+  return {
+    address: {
+      coordinate: {
+        latitude:
+          Number(stop.latitude),
+        longitude:
+          Number(stop.longitude)
+      },
+
+      id:
+        '-1',
+
+      isCustom:
+        true,
+
+      postCode:
+        stop.postcode || '',
+
+      text:
+        stop.address
+    },
+
+    note:
+      stop.notes ||
+      stop.pickupInstructions ||
+      '',
+
+    passengerDetailsIndex:
+      null,
+
+    type
+  };
+}
+
+
+
+const EUROPE_LONDON_TIME_FORMATTER =
+  new Intl.DateTimeFormat(
+    'en-GB',
+    {
+      timeZone:
+        'Europe/London',
+
+      year:
+        'numeric',
+
+      month:
+        '2-digit',
+
+      day:
+        '2-digit',
+
+      hour:
+        '2-digit',
+
+      minute:
+        '2-digit',
+
+      second:
+        '2-digit',
+
+      hourCycle:
+        'h23'
+    }
+  );
+
+
+function getEuropeLondonDateTimeParts(
+  date
+) {
+  const parts =
+    EUROPE_LONDON_TIME_FORMATTER
+      .formatToParts(date);
+
+  const values = {};
+
+  for (const part of parts) {
+    if (
+      part.type !==
+        'literal'
+    ) {
+      values[
+        part.type
+      ] = part.value;
+    }
+  }
+
+  return {
+    year:
+      Number(values.year),
+
+    month:
+      Number(values.month),
+
+    day:
+      Number(values.day),
+
+    hour:
+      Number(values.hour),
+
+    minute:
+      Number(values.minute),
+
+    second:
+      Number(values.second)
+  };
+}
+
+
+function formatLocalIsoDateTime(
+  {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second
+  }
+) {
+  const pad =
+    (value) =>
+      String(value)
+        .padStart(2, '0');
+
+  return (
+    `${year}-` +
+    `${pad(month)}-` +
+    `${pad(day)}T` +
+    `${pad(hour)}:` +
+    `${pad(minute)}:` +
+    `${pad(second)}.000`
+  );
+}
+
+
+function normaliseUhpPickupTime(
+  value
+) {
+  const input =
+    String(
+      value || ''
+    ).trim();
+
+  if (!input) {
+    const error =
+      new Error(
+        'Pickup date and time are required'
+      );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  /*
+    Values already carrying an explicit
+    timezone represent an absolute instant.
+
+    Convert that instant back to the
+    Europe/London wall-clock value for
+    pickupDueTime while preserving the
+    absolute UTC instant separately.
+  */
+  if (
+    /(?:Z|[+-]\d{2}:\d{2})$/i
+      .test(input)
+  ) {
+    const instant =
+      new Date(input);
+
+    if (
+      Number.isNaN(
+        instant.getTime()
+      )
+    ) {
+      const error =
+        new Error(
+          'Pickup date and time are not valid'
+        );
+
+      error.statusCode = 400;
+
+      throw error;
+    }
+
+    return {
+      local:
+        formatLocalIsoDateTime(
+          getEuropeLondonDateTimeParts(
+            instant
+          )
+        ),
+
+      utc:
+        instant.toISOString()
+    };
+  }
+
+  const match =
+    input.match(
+      /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?$/
+    );
+
+  if (!match) {
+    const error =
+      new Error(
+        'Pickup date and time are not valid'
+      );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const target = {
+    year:
+      Number(match[1]),
+
+    month:
+      Number(match[2]),
+
+    day:
+      Number(match[3]),
+
+    hour:
+      Number(match[4]),
+
+    minute:
+      Number(match[5]),
+
+    second:
+      Number(
+        match[6] || 0
+      )
+  };
+
+  /*
+    Date.UTC normalises impossible dates
+    such as 31 February. Verify the parts
+    before doing timezone resolution.
+  */
+  const nominalUtc =
+    new Date(
+      Date.UTC(
+        target.year,
+        target.month - 1,
+        target.day,
+        target.hour,
+        target.minute,
+        target.second
+      )
+    );
+
+  if (
+    nominalUtc.getUTCFullYear() !==
+      target.year ||
+    nominalUtc.getUTCMonth() + 1 !==
+      target.month ||
+    nominalUtc.getUTCDate() !==
+      target.day ||
+    nominalUtc.getUTCHours() !==
+      target.hour ||
+    nominalUtc.getUTCMinutes() !==
+      target.minute ||
+    nominalUtc.getUTCSeconds() !==
+      target.second
+  ) {
+    const error =
+      new Error(
+        'Pickup date and time are not valid'
+      );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const targetKey =
+    formatLocalIsoDateTime(
+      target
+    );
+
+  const matches =
+    new Map();
+
+  /*
+    Resolve the Europe/London wall-clock
+    time without depending on the server's
+    own operating-system timezone.
+
+    Scanning possible offsets also lets us
+    detect DST gaps and repeated times.
+  */
+  for (
+    let offsetMinutes = -180;
+    offsetMinutes <= 180;
+    offsetMinutes += 15
+  ) {
+    const candidate =
+      new Date(
+        nominalUtc.getTime() -
+        offsetMinutes *
+          60 *
+          1000
+      );
+
+    const localKey =
+      formatLocalIsoDateTime(
+        getEuropeLondonDateTimeParts(
+          candidate
+        )
+      );
+
+    if (
+      localKey === targetKey
+    ) {
+      matches.set(
+        candidate.getTime(),
+        candidate
+      );
+    }
+  }
+
+  const candidates =
+    [...matches.values()]
+      .sort(
+        (a, b) =>
+          a.getTime() -
+          b.getTime()
+      );
+
+  if (
+    candidates.length === 0
+  ) {
+    const error =
+      new Error(
+        'Pickup time does not exist in Europe/London because of the daylight saving clock change'
+      );
+
+    error.statusCode = 409;
+
+    throw error;
+  }
+
+  if (
+    candidates.length > 1
+  ) {
+    const error =
+      new Error(
+        'Pickup time is ambiguous in Europe/London because of the daylight saving clock change'
+      );
+
+    error.statusCode = 409;
+
+    throw error;
+  }
+
+  return {
+    local:
+      targetKey,
+
+    utc:
+      candidates[0]
+        .toISOString()
+  };
+}
+
+
+function buildAutocabBookingPayload(
+  bookingId,
+  {
+    accountType = 'uhp'
+  } = {}
+) {
+  const booking =
+    db.prepare(`
+      SELECT
+        b.id,
+        b.public_reference
+          AS publicReference,
+        b.requested_pickup_at
+          AS requestedPickupAt,
+        b.passenger_name
+          AS passengerName,
+        b.passenger_mobile
+          AS passengerMobile,
+        b.passenger_count
+          AS passengerCount,
+        b.driver_notes
+          AS driverNotes,
+        b.internal_notes
+          AS internalNotes,
+
+        creator.email
+          AS customerEmail,
+
+        creator.first_name ||
+          ' ' ||
+          creator.last_name
+          AS bookedBy,
+
+        bu.budget_number
+          AS budgetNumber,
+
+        rc.code
+          AS reasonCode,
+
+        holder.first_name ||
+          ' ' ||
+          holder.last_name
+          AS budgetHolder
+
+      FROM bookings b
+
+      JOIN budgets bu
+        ON bu.id = b.budget_id
+
+      JOIN reason_codes rc
+        ON rc.id = b.reason_code_id
+
+      JOIN users holder
+        ON holder.id =
+          b.budget_holder_user_id
+
+      JOIN users creator
+        ON creator.id =
+          b.created_by_user_id
+
+      WHERE b.id = ?
+    `).get(
+      bookingId
+    );
+
+  if (!booking) {
+    const error =
+      new Error(
+        'Booking not found for Autocab submission'
+      );
+
+    error.statusCode = 404;
+
+    throw error;
+  }
+
+  const stops =
+    getBookingStops(
+      bookingId
+    );
+
+  const pickup =
+    stops.find(
+      (stop) =>
+        stop.stopType === 'pickup'
+    );
+
+  const destination =
+    stops.find(
+      (stop) =>
+        stop.stopType ===
+        'destination'
+    );
+
+  const vias =
+    stops.filter(
+      (stop) =>
+        stop.stopType === 'via'
+    );
+
+  const customerId =
+    getAutocabPortalCustomerId(
+      accountType
+    );
+
+  const ourReference =
+    [
+      booking.reasonCode,
+      booking.budgetNumber,
+      booking.budgetHolder
+    ]
+      .filter(Boolean)
+      .join('/');
+
+  const pickupTime =
+    normaliseUhpPickupTime(
+      booking.requestedPickupAt
+    );
+
+  return {
+    capabilities: [],
+
+    companyId:
+      AUTOCAB_COMPANY_ID,
+
+    customerId,
+
+    customerEmail:
+      booking.customerEmail || '',
+
+    driverConstraints: {
+      forbiddenDrivers: [],
+      requestedDrivers: []
+    },
+
+    vehicleConstraints: {
+      forbiddenVehicles: [],
+      requestedVehicles: []
+    },
+
+    driverNote:
+      booking.driverNotes || '',
+
+    officeNote:
+      [
+        'UHP Portal',
+        booking.publicReference,
+        booking.bookedBy
+          ? `Booked by ${booking.bookedBy}`
+          : null,
+        booking.budgetNumber
+          ? `Budget ${booking.budgetNumber}`
+          : null,
+        booking.reasonCode
+          ? `Reason ${booking.reasonCode}`
+          : null
+      ]
+        .filter(Boolean)
+        .join(' - '),
+
+    name:
+      booking.passengerName,
+
+    passengers:
+      String(
+        booking.passengerCount || 1
+      ),
+
+    luggage:
+      0,
+
+    telephoneNumber:
+      booking.passengerMobile,
+
+    ourReference,
+
+    pickup:
+      buildAutocabRoutePoint(
+        pickup,
+        'Pickup'
+      ),
+
+    vias:
+      vias.map(
+        (via) =>
+          buildAutocabRoutePoint(
+            via,
+            'Via'
+          )
+      ),
+
+    destination:
+      buildAutocabRoutePoint(
+        destination,
+        'Destination'
+      ),
+
+    /*
+      UHP users enter Plymouth local time.
+
+      Autocab receives both the original
+      Europe/London wall-clock time and
+      the corresponding absolute UTC
+      instant.
+    */
+    pickupDueTime:
+      pickupTime.local,
+
+    pickupDueTimeUtc:
+      pickupTime.utc,
+
+    priority:
+      1,
+
+    priorityOverride:
+      true,
+
+    yourReferences: {
+      yourReference1:
+        booking.publicReference,
+
+      yourReference2:
+        ourReference
+    },
+
+    hold:
+      false
+  };
+}
+
+
+
+function createAutocabOutboundEvent({
+  bookingId,
+  autocabReference,
+  payload
+}) {
+  const result =
+    db.prepare(`
+      INSERT INTO integration_events
+        (
+          provider,
+          direction,
+          event_type,
+          route_suffix,
+          category,
+          booking_id,
+          autocab_reference,
+          payload_json,
+          processing_status
+        )
+      VALUES (
+        'autocab',
+        'outbound',
+        'booking_create',
+        'booking',
+        'booking',
+        ?,
+        ?,
+        ?,
+        'received'
+      )
+    `).run(
+      bookingId,
+      autocabReference,
+      JSON.stringify({
+        request: payload
+      })
+    );
+
+  return Number(
+    result.lastInsertRowid
+  );
+}
+
+
+function updateAutocabOutboundEvent(
+  eventId,
+  {
+    processingStatus,
+    autocabBookingId = null,
+    autocabReference = null,
+    payload = null,
+    processingError = null
+  }
+) {
+  db.prepare(`
+    UPDATE integration_events
+    SET
+      autocab_booking_id =
+        COALESCE(?, autocab_booking_id),
+
+      autocab_reference =
+        COALESCE(?, autocab_reference),
+
+      payload_json =
+        COALESCE(?, payload_json),
+
+      processing_status = ?,
+      processing_error = ?,
+
+      processed_at =
+        CURRENT_TIMESTAMP
+
+    WHERE id = ?
+  `).run(
+    autocabBookingId,
+    autocabReference,
+    payload
+      ? JSON.stringify(payload)
+      : null,
+    processingStatus,
+    processingError,
+    eventId
+  );
+}
+
+
+function writeAutocabSubmissionBookingEvent({
+  bookingId,
+  eventType,
+  oldStatus,
+  newStatus,
+  notes,
+  rawPayload = null
+}) {
+  db.prepare(`
+    INSERT INTO booking_events
+      (
+        booking_id,
+        event_type,
+        event_source,
+        old_status,
+        new_status,
+        notes,
+        raw_payload
+      )
+    VALUES (
+      ?,
+      ?,
+      'portal',
+      ?,
+      ?,
+      ?,
+      ?
+    )
+  `).run(
+    bookingId,
+    eventType,
+    oldStatus,
+    newStatus,
+    notes,
+    rawPayload
+      ? JSON.stringify(rawPayload)
+      : null
+  );
+}
+
+
+async function submitPortalBookingToAutocab(
+  bookingId,
+  {
+    accountType = 'uhp'
+  } = {}
+) {
+  if (!AUTOCAB_SUBSCRIPTION_KEY) {
+    const error =
+      new Error(
+        'Autocab booking submission is not configured'
+      );
+
+    error.statusCode = 503;
+
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(
+      AUTOCAB_COMPANY_ID
+    ) ||
+    AUTOCAB_COMPANY_ID < 1
+  ) {
+    const error =
+      new Error(
+        'Autocab company ID is not configured correctly'
+      );
+
+    error.statusCode = 500;
+
+    throw error;
+  }
+
+  const booking =
+    db.prepare(`
+      SELECT
+        id,
+        public_reference
+          AS publicReference,
+        operational_status
+          AS operationalStatus,
+        autocab_booking_id
+          AS autocabBookingId
+      FROM bookings
+      WHERE id = ?
+    `).get(
+      bookingId
+    );
+
+  if (!booking) {
+    const error =
+      new Error(
+        'Booking not found'
+      );
+
+    error.statusCode = 404;
+
+    throw error;
+  }
+
+  /*
+    Successful submission is idempotent
+    from the portal's point of view.
+  */
+  if (
+    booking.autocabBookingId &&
+    [
+      'booked',
+      'confirmed',
+      'driver_allocated',
+      'driver_en_route',
+      'driver_arrived',
+      'passenger_on_board',
+      'completed'
+    ].includes(
+      booking.operationalStatus
+    )
+  ) {
+    return {
+      booking: {
+        ...getBookingById(
+          bookingId
+        ),
+        stops:
+          getBookingStops(
+            bookingId
+          )
+      },
+
+      alreadySubmitted:
+        true
+    };
+  }
+
+  if (
+    booking.operationalStatus !==
+      'draft'
+  ) {
+    const error =
+      new Error(
+        `Booking cannot be submitted from status ${booking.operationalStatus}`
+      );
+
+    error.statusCode = 409;
+
+    throw error;
+  }
+
+  const payload =
+    buildAutocabBookingPayload(
+      bookingId,
+      {
+        accountType
+      }
+    );
+
+  const eventId =
+    createAutocabOutboundEvent({
+      bookingId,
+      autocabReference:
+        payload.ourReference,
+      payload
+    });
+
+  db.exec('BEGIN');
+
+  try {
+    const update =
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status =
+            'submitting',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND operational_status =
+            'draft'
+          AND autocab_booking_id
+            IS NULL
+      `).run(
+        bookingId
+      );
+
+    if (update.changes !== 1) {
+      const error =
+        new Error(
+          'Booking submission state changed before submission started'
+        );
+
+      error.statusCode = 409;
+
+      throw error;
+    }
+
+    writeAutocabSubmissionBookingEvent({
+      bookingId,
+      eventType:
+        'autocab_submission_started',
+      oldStatus:
+        'draft',
+      newStatus:
+        'submitting',
+      notes:
+        'UHP portal submission to Autocab started',
+      rawPayload: {
+        customerId:
+          payload.customerId,
+        ourReference:
+          payload.ourReference,
+        publicReference:
+          booking.publicReference
+      }
+    });
+
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+
+        autocabReference:
+          payload.ourReference,
+
+        processingError:
+          String(
+            error?.message ||
+            'Submission state update failed'
+          )
+      }
+    );
+
+    throw error;
+  }
+
+  let response;
+  let responseText = '';
+
+  try {
+    response =
+      await fetch(
+        `${AUTOCAB_BOOKING_API_URL}/booking/v1/booking?override=true`,
+        {
+          method:
+            'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json',
+
+            'Cache-Control':
+              'no-cache',
+
+            'Ocp-Apim-Subscription-Key':
+              AUTOCAB_SUBSCRIPTION_KEY
+          },
+
+          body:
+            JSON.stringify(
+              payload
+            ),
+
+          signal:
+            AbortSignal.timeout(
+              15000
+            )
+        }
+      );
+
+    responseText =
+      await response.text();
+  } catch (error) {
+    /*
+      Network/time-out failures are
+      ambiguous: Autocab may have created
+      the booking before the connection
+      failed.
+
+      Never retry automatically.
+    */
+    db.exec('BEGIN');
+
+    try {
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status =
+            'requires_review',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND operational_status =
+            'submitting'
+      `).run(
+        bookingId
+      );
+
+      writeAutocabSubmissionBookingEvent({
+        bookingId,
+        eventType:
+          'autocab_submission_uncertain',
+        oldStatus:
+          'submitting',
+        newStatus:
+          'requires_review',
+        notes:
+          'Autocab submission result is uncertain and requires manual review',
+        rawPayload: {
+          error:
+            String(
+              error?.message ||
+              'Network error'
+            )
+        }
+      });
+
+      db.exec('COMMIT');
+    } catch (dbError) {
+      db.exec('ROLLBACK');
+      throw dbError;
+    }
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+
+        autocabReference:
+          payload.ourReference,
+
+        payload: {
+          request: payload,
+          networkError:
+            String(
+              error?.message ||
+              'Network error'
+            )
+        },
+
+        processingError:
+          'Autocab submission result is uncertain'
+      }
+    );
+
+    const uncertainError =
+      new Error(
+        'Autocab submission result is uncertain. Check Autocab before retrying.'
+      );
+
+    uncertainError.statusCode =
+      502;
+
+    throw uncertainError;
+  }
+
+  let responseBody = null;
+
+  if (responseText) {
+    try {
+      responseBody =
+        JSON.parse(
+          responseText
+        );
+    } catch {
+      responseBody =
+        responseText;
+    }
+  }
+
+  const autocabBookingId =
+    responseBody &&
+    typeof responseBody ===
+      'object'
+      ? Number(
+          responseBody.bookingId
+        )
+      : NaN;
+
+  const validBookingId =
+    Number.isInteger(
+      autocabBookingId
+    ) &&
+    autocabBookingId > 0;
+
+  /*
+    4xx is a definitive rejection.
+    No Autocab booking should have been
+    created, so this can safely be failed.
+  */
+  if (
+    !response.ok &&
+    response.status >= 400 &&
+    response.status < 500
+  ) {
+    db.exec('BEGIN');
+
+    try {
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status =
+            'failed',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND operational_status =
+            'submitting'
+      `).run(
+        bookingId
+      );
+
+      writeAutocabSubmissionBookingEvent({
+        bookingId,
+        eventType:
+          'autocab_submission_failed',
+        oldStatus:
+          'submitting',
+        newStatus:
+          'failed',
+        notes:
+          `Autocab rejected booking submission with HTTP ${response.status}`,
+        rawPayload: {
+          status:
+            response.status,
+          response:
+            responseBody
+        }
+      });
+
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+
+        autocabReference:
+          payload.ourReference,
+
+        payload: {
+          request: payload,
+          responseStatus:
+            response.status,
+          response:
+            responseBody
+        },
+
+        processingError:
+          `Autocab rejected booking with HTTP ${response.status}`
+      }
+    );
+
+    const error =
+      new Error(
+        `Autocab rejected the booking with HTTP ${response.status}`
+      );
+
+    error.statusCode = 502;
+
+    throw error;
+  }
+
+  /*
+    5xx, unexpected non-2xx responses,
+    or a success response with no usable
+    bookingId are ambiguous.
+
+    Do not automatically retry.
+  */
+  if (
+    !response.ok ||
+    !validBookingId
+  ) {
+    db.exec('BEGIN');
+
+    try {
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status =
+            'requires_review',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND operational_status =
+            'submitting'
+      `).run(
+        bookingId
+      );
+
+      writeAutocabSubmissionBookingEvent({
+        bookingId,
+        eventType:
+          'autocab_submission_uncertain',
+        oldStatus:
+          'submitting',
+        newStatus:
+          'requires_review',
+        notes:
+          'Autocab returned an uncertain booking submission result',
+        rawPayload: {
+          status:
+            response.status,
+          response:
+            responseBody
+        }
+      });
+
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+
+        autocabReference:
+          payload.ourReference,
+
+        payload: {
+          request: payload,
+          responseStatus:
+            response.status,
+          response:
+            responseBody
+        },
+
+        processingError:
+          'Autocab submission requires manual review'
+      }
+    );
+
+    const error =
+      new Error(
+        'Autocab submission requires manual review before retrying'
+      );
+
+    error.statusCode = 502;
+
+    throw error;
+  }
+
+  const now =
+    new Date().toISOString();
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE bookings
+      SET
+        autocab_booking_id = ?,
+        autocab_reference = ?,
+        autocab_booked_by =
+          'UHP Portal',
+        autocab_booking_source =
+          'API',
+        autocab_booked_at = ?,
+        operational_status =
+          'booked',
+        submitted_at = ?,
+        updated_at =
+          CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND operational_status =
+          'submitting'
+        AND autocab_booking_id
+          IS NULL
+    `).run(
+      String(
+        autocabBookingId
+      ),
+      payload.ourReference,
+      now,
+      now,
+      bookingId
+    );
+
+    /*
+      Keep the financial snapshot aligned
+      with the customer ID actually sent
+      to Autocab.
+    */
+    db.prepare(`
+      UPDATE booking_account_snapshot
+      SET
+        customer_id = ?,
+        captured_at =
+          CURRENT_TIMESTAMP
+      WHERE booking_id = ?
+    `).run(
+      String(
+        payload.customerId
+      ),
+      bookingId
+    );
+
+    writeAutocabSubmissionBookingEvent({
+      bookingId,
+      eventType:
+        'autocab_booking_created',
+      oldStatus:
+        'submitting',
+      newStatus:
+        'booked',
+      notes:
+        `Autocab booking ${autocabBookingId} created`,
+      rawPayload: {
+        bookingId:
+          autocabBookingId,
+        ourReference:
+          payload.ourReference,
+        customerId:
+          payload.customerId
+      }
+    });
+
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+
+    /*
+      Autocab definitely returned a valid
+      bookingId but our local persistence
+      failed. This must be manually
+      reconciled rather than retried.
+    */
+    db.prepare(`
+      UPDATE bookings
+      SET
+        operational_status =
+          'requires_review',
+        updated_at =
+          CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      bookingId
+    );
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+
+        autocabBookingId:
+          String(
+            autocabBookingId
+          ),
+
+        autocabReference:
+          payload.ourReference,
+
+        payload: {
+          request: payload,
+          responseStatus:
+            response.status,
+          response:
+            responseBody
+        },
+
+        processingError:
+          `Autocab booking ${autocabBookingId} was created but local persistence failed`
+      }
+    );
+
+    const persistenceError =
+      new Error(
+        `Autocab booking ${autocabBookingId} exists but the portal requires reconciliation`
+      );
+
+    persistenceError.statusCode =
+      500;
+
+    throw persistenceError;
+  }
+
+  updateAutocabOutboundEvent(
+    eventId,
+    {
+      processingStatus:
+        'processed',
+
+      autocabBookingId:
+        String(
+          autocabBookingId
+        ),
+
+      autocabReference:
+        payload.ourReference,
+
+      payload: {
+        request:
+          payload,
+
+        responseStatus:
+          response.status,
+
+        response:
+          responseBody
+      },
+
+      processingError:
+        null
+    }
+  );
+
+  return {
+    booking: {
+      ...getBookingById(
+        bookingId
+      ),
+
+      stops:
+        getBookingStops(
+          bookingId
+        )
+    },
+
+    autocab: {
+      bookingId:
+        autocabBookingId,
+
+      reference:
+        payload.ourReference,
+
+      customerId:
+        payload.customerId
+    },
+
+    alreadySubmitted:
+      false
+  };
+}
+
+
 function getContentType(filePath) {
   const extension =
     path.extname(filePath).toLowerCase();
@@ -10937,6 +12479,50 @@ const server = http.createServer(async (req, res) => {
         booking
       });
     }
+
+    const bookingSubmitMatch =
+      url.pathname.match(
+        /^\/api\/bookings\/(\d+)\/submit$/
+      );
+
+    if (
+      req.method === 'POST' &&
+      bookingSubmitMatch
+    ) {
+      const bookingId =
+        Number(
+          bookingSubmitMatch[1]
+        );
+
+      const auth =
+        requireAuth(req);
+
+      /*
+        Ownership check is server-side.
+        Do not trust a user/customer ID
+        supplied by the browser.
+      */
+      getOwnedBookingDetails(
+        bookingId,
+        auth.user.id
+      );
+
+      const result =
+        await submitPortalBookingToAutocab(
+          bookingId,
+          {
+            accountType:
+              'uhp'
+          }
+        );
+
+      return sendJson(
+        res,
+        200,
+        result
+      );
+    }
+
 
     const bookingCancelMatch = url.pathname.match(
       /^\/api\/bookings\/(\d+)\/cancel$/
