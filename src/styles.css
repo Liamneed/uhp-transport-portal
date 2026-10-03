@@ -3461,3 +3461,53 @@ button:disabled {
     min-height: 330px;
   }
 }
+
+.booking-audit-log {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid #e4eaf0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.booking-audit-item {
+  padding: 12px 14px;
+  background: #fff;
+  border-bottom: 1px solid #e8edf2;
+}
+
+.booking-audit-item:last-child {
+  border-bottom: 0;
+}
+
+.booking-audit-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.booking-audit-heading strong {
+  color: #243b53;
+}
+
+.booking-audit-heading small {
+  color: #718096;
+  white-space: nowrap;
+}
+
+.booking-audit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 5px;
+  color: #718096;
+  font-size: 12px;
+}
+
+.booking-audit-notes {
+  margin: 7px 0 0;
+  color: #4a5568;
+  font-size: 13px;
+}

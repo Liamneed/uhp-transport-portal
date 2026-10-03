@@ -2814,6 +2814,37 @@ function BookingRouteMap({
 }
 
 
+function formatBookingAuditEvent(event) {
+  const labels = {
+    booking_created: 'Booking Created',
+    booking_modified: 'Booking Modified',
+    autocab_submission_started: 'Sent to Autocab',
+    autocab_booking_created: 'Autocab Booking Created',
+    booking_dispatch_accepted: 'Driver Allocated / Dispatched',
+    booking_arrived: 'Driver Arrived',
+    passenger_on_board: 'Passenger On Board',
+    booking_running_late: 'Running Late',
+    booking_complete: 'Booking Completed',
+    booking_completed: 'Booking Completed',
+    booking_cancelled: 'Booking Cancelled',
+    autocab_cancellation_started: 'Cancellation Sent to Autocab',
+    autocab_cancellation_succeeded: 'Cancellation Confirmed',
+    no_fare: 'No Fare',
+    invoice_created: 'Invoice Created',
+    credit_note_issued: 'Credit Note Issued'
+  };
+
+  return (
+    labels[event?.eventType] ||
+    String(event?.eventType || 'Booking Event')
+      .replaceAll('_', ' ')
+      .replace(/\b\w/g, (character) =>
+        character.toUpperCase()
+      )
+  );
+}
+
+
 function BookingDetailModal({
   booking: initialBooking,
   onClose,
@@ -3564,7 +3595,83 @@ function BookingDetailModal({
                   </span>
                 )}
               </div>
+
             </>
+          )}
+
+          {!isNac && (
+            <div className="booking-modal-section">
+              <div className="booking-modal-section-heading">
+                <h3>Full Audit Log</h3>
+              </div>
+
+              {history.length ? (
+                <div className="booking-audit-log">
+                  {history.map((event) => (
+                    <div
+                      className="booking-audit-item"
+                      key={event.id}
+                    >
+                      <div className="booking-audit-heading">
+                        <strong>
+                          {formatBookingAuditEvent(
+                            event
+                          )}
+                        </strong>
+
+                        <small>
+                          {formatBookingDateTime(
+                            event.eventAt
+                          )}
+                        </small>
+                      </div>
+
+                      <div className="booking-audit-meta">
+                        <span>
+                          Source:{' '}
+                          {event.eventSource === 'autocab'
+                            ? 'Autocab'
+                            : event.eventSource === 'portal'
+                              ? 'UHP Portal'
+                              : event.eventSource || 'System'}
+                        </span>
+
+                        {event.userId && (
+                          <span>
+                            User ID: {event.userId}
+                          </span>
+                        )}
+
+                        {event.oldStatus &&
+                          event.newStatus &&
+                          event.oldStatus !==
+                            event.newStatus && (
+                          <span>
+                            {formatOperationalStatus(
+                              event.oldStatus
+                            )}
+                            {' → '}
+                            {formatOperationalStatus(
+                              event.newStatus
+                            )}
+                          </span>
+                        )}
+                      </div>
+
+                      {event.notes && (
+                        <p className="booking-audit-notes">
+                          {event.notes}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span className="history-empty">
+                  No audit events recorded for this booking.
+                </span>
+              )}
+            </div>
           )}
 
           {isNac && (
