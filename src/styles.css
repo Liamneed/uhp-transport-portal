@@ -2619,6 +2619,49 @@ button:disabled {
 }
 
 
+/* Booking saved locations */
+
+.booking-saved-locations {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 7px 0 8px;
+}
+
+.booking-saved-locations-label {
+  color: #7b8998;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.booking-saved-location-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.booking-saved-location {
+  min-height: 0;
+  padding: 5px 8px;
+  border: 1px solid #d5e0e8;
+  border-radius: 999px;
+  background: #f7fafc;
+  color: #39526d;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.booking-saved-location:hover,
+.booking-saved-location:focus-visible {
+  border-color: #9eb6c9;
+  background: #edf4f8;
+}
+
+
 /* Booking address autocomplete */
 
 .booking-address-search {

@@ -7383,6 +7383,7 @@ function BookingAddressAutocomplete({
   value,
   placeholder,
   required = false,
+  searchEnabled = true,
   onChange,
   onSelect
 }) {
@@ -7408,6 +7409,14 @@ function BookingAddressAutocomplete({
     const query =
       String(value || '')
         .trim();
+
+    if (!searchEnabled) {
+      setResults([]);
+      setSearchState('idle');
+      setOpen(false);
+
+      return;
+    }
 
     if (suppressNextSearch.current) {
       suppressNextSearch.current = false;
@@ -7491,7 +7500,10 @@ function BookingAddressAutocomplete({
 
       controller.abort();
     };
-  }, [value]);
+  }, [
+    value,
+    searchEnabled
+  ]);
 
   function chooseResult(
     result
@@ -7591,6 +7603,45 @@ function BookingAddressAutocomplete({
           Address search temporarily unavailable
         </span>
       )}
+    </div>
+  );
+}
+
+
+function SavedLocationChips({
+  locations,
+  onSelect
+}) {
+  if (
+    !Array.isArray(locations) ||
+    locations.length === 0
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="booking-saved-locations">
+      <span className="booking-saved-locations-label">
+        Saved locations
+      </span>
+
+      <div className="booking-saved-location-list">
+        {locations.map(
+          (location) => (
+            <button
+              key={location.id}
+              type="button"
+              className="booking-saved-location"
+              onClick={() =>
+                onSelect(location)
+              }
+              title={location.address}
+            >
+              {location.name}
+            </button>
+          )
+        )}
+      </div>
     </div>
   );
 }
@@ -8489,6 +8540,7 @@ function BookTransportPage({ currentUser }) {
   const [bookingUser, setBookingUser] = useState(null);
   const [budgets, setBudgets] = useState([]);
   const [reasonCodes, setReasonCodes] = useState([]);
+  const [savedLocations, setSavedLocations] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -8519,6 +8571,11 @@ function BookTransportPage({ currentUser }) {
       setBookingUser(data.user ?? null);
       setBudgets(data.budgets ?? []);
       setReasonCodes(data.reasonCodes ?? []);
+      setSavedLocations(
+        Array.isArray(data.savedLocations)
+          ? data.savedLocations
+          : []
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -8861,8 +8918,34 @@ function BookTransportPage({ currentUser }) {
                 <label>
                   Pickup
 
+                  <SavedLocationChips
+                    locations={
+                      savedLocations
+                    }
+                    onSelect={(location) =>
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          pickupAddress:
+                            location.address,
+                          pickupPostcode:
+                            location.postcode ||
+                            '',
+                          pickupLatitude:
+                            location.latitude,
+                          pickupLongitude:
+                            location.longitude
+                        })
+                      )
+                    }
+                  />
+
                   <BookingAddressAutocomplete
                     required
+                    searchEnabled={
+                      form.pickupLatitude === null ||
+                      form.pickupLongitude === null
+                    }
                     placeholder="Start typing pickup address"
                     value={
                       form.pickupAddress
@@ -8938,7 +9021,42 @@ function BookTransportPage({ currentUser }) {
                     <label>
                       Via {index + 1}
 
+                      <SavedLocationChips
+                        locations={
+                          savedLocations
+                        }
+                        onSelect={(location) =>
+                          setVias(
+                            (current) =>
+                              current.map(
+                                (
+                                  currentVia,
+                                  viaIndex
+                                ) =>
+                                  viaIndex === index
+                                    ? {
+                                        ...currentVia,
+                                        address:
+                                          location.address,
+                                        postcode:
+                                          location.postcode ||
+                                          '',
+                                        latitude:
+                                          location.latitude,
+                                        longitude:
+                                          location.longitude
+                                      }
+                                    : currentVia
+                              )
+                          )
+                        }
+                      />
+
                       <BookingAddressAutocomplete
+                        searchEnabled={
+                          via.latitude === null ||
+                          via.longitude === null
+                        }
                         placeholder="Start typing via address"
                         value={
                           via.address
@@ -9053,8 +9171,34 @@ function BookTransportPage({ currentUser }) {
                 <label>
                   Destination
 
+                  <SavedLocationChips
+                    locations={
+                      savedLocations
+                    }
+                    onSelect={(location) =>
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          destinationAddress:
+                            location.address,
+                          destinationPostcode:
+                            location.postcode ||
+                            '',
+                          destinationLatitude:
+                            location.latitude,
+                          destinationLongitude:
+                            location.longitude
+                        })
+                      )
+                    }
+                  />
+
                   <BookingAddressAutocomplete
                     required
+                    searchEnabled={
+                      form.destinationLatitude === null ||
+                      form.destinationLongitude === null
+                    }
                     placeholder="Start typing destination address"
                     value={
                       form.destinationAddress

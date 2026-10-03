@@ -2618,10 +2618,29 @@ function getBookingOptions(userId) {
     ORDER BY code
   `).all();
 
+  const savedLocations =
+    db.prepare(`
+      SELECT
+        id,
+        name,
+        address,
+        postcode,
+        latitude,
+        longitude,
+        category,
+        display_order AS displayOrder
+      FROM saved_locations
+      WHERE is_active = 1
+      ORDER BY
+        display_order,
+        name COLLATE NOCASE
+    `).all();
+
   return {
     user,
     budgets,
-    reasonCodes
+    reasonCodes,
+    savedLocations
   };
 }
 
