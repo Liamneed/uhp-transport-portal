@@ -9453,6 +9453,20 @@ function BookTransportPage({ currentUser }) {
     setPendingBookingReference
   ] = useState('');
 
+  const [journeyEta, setJourneyEta] =
+    useState({
+      status: 'idle',
+      durationSeconds: null,
+      distance: null
+    });
+
+  const [pickupEta, setPickupEta] =
+    useState({
+      status: 'idle',
+      durationSeconds: null,
+      nearbyCount: 0
+    });
+
   useEffect(() => {
     loadBookingOptions();
   }, []);
@@ -9548,6 +9562,473 @@ function BookTransportPage({ currentUser }) {
       ) ?? null,
     [budgets, form.budgetId]
   );
+
+  useEffect(
+    () => {
+      const hasCoordinate =
+        (value) =>
+          value !== null &&
+          value !== undefined &&
+          value !== '' &&
+          Number.isFinite(
+            Number(value)
+          );
+
+      const pickupReady =
+        hasCoordinate(
+          form.pickupLatitude
+        ) &&
+        hasCoordinate(
+          form.pickupLongitude
+        );
+
+      if (!pickupReady) {
+        setPickupEta({
+          status: 'idle',
+          durationSeconds: null,
+          nearbyCount: 0
+        });
+
+        return undefined;
+      }
+
+      let cancelled = false;
+      let intervalId = null;
+      let inFlight = false;
+
+      const controller =
+        new AbortController();
+
+      async function loadPickupEta() {
+        if (
+          cancelled ||
+          inFlight
+        ) {
+          return;
+        }
+
+        inFlight = true;
+
+        setPickupEta(
+          (current) =>
+            current.status ===
+              'success'
+              ? current
+              : {
+                  ...current,
+                  status: 'loading'
+                }
+        );
+
+        try {
+          const response =
+            await apiFetch(
+              `${API_BASE}/api/pickup-eta`,
+              {
+                method: 'POST',
+
+                headers: {
+                  'Content-Type':
+                    'application/json'
+                },
+
+                body:
+                  JSON.stringify({
+                    latitude:
+                      Number(
+                        form.pickupLatitude
+                      ),
+
+                    longitude:
+                      Number(
+                        form.pickupLongitude
+                      )
+                  }),
+
+                signal:
+                  controller.signal
+              }
+            );
+
+          const result =
+            await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              result.error ||
+              'Pickup estimate unavailable'
+            );
+          }
+
+          if (cancelled) {
+            return;
+          }
+
+          const durationSeconds =
+            Number(
+              result?.pickupEta
+                ?.durationSeconds
+            );
+
+          const nearbyCount =
+            Number(
+              result?.pickupEta
+                ?.nearbyCount
+            );
+
+          if (
+            result?.pickupEta?.status ===
+              'success' &&
+            Number.isFinite(
+              durationSeconds
+            ) &&
+            durationSeconds >= 0
+          ) {
+            setPickupEta({
+              status: 'success',
+              durationSeconds,
+              nearbyCount:
+                Number.isFinite(
+                  nearbyCount
+                )
+                  ? nearbyCount
+                  : 0
+            });
+          } else {
+            setPickupEta({
+              status: 'unavailable',
+              durationSeconds: null,
+              nearbyCount:
+                Number.isFinite(
+                  nearbyCount
+                )
+                  ? nearbyCount
+                  : 0
+            });
+          }
+        } catch (err) {
+          if (
+            cancelled ||
+            err?.name ===
+              'AbortError'
+          ) {
+            return;
+          }
+
+          setPickupEta({
+            status: 'error',
+            durationSeconds: null,
+            nearbyCount: 0
+          });
+        } finally {
+          inFlight = false;
+        }
+      }
+
+      const timer =
+        window.setTimeout(
+          () => {
+            loadPickupEta();
+
+            intervalId =
+              window.setInterval(
+                loadPickupEta,
+                15000
+              );
+          },
+          350
+        );
+
+      return () => {
+        cancelled = true;
+
+        window.clearTimeout(
+          timer
+        );
+
+        if (intervalId) {
+          window.clearInterval(
+            intervalId
+          );
+        }
+
+        controller.abort();
+      };
+    },
+    [
+      form.pickupLatitude,
+      form.pickupLongitude
+    ]
+  );
+
+
+  const etaRoute = useMemo(
+    () => {
+      const hasCoordinate =
+        (value) =>
+          value !== null &&
+          value !== undefined &&
+          value !== '' &&
+          Number.isFinite(
+            Number(value)
+          );
+
+      const pickupReady =
+        hasCoordinate(
+          form.pickupLatitude
+        ) &&
+        hasCoordinate(
+          form.pickupLongitude
+        );
+
+      const destinationReady =
+        hasCoordinate(
+          form.destinationLatitude
+        ) &&
+        hasCoordinate(
+          form.destinationLongitude
+        );
+
+      const enteredVias =
+        vias.filter(
+          (via) =>
+            Boolean(
+              via.address?.trim()
+            )
+        );
+
+      const viasReady =
+        enteredVias.every(
+          (via) =>
+            hasCoordinate(
+              via.latitude
+            ) &&
+            hasCoordinate(
+              via.longitude
+            )
+        );
+
+      if (
+        !pickupReady ||
+        !destinationReady ||
+        !viasReady
+      ) {
+        return {
+          ready: false,
+          points: []
+        };
+      }
+
+      return {
+        ready: true,
+
+        points: [
+          {
+            latitude:
+              Number(
+                form.pickupLatitude
+              ),
+
+            longitude:
+              Number(
+                form.pickupLongitude
+              )
+          },
+
+          ...enteredVias.map(
+            (via) => ({
+              latitude:
+                Number(
+                  via.latitude
+                ),
+
+              longitude:
+                Number(
+                  via.longitude
+                )
+            })
+          ),
+
+          {
+            latitude:
+              Number(
+                form.destinationLatitude
+              ),
+
+            longitude:
+              Number(
+                form.destinationLongitude
+              )
+          }
+        ]
+      };
+    },
+    [
+      form.pickupLatitude,
+      form.pickupLongitude,
+      form.destinationLatitude,
+      form.destinationLongitude,
+      vias
+    ]
+  );
+
+  useEffect(
+    () => {
+      if (!etaRoute.ready) {
+        setJourneyEta({
+          status: 'idle',
+          durationSeconds: null,
+          distance: null
+        });
+
+        return undefined;
+      }
+
+      const controller =
+        new AbortController();
+
+      const timer =
+        window.setTimeout(
+          async () => {
+            setJourneyEta(
+              (current) => ({
+                ...current,
+                status: 'loading'
+              })
+            );
+
+            try {
+              const response =
+                await apiFetch(
+                  `${API_BASE}/api/eta`,
+                  {
+                    method: 'POST',
+
+                    headers: {
+                      'Content-Type':
+                        'application/json'
+                    },
+
+                    body:
+                      JSON.stringify({
+                        points:
+                          etaRoute.points
+                      }),
+
+                    signal:
+                      controller.signal
+                  }
+                );
+
+              const result =
+                await response.json();
+
+              if (!response.ok) {
+                throw new Error(
+                  result.error ||
+                    'Journey estimate unavailable'
+                );
+              }
+
+              const durationSeconds =
+                Number(
+                  result?.eta
+                    ?.durationSeconds
+                );
+
+              if (
+                !Number.isFinite(
+                  durationSeconds
+                ) ||
+                durationSeconds < 0
+              ) {
+                throw new Error(
+                  'Journey estimate unavailable'
+                );
+              }
+
+              setJourneyEta({
+                status: 'success',
+                durationSeconds,
+                distance:
+                  result?.eta?.distance ??
+                  null
+              });
+            } catch (err) {
+              if (
+                err?.name ===
+                'AbortError'
+              ) {
+                return;
+              }
+
+              setJourneyEta({
+                status: 'error',
+                durationSeconds: null,
+                distance: null
+              });
+            }
+          },
+          350
+        );
+
+      return () => {
+        window.clearTimeout(
+          timer
+        );
+
+        controller.abort();
+      };
+    },
+    [etaRoute]
+  );
+
+  const journeyEtaMinutes =
+    journeyEta.status === 'success'
+      ? Math.max(
+          1,
+          Math.round(
+            journeyEta.durationSeconds /
+              60
+          )
+        )
+      : null;
+
+  const journeyEtaDistance =
+    journeyEta.status === 'success' &&
+    Number.isFinite(
+      Number(
+        journeyEta.distance?.amount
+      )
+    )
+      ? `${Number(
+          journeyEta.distance.amount
+        ).toFixed(1)} ${
+          journeyEta.distance?.type ||
+          'mi'
+        }`
+      : '';
+
+  const pickupEtaMinutes =
+    pickupEta.status === 'success'
+      ? Math.max(
+          1,
+          Math.round(
+            pickupEta.durationSeconds /
+              60
+          )
+        )
+      : null;
+
+  const pickupEtaTone =
+    pickupEtaMinutes === null
+      ? 'eta-neutral'
+      : pickupEtaMinutes < 10
+        ? 'eta-green'
+        : pickupEtaMinutes <= 20
+          ? 'eta-amber'
+          : 'eta-red';
+
 
   function applyJourneyTemplate({
     pickup,
@@ -10504,11 +10985,71 @@ function BookTransportPage({ currentUser }) {
               </label>
               </div>
 
-              <div className="booking-eta-preview">
-                <small>Current pickup estimate</small>
-                <strong>ETA available after pickup selection</strong>
+              <div
+                className={`booking-eta-preview pickup-eta-preview ${pickupEtaTone}`}
+              >
+                <small>
+                  Current pickup estimate
+                </small>
+
+                <strong>
+                  {pickupEta.status === 'loading'
+                    ? 'Checking...'
+                    : pickupEta.status === 'success'
+                      ? `${pickupEtaMinutes} min`
+                      : pickupEta.status === 'unavailable' ||
+                          pickupEta.status === 'error'
+                        ? 'Estimate unavailable'
+                        : 'Select pickup'}
+                </strong>
+
                 <span>
-                  Live vehicle availability will appear here.
+                  {pickupEta.status === 'success'
+                    ? `${pickupEta.nearbyCount} clear ${
+                        pickupEta.nearbyCount === 1
+                          ? 'car'
+                          : 'cars'
+                      } nearby`
+                    : pickupEta.status === 'loading'
+                      ? 'Finding the nearest clear car.'
+                      : pickupEta.status === 'unavailable'
+                        ? pickupEta.nearbyCount > 0
+                          ? `${pickupEta.nearbyCount} clear ${
+                              pickupEta.nearbyCount === 1
+                                ? 'car'
+                                : 'cars'
+                            } nearby · ETA unavailable`
+                          : 'No fresh clear cars nearby.'
+                        : pickupEta.status === 'error'
+                          ? 'Live pickup estimate temporarily unavailable.'
+                          : 'Choose a pickup location to calculate.'}
+                </span>
+              </div>
+
+              <div className="booking-eta-preview journey-eta-preview">
+                <small>Journey estimate</small>
+
+                <strong>
+                  {journeyEta.status === 'loading'
+                    ? 'Calculating...'
+                    : journeyEta.status === 'success'
+                      ? `${journeyEtaMinutes} min`
+                      : journeyEta.status === 'error'
+                        ? 'Estimate unavailable'
+                        : 'Select route locations'}
+                </strong>
+
+                <span>
+                  {journeyEta.status === 'success'
+                    ? (
+                        journeyEtaDistance ||
+                        'Live Autocab route estimate'
+                      )
+                    : journeyEta.status === 'loading'
+                      ? 'Checking the live route with Autocab.'
+                      : journeyEta.status === 'error'
+                        ? 'You can still create the transport request.'
+                        : 'Choose pickup and destination to calculate.'}
                 </span>
               </div>
             </div>

@@ -959,6 +959,8 @@ function enforceApiAccess(
     pathname ===
       '/api/booking-map/clear-vehicles' ||
     pathname ===
+      '/api/pickup-eta' ||
+    pathname ===
       '/api/geocoding/search'
   ) {
     return requireAuth(req);
@@ -10764,6 +10766,245 @@ function buildAutocabRoutePoint(
 
 
 
+
+async function calculateAutocabEta(
+  stops
+) {
+  if (!AUTOCAB_SUBSCRIPTION_KEY) {
+    const error =
+      new Error(
+        'Autocab ETA calculation is not configured'
+      );
+
+    error.statusCode = 503;
+
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(
+      AUTOCAB_COMPANY_ID
+    ) ||
+    AUTOCAB_COMPANY_ID < 1
+  ) {
+    const error =
+      new Error(
+        'Autocab company ID is invalid'
+      );
+
+    error.statusCode = 503;
+
+    throw error;
+  }
+
+  const points =
+    (Array.isArray(stops)
+      ? stops
+      : []
+    ).map(
+      (stop) => {
+        if (
+          stop?.latitude === null ||
+          stop?.latitude === undefined ||
+          stop?.latitude === '' ||
+          stop?.longitude === null ||
+          stop?.longitude === undefined ||
+          stop?.longitude === ''
+        ) {
+          const error =
+            new Error(
+              'Autocab ETA coordinates are missing'
+            );
+
+          error.statusCode = 409;
+
+          throw error;
+        }
+
+        const latitude =
+          Number(
+            stop?.latitude
+          );
+
+        const longitude =
+          Number(
+            stop?.longitude
+          );
+
+        if (
+          !Number.isFinite(
+            latitude
+          ) ||
+          !Number.isFinite(
+            longitude
+          ) ||
+          latitude < -90 ||
+          latitude > 90 ||
+          longitude < -180 ||
+          longitude > 180
+        ) {
+          const error =
+            new Error(
+              'Autocab ETA coordinates are missing'
+            );
+
+          error.statusCode = 409;
+
+          throw error;
+        }
+
+        return {
+          latitude,
+          longitude
+        };
+      }
+    );
+
+  if (points.length < 2) {
+    const error =
+      new Error(
+        'Autocab ETA requires at least two route points'
+      );
+
+    error.statusCode = 409;
+
+    throw error;
+  }
+
+  let response;
+  let responseText = '';
+
+  try {
+    response =
+      await fetch(
+        `${AUTOCAB_BOOKING_API_URL}/booking/v1/calculateeta`,
+        {
+          method:
+            'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json',
+
+            'Cache-Control':
+              'no-cache',
+
+            'Ocp-Apim-Subscription-Key':
+              AUTOCAB_SUBSCRIPTION_KEY
+          },
+
+          body:
+            JSON.stringify({
+              companyId:
+                AUTOCAB_COMPANY_ID,
+
+              points
+            }),
+
+          signal:
+            AbortSignal.timeout(
+              15000
+            )
+        }
+      );
+
+    responseText =
+      await response.text();
+  } catch (error) {
+    const etaError =
+      new Error(
+        'Autocab ETA calculation could not be reached'
+      );
+
+    etaError.statusCode = 502;
+    etaError.cause = error;
+
+    throw etaError;
+  }
+
+  let result = null;
+
+  if (responseText) {
+    try {
+      result =
+        JSON.parse(
+          responseText
+        );
+    } catch {
+      result = null;
+    }
+  }
+
+  if (!response.ok) {
+    const error =
+      new Error(
+        'Autocab ETA calculation failed'
+      );
+
+    error.statusCode = 502;
+    error.autocabStatus =
+      response.status;
+
+    throw error;
+  }
+
+  const durationSeconds =
+    Number(
+      result?.durationSeconds
+    );
+
+  const distanceAmount =
+    Number(
+      result?.distance?.amount
+    );
+
+  const distanceType =
+    String(
+      result?.distance?.type ||
+      ''
+    ).trim();
+
+  if (
+    !Number.isFinite(
+      durationSeconds
+    ) ||
+    durationSeconds < 0
+  ) {
+    const error =
+      new Error(
+        'Autocab ETA response is invalid'
+      );
+
+    error.statusCode = 502;
+
+    throw error;
+  }
+
+  return {
+    durationSeconds,
+
+    distance:
+      Number.isFinite(
+        distanceAmount
+      )
+        ? {
+            amount:
+              distanceAmount,
+
+            type:
+              distanceType
+          }
+        : null,
+
+    route:
+      typeof result?.route ===
+        'string'
+        ? result.route
+        : ''
+  };
+}
+
+
 const EUROPE_LONDON_TIME_FORMATTER =
   new Intl.DateTimeFormat(
     'en-GB',
@@ -12707,6 +12948,223 @@ function listFreshClearVehicles() {
 }
 
 
+function calculateCoordinateDistanceKm(
+  latitude1,
+  longitude1,
+  latitude2,
+  longitude2
+) {
+  const toRadians =
+    (degrees) =>
+      degrees *
+      Math.PI /
+      180;
+
+  const earthRadiusKm =
+    6371;
+
+  const deltaLatitude =
+    toRadians(
+      latitude2 -
+      latitude1
+    );
+
+  const deltaLongitude =
+    toRadians(
+      longitude2 -
+      longitude1
+    );
+
+  const firstLatitude =
+    toRadians(latitude1);
+
+  const secondLatitude =
+    toRadians(latitude2);
+
+  const a =
+    Math.sin(
+      deltaLatitude / 2
+    ) ** 2 +
+    Math.cos(firstLatitude) *
+    Math.cos(secondLatitude) *
+    Math.sin(
+      deltaLongitude / 2
+    ) ** 2;
+
+  return (
+    earthRadiusKm *
+    2 *
+    Math.atan2(
+      Math.sqrt(a),
+      Math.sqrt(1 - a)
+    )
+  );
+}
+
+
+async function calculatePickupEta(
+  pickup
+) {
+  if (
+    pickup?.latitude === null ||
+    pickup?.latitude === undefined ||
+    pickup?.latitude === '' ||
+    pickup?.longitude === null ||
+    pickup?.longitude === undefined ||
+    pickup?.longitude === ''
+  ) {
+    const error =
+      new Error(
+        'Pickup coordinates are required'
+      );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const latitude =
+    Number(
+      pickup.latitude
+    );
+
+  const longitude =
+    Number(
+      pickup.longitude
+    );
+
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    const error =
+      new Error(
+        'Pickup coordinates are invalid'
+      );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const nearbyVehicles =
+    listFreshClearVehicles()
+      .map(
+        (vehicle) => ({
+          ...vehicle,
+
+          distanceKm:
+            calculateCoordinateDistanceKm(
+              latitude,
+              longitude,
+              vehicle.latitude,
+              vehicle.longitude
+            )
+        })
+      )
+      .filter(
+        (vehicle) =>
+          Number.isFinite(
+            vehicle.distanceKm
+          ) &&
+          vehicle.distanceKm <= 15
+      )
+      .sort(
+        (a, b) =>
+          a.distanceKm -
+          b.distanceKm
+      )
+      .slice(
+        0,
+        5
+      );
+
+  if (!nearbyVehicles.length) {
+    return {
+      status: 'unavailable',
+      durationSeconds: null,
+      nearbyCount: 0
+    };
+  }
+
+  const candidateResults =
+    await Promise.allSettled(
+      nearbyVehicles.map(
+        async (vehicle) => {
+          const eta =
+            await calculateAutocabEta([
+              {
+                latitude:
+                  vehicle.latitude,
+
+                longitude:
+                  vehicle.longitude
+              },
+
+              {
+                latitude,
+                longitude
+              }
+            ]);
+
+          return {
+            durationSeconds:
+              Number(
+                eta.durationSeconds
+              )
+          };
+        }
+      )
+    );
+
+  const successfulEtas =
+    candidateResults
+      .filter(
+        (result) =>
+          result.status ===
+            'fulfilled' &&
+          Number.isFinite(
+            result.value
+              .durationSeconds
+          ) &&
+          result.value
+            .durationSeconds >= 0
+      )
+      .map(
+        (result) =>
+          result.value
+            .durationSeconds
+      )
+      .sort(
+        (a, b) =>
+          a - b
+      );
+
+  if (!successfulEtas.length) {
+    return {
+      status: 'unavailable',
+      durationSeconds: null,
+      nearbyCount:
+        nearbyVehicles.length
+    };
+  }
+
+  return {
+    status: 'success',
+
+    durationSeconds:
+      successfulEtas[0],
+
+    nearbyCount:
+      nearbyVehicles.length
+  };
+}
+
+
 function parseRoutingCoordinates(
   rawCoordinates
 ) {
@@ -13763,6 +14221,128 @@ const server = http.createServer(async (req, res) => {
         booking
       });
     }
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/pickup-eta'
+    ) {
+      const payload =
+        await readJson(req);
+
+      requireAuth(req);
+
+      const pickupEta =
+        await calculatePickupEta({
+          latitude:
+            payload?.latitude,
+
+          longitude:
+            payload?.longitude
+        });
+
+      return sendJson(
+        res,
+        200,
+        {
+          pickupEta
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname === '/api/eta'
+    ) {
+      const payload =
+        await readJson(req);
+
+      requireAuth(req);
+
+      const rawPoints =
+        Array.isArray(
+          payload?.points
+        )
+          ? payload.points
+          : [];
+
+      /*
+        Only route coordinates are accepted
+        from the browser.
+
+        Autocab credentials and company
+        configuration remain server-side.
+      */
+      const points =
+        rawPoints.map(
+          (point) => ({
+            latitude:
+              point?.latitude,
+
+            longitude:
+              point?.longitude
+          })
+        );
+
+      const eta =
+        await calculateAutocabEta(
+          points
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          eta
+        }
+      );
+    }
+
+
+    const bookingEtaMatch =
+      url.pathname.match(
+        /^\/api\/bookings\/(\d+)\/eta$/
+      );
+
+    if (
+      req.method === 'GET' &&
+      bookingEtaMatch
+    ) {
+      const bookingId =
+        Number(
+          bookingEtaMatch[1]
+        );
+
+      const auth =
+        requireAuth(req);
+
+      /*
+        Ownership is checked server-side.
+
+        The browser never supplies Autocab
+        credentials or company configuration.
+      */
+      const booking =
+        getOwnedBookingDetails(
+          bookingId,
+          auth.user.id
+        );
+
+      const eta =
+        await calculateAutocabEta(
+          booking.stops
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          eta
+        }
+      );
+    }
+
 
     const bookingSubmitMatch =
       url.pathname.match(

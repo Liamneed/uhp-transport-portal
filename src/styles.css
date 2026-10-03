@@ -4330,3 +4330,34 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+.booking-eta-preview.pickup-eta-preview.eta-green {
+  border-color: #a7d7b0;
+  background: #f3faf5;
+}
+
+.booking-eta-preview.pickup-eta-preview.eta-green strong {
+  color: #26743a;
+}
+
+.booking-eta-preview.pickup-eta-preview.eta-amber {
+  border-color: #e4c36d;
+  background: #fffaf0;
+}
+
+.booking-eta-preview.pickup-eta-preview.eta-amber strong {
+  color: #946900;
+}
+
+.booking-eta-preview.pickup-eta-preview.eta-red {
+  border-color: #dfa2a2;
+  background: #fff5f5;
+}
+
+.booking-eta-preview.pickup-eta-preview.eta-red strong {
+  color: #a23737;
+}
+
+.booking-eta-preview.pickup-eta-preview.eta-neutral strong {
+  color: #657786;
+}
