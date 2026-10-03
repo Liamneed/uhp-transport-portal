@@ -945,6 +945,11 @@ function enforceApiAccess(
     pathname ===
       '/api/my-bookings' ||
     pathname ===
+      '/api/booking-favourites' ||
+    pathname.startsWith(
+      '/api/booking-favourites/'
+    ) ||
+    pathname ===
       '/api/bookings' ||
     pathname.startsWith(
       '/api/bookings/'
@@ -5305,6 +5310,430 @@ function listBudgetInvoiceReadyBookings(
         booking.financialStatus
       )
   );
+}
+
+
+function listBookingFavourites(userId) {
+  const favourites = db.prepare(`
+    SELECT
+      bf.id,
+      bf.name,
+      bf.passenger_count AS passengerCount,
+      bf.budget_id AS budgetId,
+      b.budget_number AS budgetNumber,
+      b.name AS budgetName,
+      bf.reason_code_id AS reasonCodeId,
+      rc.code AS reasonCode,
+      rc.description AS reasonDescription,
+      bf.driver_notes AS driverNotes,
+      bf.created_at AS createdAt,
+      bf.updated_at AS updatedAt
+
+    FROM booking_favourites bf
+
+    LEFT JOIN budgets b
+      ON b.id = bf.budget_id
+
+    LEFT JOIN reason_codes rc
+      ON rc.id = bf.reason_code_id
+
+    WHERE bf.user_id = ?
+
+    ORDER BY
+      datetime(bf.updated_at) DESC,
+      bf.id DESC
+  `).all(userId);
+
+  const stopsStatement = db.prepare(`
+    SELECT
+      sequence_number AS sequenceNumber,
+      stop_type AS stopType,
+      address,
+      postcode,
+      latitude,
+      longitude,
+      saved_location_id AS savedLocationId,
+      location_name AS locationName,
+      pickup_instructions AS pickupInstructions
+
+    FROM booking_favourite_stops
+
+    WHERE favourite_id = ?
+
+    ORDER BY sequence_number
+  `);
+
+  return favourites.map(
+    (favourite) => ({
+      ...favourite,
+      stops:
+        stopsStatement.all(
+          favourite.id
+        )
+    })
+  );
+}
+
+
+function validateFavouriteCoding(
+  userId,
+  budgetId,
+  reasonCodeId
+) {
+  const options =
+    getBookingOptions(userId);
+
+  if (budgetId !== null) {
+    const permittedBudget =
+      options.budgets.some(
+        (budget) =>
+          Number(budget.id) ===
+          Number(budgetId)
+      );
+
+    if (!permittedBudget) {
+      const error =
+        new Error(
+          'The selected budget is not available to this user'
+        );
+
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  if (reasonCodeId !== null) {
+    const permittedReason =
+      options.reasonCodes.some(
+        (reason) =>
+          Number(reason.id) ===
+          Number(reasonCodeId)
+      );
+
+    if (!permittedReason) {
+      const error =
+        new Error(
+          'The selected reason code is not available'
+        );
+
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+}
+
+
+function createBookingFavourite(
+  userId,
+  payload = {}
+) {
+  const name =
+    String(payload.name || '')
+      .trim();
+
+  if (!name) {
+    const error =
+      new Error(
+        'Favourite name is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (name.length > 80) {
+    const error =
+      new Error(
+        'Favourite name must be 80 characters or fewer'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const passengerCount =
+    Number(
+      payload.passengerCount ?? 1
+    );
+
+  if (
+    !Number.isInteger(passengerCount) ||
+    passengerCount < 1 ||
+    passengerCount > 99
+  ) {
+    const error =
+      new Error(
+        'Passenger count must be between 1 and 99'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const budgetId =
+    payload.budgetId === null ||
+    payload.budgetId === undefined ||
+    payload.budgetId === ''
+      ? null
+      : Number(payload.budgetId);
+
+  const reasonCodeId =
+    payload.reasonCodeId === null ||
+    payload.reasonCodeId === undefined ||
+    payload.reasonCodeId === ''
+      ? null
+      : Number(payload.reasonCodeId);
+
+  if (
+    budgetId !== null &&
+    (
+      !Number.isInteger(budgetId) ||
+      budgetId < 1
+    )
+  ) {
+    const error =
+      new Error(
+        'A valid budget is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    reasonCodeId !== null &&
+    (
+      !Number.isInteger(reasonCodeId) ||
+      reasonCodeId < 1
+    )
+  ) {
+    const error =
+      new Error(
+        'A valid reason code is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  validateFavouriteCoding(
+    userId,
+    budgetId,
+    reasonCodeId
+  );
+
+  const pickup =
+    normaliseStop(
+      payload.pickup || {}
+    );
+
+  const destination =
+    normaliseStop(
+      payload.destination || {}
+    );
+
+  const vias =
+    Array.isArray(payload.vias)
+      ? payload.vias
+          .map(normaliseStop)
+          .filter(
+            (via) =>
+              via.address.trim()
+          )
+      : [];
+
+  if (!pickup.address.trim()) {
+    const error =
+      new Error(
+        'Favourite pickup is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!destination.address.trim()) {
+    const error =
+      new Error(
+        'Favourite destination is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const duplicate =
+    db.prepare(`
+      SELECT id
+      FROM booking_favourites
+      WHERE user_id = ?
+        AND name = ? COLLATE NOCASE
+      LIMIT 1
+    `).get(
+      userId,
+      name
+    );
+
+  if (duplicate) {
+    const error =
+      new Error(
+        'You already have a favourite with this name'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    const result =
+      db.prepare(`
+        INSERT INTO booking_favourites (
+          user_id,
+          name,
+          passenger_count,
+          budget_id,
+          reason_code_id,
+          driver_notes
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        userId,
+        name,
+        passengerCount,
+        budgetId,
+        reasonCodeId,
+        String(
+          payload.driverNotes || ''
+        ).trim()
+      );
+
+    const favouriteId =
+      Number(result.lastInsertRowid);
+
+    const insertStop =
+      db.prepare(`
+        INSERT INTO booking_favourite_stops (
+          favourite_id,
+          sequence_number,
+          stop_type,
+          address,
+          postcode,
+          latitude,
+          longitude,
+          saved_location_id,
+          location_name,
+          pickup_instructions
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+    const stops = [
+      {
+        ...pickup,
+        stopType:
+          'pickup'
+      },
+
+      ...vias.map(
+        (via) => ({
+          ...via,
+          stopType:
+            'via'
+        })
+      ),
+
+      {
+        ...destination,
+        stopType:
+          'destination'
+      }
+    ];
+
+    stops.forEach(
+      (stop, index) => {
+        insertStop.run(
+          favouriteId,
+          index,
+          stop.stopType,
+          stop.address,
+          stop.postcode || '',
+          stop.latitude,
+          stop.longitude,
+          stop.savedLocationId,
+          stop.locationName,
+          stop.pickupInstructions
+        );
+      }
+    );
+
+    db.exec('COMMIT');
+
+    return listBookingFavourites(
+      userId
+    ).find(
+      (favourite) =>
+        favourite.id ===
+        favouriteId
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function deleteBookingFavourite(
+  favouriteId,
+  userId
+) {
+  if (
+    !Number.isInteger(favouriteId) ||
+    favouriteId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid favourite id is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const favourite =
+    db.prepare(`
+      SELECT
+        id,
+        name
+      FROM booking_favourites
+      WHERE id = ?
+        AND user_id = ?
+    `).get(
+      favouriteId,
+      userId
+    );
+
+  if (!favourite) {
+    const error =
+      new Error(
+        'Favourite not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  db.prepare(`
+    DELETE FROM booking_favourites
+    WHERE id = ?
+      AND user_id = ?
+  `).run(
+    favouriteId,
+    userId
+  );
+
+  return favourite;
 }
 
 
@@ -12726,6 +13155,84 @@ const server = http.createServer(async (req, res) => {
             auth.user.id
           )
       });
+    }
+
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/booking-favourites'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      return sendJson(
+        res,
+        200,
+        {
+          favourites:
+            listBookingFavourites(
+              auth.user.id
+            )
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/booking-favourites'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      const payload =
+        await readJson(req);
+
+      const favourite =
+        createBookingFavourite(
+          auth.user.id,
+          payload
+        );
+
+      return sendJson(
+        res,
+        201,
+        {
+          favourite
+        }
+      );
+    }
+
+
+    const favouriteDeleteMatch =
+      url.pathname.match(
+        /^\/api\/booking-favourites\/(\d+)$/
+      );
+
+    if (
+      req.method === 'DELETE' &&
+      favouriteDeleteMatch
+    ) {
+      const auth =
+        requireAuth(req);
+
+      const favourite =
+        deleteBookingFavourite(
+          Number(
+            favouriteDeleteMatch[1]
+          ),
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          favourite
+        }
+      );
     }
 
     if (

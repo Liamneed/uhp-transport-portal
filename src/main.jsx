@@ -9438,6 +9438,10 @@ function BookTransportPage({ currentUser }) {
   const [budgets, setBudgets] = useState([]);
   const [reasonCodes, setReasonCodes] = useState([]);
   const [savedLocations, setSavedLocations] = useState([]);
+  const [bookingFavourites, setBookingFavourites] = useState([]);
+  const [recentBookings, setRecentBookings] = useState([]);
+  const [quickBookLoading, setQuickBookLoading] = useState(true);
+  const [savingFavourite, setSavingFavourite] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -9458,15 +9462,49 @@ function BookTransportPage({ currentUser }) {
     setError('');
 
     try {
-      const response = await apiFetch(
-        `${API_BASE}/api/booking-options?userId=${bookingUserId}`
-      );
+      const [
+        response,
+        favouritesResponse,
+        recentResponse
+      ] = await Promise.all([
+        apiFetch(
+          `${API_BASE}/api/booking-options?userId=${bookingUserId}`
+        ),
+        apiFetch(
+          `${API_BASE}/api/booking-favourites`
+        ),
+        apiFetch(
+          `${API_BASE}/api/my-bookings`
+        )
+      ]);
 
-      const data = await response.json();
+      const [
+        data,
+        favouritesData,
+        recentData
+      ] = await Promise.all([
+        response.json(),
+        favouritesResponse.json(),
+        recentResponse.json()
+      ]);
 
       if (!response.ok) {
         throw new Error(
           data.error || 'Unable to load booking options'
+        );
+      }
+
+      if (!favouritesResponse.ok) {
+        throw new Error(
+          favouritesData.error ||
+            'Unable to load favourite bookings'
+        );
+      }
+
+      if (!recentResponse.ok) {
+        throw new Error(
+          recentData.error ||
+            'Unable to load recent bookings'
         );
       }
 
@@ -9478,6 +9516,18 @@ function BookTransportPage({ currentUser }) {
           ? data.savedLocations
           : []
       );
+
+      setBookingFavourites(
+        Array.isArray(favouritesData.favourites)
+          ? favouritesData.favourites
+          : []
+      );
+
+      setRecentBookings(
+        Array.isArray(recentData.bookings)
+          ? recentData.bookings.slice(0, 6)
+          : []
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -9486,6 +9536,7 @@ function BookTransportPage({ currentUser }) {
       );
     } finally {
       setLoading(false);
+      setQuickBookLoading(false);
     }
   }
 
@@ -9497,6 +9548,398 @@ function BookTransportPage({ currentUser }) {
       ) ?? null,
     [budgets, form.budgetId]
   );
+
+  function applyJourneyTemplate({
+    pickup,
+    vias: templateVias = [],
+    destination,
+    passengerCount = 1,
+    budgetId = '',
+    reasonCodeId = '',
+    driverNotes = '',
+    passengerName = '',
+    passengerMobile = ''
+  }) {
+    if (!pickup || !destination) {
+      return;
+    }
+
+    setForm(
+      (current) => ({
+        ...current,
+
+        pickupAddress:
+          pickup.address || '',
+        pickupPostcode:
+          pickup.postcode || '',
+        pickupLatitude:
+          pickup.latitude ?? null,
+        pickupLongitude:
+          pickup.longitude ?? null,
+        pickupSavedLocationId:
+          pickup.savedLocationId ?? null,
+        pickupLocationName:
+          pickup.locationName ?? null,
+        pickupPickupInstructions:
+          pickup.pickupInstructions ?? null,
+
+        destinationAddress:
+          destination.address || '',
+        destinationPostcode:
+          destination.postcode || '',
+        destinationLatitude:
+          destination.latitude ?? null,
+        destinationLongitude:
+          destination.longitude ?? null,
+        destinationSavedLocationId:
+          destination.savedLocationId ?? null,
+        destinationLocationName:
+          destination.locationName ?? null,
+        destinationPickupInstructions:
+          destination.pickupInstructions ?? null,
+
+        passengerName:
+          passengerName || '',
+        passengerMobile:
+          passengerMobile || '',
+        passengerCount:
+          String(passengerCount || 1),
+
+        budgetId:
+          budgetId
+            ? String(budgetId)
+            : '',
+
+        reasonCodeId:
+          reasonCodeId
+            ? String(reasonCodeId)
+            : '',
+
+        driverNotes:
+          driverNotes || ''
+      })
+    );
+
+    setVias(
+      templateVias.map(
+        (via) => ({
+          address:
+            via.address || '',
+          postcode:
+            via.postcode || '',
+          latitude:
+            via.latitude ?? null,
+          longitude:
+            via.longitude ?? null,
+          savedLocationId:
+            via.savedLocationId ?? null,
+          locationName:
+            via.locationName ?? null,
+          pickupInstructions:
+            via.pickupInstructions ?? null
+        })
+      )
+    );
+
+    setError('');
+  }
+
+
+  function applyFavourite(favourite) {
+    const stops =
+      Array.isArray(favourite.stops)
+        ? favourite.stops
+        : [];
+
+    const pickup =
+      stops.find(
+        (stop) =>
+          stop.stopType === 'pickup'
+      );
+
+    const destination =
+      stops.find(
+        (stop) =>
+          stop.stopType === 'destination'
+      );
+
+    const favouriteVias =
+      stops.filter(
+        (stop) =>
+          stop.stopType === 'via'
+      );
+
+    applyJourneyTemplate({
+      pickup,
+      vias:
+        favouriteVias,
+      destination,
+      passengerCount:
+        favourite.passengerCount,
+      budgetId:
+        favourite.budgetId,
+      reasonCodeId:
+        favourite.reasonCodeId,
+      driverNotes:
+        favourite.driverNotes
+    });
+  }
+
+
+  function applyRecentBooking(booking) {
+    const stops =
+      Array.isArray(booking.stops)
+        ? booking.stops
+        : [];
+
+    const pickup =
+      stops.find(
+        (stop) =>
+          stop.stopType === 'pickup'
+      ) || {
+        address:
+          booking.pickupAddress,
+        postcode:
+          booking.pickupPostcode
+      };
+
+    const destination =
+      stops.find(
+        (stop) =>
+          stop.stopType === 'destination'
+      ) || {
+        address:
+          booking.destinationAddress,
+        postcode:
+          booking.destinationPostcode
+      };
+
+    const bookingVias =
+      stops.filter(
+        (stop) =>
+          stop.stopType === 'via'
+      );
+
+    applyJourneyTemplate({
+      pickup,
+      vias:
+        bookingVias,
+      destination,
+      passengerCount:
+        booking.passengerCount,
+      budgetId:
+        booking.budgetId,
+      reasonCodeId:
+        booking.reasonCodeId,
+      driverNotes:
+        booking.driverNotes,
+      passengerName:
+        booking.passengerName,
+      passengerMobile:
+        booking.passengerMobile
+    });
+  }
+
+
+  async function saveCurrentFavourite() {
+    const defaultName =
+      [
+        form.pickupLocationName ||
+          form.pickupAddress,
+        form.destinationLocationName ||
+          form.destinationAddress
+      ]
+        .filter(Boolean)
+        .join(' → ')
+        .slice(0, 80);
+
+    const name =
+      window.prompt(
+        'Name this favourite journey',
+        defaultName
+      );
+
+    if (!name) {
+      return;
+    }
+
+    setSavingFavourite(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/booking-favourites`,
+          {
+            method:
+              'POST',
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify({
+                name,
+
+                passengerCount:
+                  Number(
+                    form.passengerCount || 1
+                  ),
+
+                budgetId:
+                  form.budgetId || null,
+
+                reasonCodeId:
+                  form.reasonCodeId || null,
+
+                driverNotes:
+                  form.driverNotes,
+
+                pickup: {
+                  address:
+                    form.pickupAddress,
+                  postcode:
+                    form.pickupPostcode,
+                  latitude:
+                    form.pickupLatitude,
+                  longitude:
+                    form.pickupLongitude,
+                  savedLocationId:
+                    form.pickupSavedLocationId,
+                  locationName:
+                    form.pickupLocationName,
+                  pickupInstructions:
+                    form.pickupPickupInstructions
+                },
+
+                vias:
+                  vias
+                    .filter(
+                      (via) =>
+                        via.address.trim()
+                    )
+                    .map(
+                      (via) => ({
+                        address:
+                          via.address,
+                        postcode:
+                          via.postcode,
+                        latitude:
+                          via.latitude,
+                        longitude:
+                          via.longitude,
+                        savedLocationId:
+                          via.savedLocationId,
+                        locationName:
+                          via.locationName,
+                        pickupInstructions:
+                          via.pickupInstructions
+                      })
+                    ),
+
+                destination: {
+                  address:
+                    form.destinationAddress,
+                  postcode:
+                    form.destinationPostcode,
+                  latitude:
+                    form.destinationLatitude,
+                  longitude:
+                    form.destinationLongitude,
+                  savedLocationId:
+                    form.destinationSavedLocationId,
+                  locationName:
+                    form.destinationLocationName,
+                  pickupInstructions:
+                    form.destinationPickupInstructions
+                }
+              })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to save favourite'
+        );
+      }
+
+      setBookingFavourites(
+        (current) => [
+          data.favourite,
+          ...current.filter(
+            (item) =>
+              item.id !==
+              data.favourite.id
+          )
+        ]
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to save favourite'
+      );
+    } finally {
+      setSavingFavourite(false);
+    }
+  }
+
+
+  async function removeFavourite(
+    favourite
+  ) {
+    if (
+      !window.confirm(
+        `Remove "${favourite.name}" from your favourites?`
+      )
+    ) {
+      return;
+    }
+
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/booking-favourites/${favourite.id}`,
+          {
+            method:
+              'DELETE'
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to remove favourite'
+        );
+      }
+
+      setBookingFavourites(
+        (current) =>
+          current.filter(
+            (item) =>
+              item.id !== favourite.id
+          )
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to remove favourite'
+      );
+    }
+  }
+
 
   function updateForm(field, value) {
     setForm((current) => ({
@@ -9550,6 +9993,37 @@ function BookTransportPage({ currentUser }) {
     setPendingBookingReference('');
     setError('');
   }
+
+  const bookingHasEnteredData =
+    Boolean(
+      form.pickupAddress?.trim() ||
+      form.destinationAddress?.trim() ||
+      form.passengerName?.trim() ||
+      form.passengerMobile?.trim() ||
+      form.budgetId ||
+      form.reasonCodeId ||
+      form.driverNotes?.trim() ||
+      vias.some(
+        (via) =>
+          via.address?.trim()
+      )
+    );
+
+
+  function startAgain() {
+    if (
+      bookingHasEnteredData &&
+      !window.confirm(
+        'Clear the current transport request and start again?'
+      )
+    ) {
+      return;
+    }
+
+    resetBooking();
+    setError('');
+  }
+
 
   async function submitBooking(event) {
     event.preventDefault();
@@ -9830,8 +10304,158 @@ function BookTransportPage({ currentUser }) {
         </div>
       )}
 
+      <section className="card booking-quick-book">
+        <div className="booking-quick-book-heading">
+          <div>
+            <span className="booking-quick-book-eyebrow">
+              Quick Book
+            </span>
+
+            <h2>
+              Frequent journeys
+            </h2>
+
+            <p>
+              Reuse a favourite or recent journey without entering everything again.
+            </p>
+          </div>
+
+          <span className="booking-quick-book-user">
+            Personal to {bookingUser?.firstName || 'you'}
+          </span>
+        </div>
+
+        <div className="booking-quick-book-content">
+          <div className="booking-quick-book-group">
+            <div className="booking-quick-book-group-heading">
+              <strong>
+                Favourites
+              </strong>
+
+              <button
+                type="button"
+                className="booking-save-favourite"
+                disabled={
+                  savingFavourite ||
+                  !form.pickupAddress.trim() ||
+                  !form.destinationAddress.trim()
+                }
+                onClick={
+                  saveCurrentFavourite
+                }
+              >
+                {savingFavourite
+                  ? 'Saving...'
+                  : '+ Save current'}
+              </button>
+            </div>
+
+            <div className="booking-quick-book-list">
+              {quickBookLoading ? (
+                <span className="booking-quick-empty">
+                  Loading...
+                </span>
+              ) : bookingFavourites.length === 0 ? (
+                <span className="booking-quick-empty">
+                  No favourites yet
+                </span>
+              ) : (
+                bookingFavourites
+                  .slice(0, 5)
+                  .map(
+                    (favourite) => (
+                      <div
+                        key={favourite.id}
+                        className="booking-quick-item-wrap"
+                      >
+                        <button
+                          type="button"
+                          className="booking-quick-item"
+                          onClick={() =>
+                            applyFavourite(
+                              favourite
+                            )
+                          }
+                        >
+                          <strong>
+                            {favourite.name}
+                          </strong>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="booking-quick-remove"
+                          aria-label={`Remove ${favourite.name}`}
+                          onClick={() =>
+                            removeFavourite(
+                              favourite
+                            )
+                          }
+                        >
+                          ×
+                        </button>
+                      </div>
+                    )
+                  )
+              )}
+            </div>
+          </div>
+
+          <div className="booking-quick-book-group">
+            <div className="booking-quick-book-group-heading">
+              <strong>
+                Recent
+              </strong>
+
+              <span>
+                Rebook
+              </span>
+            </div>
+
+            <div className="booking-quick-book-list">
+              {quickBookLoading ? (
+                <span className="booking-quick-empty">
+                  Loading...
+                </span>
+              ) : recentBookings.length === 0 ? (
+                <span className="booking-quick-empty">
+                  No recent journeys
+                </span>
+              ) : (
+                recentBookings
+                  .slice(0, 5)
+                  .map(
+                    (booking) => (
+                      <button
+                        key={booking.id}
+                        type="button"
+                        className="booking-quick-item"
+                        onClick={() =>
+                          applyRecentBooking(
+                            booking
+                          )
+                        }
+                      >
+                        <strong>
+                          {booking.pickupAddress}
+                        </strong>
+
+                        <span>
+                          →
+                          {' '}
+                          {booking.destinationAddress}
+                        </span>
+                      </button>
+                    )
+                  )
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <form
-        className="booking-layout"
+        className="booking-layout booking-layout-modern"
         onSubmit={submitBooking}
       >
         <div className="booking-main">
@@ -9847,7 +10471,8 @@ function BookTransportPage({ currentUser }) {
               </div>
             </div>
 
-            <div className="form-grid two">
+            <div className="booking-time-layout">
+              <div className="form-grid two">
               <label>
                 Pickup Date
                 <input
@@ -9877,6 +10502,15 @@ function BookTransportPage({ currentUser }) {
                   }
                 />
               </label>
+              </div>
+
+              <div className="booking-eta-preview">
+                <small>Current pickup estimate</small>
+                <strong>ETA available after pickup selection</strong>
+                <span>
+                  Live vehicle availability will appear here.
+                </span>
+              </div>
             </div>
           </section>
 
@@ -10628,21 +11262,36 @@ function BookTransportPage({ currentUser }) {
               </div>
             )}
 
-            <button
-              type="submit"
-              className="primary booking-submit"
-              disabled={
-                saving ||
-                budgets.length === 0 ||
-                Boolean(pendingBookingId)
-              }
-            >
-              {saving
-                ? 'Creating Request...'
-                : pendingBookingId
-                  ? 'Dispatch Review Required'
-                  : 'Create Transport Request'}
-            </button>
+            <div className="booking-submit-actions">
+              <button
+                type="button"
+                className="booking-start-again"
+                disabled={
+                  saving ||
+                  Boolean(pendingBookingId) ||
+                  !bookingHasEnteredData
+                }
+                onClick={startAgain}
+              >
+                Start Again
+              </button>
+
+              <button
+                type="submit"
+                className="primary booking-submit"
+                disabled={
+                  saving ||
+                  budgets.length === 0 ||
+                  Boolean(pendingBookingId)
+                }
+              >
+                {saving
+                  ? 'Creating Request...'
+                  : pendingBookingId
+                    ? 'Dispatch Review Required'
+                    : 'Create Transport Request'}
+              </button>
+            </div>
           </div>
         </aside>
       </form>
