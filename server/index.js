@@ -6824,10 +6824,38 @@ function insertAutocabBookingStops(
           stop_type,
           address,
           postcode,
-          notes
+          notes,
+          latitude,
+          longitude
         )
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
+
+  const coordinateValue = (value) => {
+    if (
+      value === null ||
+      value === undefined ||
+      value === ''
+    ) {
+      return null;
+    }
+
+    const number = Number(value);
+
+    return Number.isFinite(number)
+      ? number
+      : null;
+  };
+
+  const latitudeFor = (stop) =>
+    coordinateValue(
+      stop?.Coordinates?.Latitude
+    );
+
+  const longitudeFor = (stop) =>
+    coordinateValue(
+      stop?.Coordinates?.Longitude
+    );
 
   let sequence = 0;
 
@@ -6839,7 +6867,9 @@ function insertAutocabBookingStops(
       payload?.Pickup?.Address
     ) || '',
     null,
-    null
+    null,
+    latitudeFor(payload?.Pickup),
+    longitudeFor(payload?.Pickup)
   );
 
   const vias =
@@ -6856,7 +6886,9 @@ function insertAutocabBookingStops(
         via?.Address
       ) || '',
       null,
-      null
+      null,
+      latitudeFor(via),
+      longitudeFor(via)
     );
   }
 
@@ -6868,7 +6900,13 @@ function insertAutocabBookingStops(
       payload?.Destination?.Address
     ) || '',
     null,
-    null
+    null,
+    latitudeFor(
+      payload?.Destination
+    ),
+    longitudeFor(
+      payload?.Destination
+    )
   );
 }
 
