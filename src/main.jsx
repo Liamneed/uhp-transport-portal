@@ -3405,29 +3405,25 @@ function BookingDetailModal({
               </div>
 
               {codingReviewRequired && (
-                <div className="booking-coding-review">
+                <div className="booking-coding-review booking-coding-review-compact">
                   <div className="booking-coding-review-heading">
                     <strong>
-                      Coding Review Required
+                      Coding review required
                     </strong>
 
                     <span>
-                      The coding supplied with this Autocab booking has not yet been matched to portal master data.
+                      Requested Autocab coding needs matching to UHP records.
                     </span>
                   </div>
 
                   {hasParsedCoding && (
-                    <div className="booking-coding-requested">
+                    <div className="booking-coding-requested booking-coding-requested-compact">
                       <div>
-                        <small>
-                          Requested Reason
-                        </small>
-
+                        <small>Reason</small>
                         <strong>
                           {booking.parsedReasonCode ||
                             'Not supplied'}
                         </strong>
-
                         {booking.codingReasonStatus && (
                           <span>
                             {bookingCodingStatusText(
@@ -3438,15 +3434,11 @@ function BookingDetailModal({
                       </div>
 
                       <div>
-                        <small>
-                          Requested Budget
-                        </small>
-
+                        <small>Budget</small>
                         <strong>
                           {booking.parsedBudgetNumber ||
                             'Not supplied'}
                         </strong>
-
                         {booking.codingBudgetStatus && (
                           <span>
                             {bookingCodingStatusText(
@@ -3457,15 +3449,11 @@ function BookingDetailModal({
                       </div>
 
                       <div>
-                        <small>
-                          Requested Holder
-                        </small>
-
+                        <small>Budget Holder</small>
                         <strong>
                           {booking.parsedBudgetHolder ||
                             'Not supplied'}
                         </strong>
-
                         {booking.codingHolderStatus && (
                           <span>
                             {bookingCodingStatusText(
@@ -3480,51 +3468,47 @@ function BookingDetailModal({
               )}
 
               <div className="booking-modal-facts booking-modal-facts-single">
-                <div>
-                  <small>Department</small>
-                  <strong>
-                    {booking.department ||
-                      (codingReviewRequired
-                        ? 'Pending coding assignment'
-                        : '—')}
-                  </strong>
-                </div>
+                {booking.department && (
+                  <div>
+                    <small>Department</small>
+                    <strong>
+                      {booking.department}
+                    </strong>
+                  </div>
+                )}
 
-                <div>
-                  <small>Budget</small>
-                  <strong>
-                    {booking.budgetNumber ||
-                      (codingReviewRequired
-                        ? 'Pending coding review'
-                        : '—')}
-                    {booking.budgetName
-                      ? ` · ${booking.budgetName}`
-                      : ''}
-                  </strong>
-                </div>
+                {booking.budgetNumber && (
+                  <div>
+                    <small>Budget</small>
+                    <strong>
+                      {booking.budgetNumber}
+                      {booking.budgetName
+                        ? ` · ${booking.budgetName}`
+                        : ''}
+                    </strong>
+                  </div>
+                )}
 
-                <div>
-                  <small>Budget Holder</small>
-                  <strong>
-                    {booking.budgetHolder ||
-                      (codingReviewRequired
-                        ? 'Pending coding review'
-                        : '—')}
-                  </strong>
-                </div>
+                {booking.budgetHolder && (
+                  <div>
+                    <small>Budget Holder</small>
+                    <strong>
+                      {booking.budgetHolder}
+                    </strong>
+                  </div>
+                )}
 
-                <div>
-                  <small>Reason</small>
-                  <strong>
-                    {booking.reasonCode ||
-                      (codingReviewRequired
-                        ? 'Pending coding review'
-                        : '—')}
-                    {booking.reasonDescription
-                      ? ` · ${booking.reasonDescription}`
-                      : ''}
-                  </strong>
-                </div>
+                {booking.reasonCode && (
+                  <div>
+                    <small>Reason</small>
+                    <strong>
+                      {booking.reasonCode}
+                      {booking.reasonDescription
+                        ? ` · ${booking.reasonDescription}`
+                        : ''}
+                    </strong>
+                  </div>
+                )}
 
                 <div>
                   <small>Financial Status</small>
