@@ -48,6 +48,12 @@ const FRONTEND_ORIGIN =
     )
   ).replace(/\/$/, '');
 
+const MAPTILER_GEOCODING_API_KEY =
+  String(
+    process.env.MAPTILER_GEOCODING_API_KEY ||
+    ''
+  ).trim();
+
 const OSRM_BASE_URL =
   String(
     process.env.OSRM_BASE_URL ||
@@ -899,7 +905,9 @@ function enforceApiAccess(
     pathname ===
       '/api/routing/route' ||
     pathname ===
-      '/api/booking-map/clear-vehicles'
+      '/api/booking-map/clear-vehicles' ||
+    pathname ===
+      '/api/geocoding/search'
   ) {
     return requireAuth(req);
   }
@@ -8665,6 +8673,269 @@ function serveFrontend(
   return true;
 }
 
+function parseGeocodingSearchQuery(
+  rawQuery
+) {
+  const query =
+    String(rawQuery || '')
+      .trim();
+
+  if (query.length < 3) {
+    const error =
+      new Error(
+        'Enter at least 3 characters to search'
+      );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  if (query.length > 160) {
+    const error =
+      new Error(
+        'Address search is too long'
+      );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  return query;
+}
+
+
+function normaliseGeocodingFeature(
+  feature
+) {
+  const coordinates =
+    Array.isArray(
+      feature?.geometry?.coordinates
+    )
+      ? feature.geometry.coordinates
+      : (
+          Array.isArray(feature?.center)
+            ? feature.center
+            : null
+        );
+
+  const longitude =
+    Number(coordinates?.[0]);
+
+  const latitude =
+    Number(coordinates?.[1]);
+
+  if (
+    !Number.isFinite(longitude) ||
+    !Number.isFinite(latitude) ||
+    longitude < -180 ||
+    longitude > 180 ||
+    latitude < -90 ||
+    latitude > 90
+  ) {
+    return null;
+  }
+
+  const properties =
+    feature?.properties || {};
+
+  const context =
+    Array.isArray(feature?.context)
+      ? feature.context
+      : [];
+
+  const postcodeContext =
+    context.find(
+      (item) =>
+        String(item?.id || '')
+          .startsWith('postcode.')
+    );
+
+  const postcodeSource =
+    String(
+      properties.postcode ||
+      feature?.postcode ||
+      postcodeContext?.text ||
+      ''
+    )
+      .trim()
+      .toUpperCase();
+
+  const label =
+    String(
+      feature?.place_name ||
+      feature?.text ||
+      properties.name ||
+      ''
+    ).trim();
+
+  if (!label) {
+    return null;
+  }
+
+  const postcodeMatch =
+    label
+      .toUpperCase()
+      .match(
+        /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/
+      );
+
+  const postcode =
+    postcodeSource ||
+    (
+      postcodeMatch
+        ? postcodeMatch[1]
+            .replace(
+              /\s+/g,
+              ''
+            )
+            .replace(
+              /(.+)(\d[A-Z]{2})$/,
+              '$1 $2'
+            )
+        : null
+    );
+
+  return {
+    id:
+      String(
+        feature?.id ||
+        `${longitude},${latitude}:${label}`
+      ),
+
+    label,
+
+    address:
+      String(
+        feature?.place_name ||
+        label
+      ).trim(),
+
+    postcode,
+
+    latitude,
+    longitude
+  };
+}
+
+
+async function searchMapTilerGeocoding(
+  query,
+  signal
+) {
+  if (!MAPTILER_GEOCODING_API_KEY) {
+    const error =
+      new Error(
+        'Address search is not configured'
+      );
+
+    error.statusCode = 503;
+
+    throw error;
+  }
+
+  const url =
+    new URL(
+      `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json`
+    );
+
+  url.searchParams.set(
+    'key',
+    MAPTILER_GEOCODING_API_KEY
+  );
+
+  url.searchParams.set(
+    'limit',
+    '8'
+  );
+
+  url.searchParams.set(
+    'language',
+    'en'
+  );
+
+  /*
+   * Taxi bookings need named venues and useful
+   * journey locations as well as postal addresses.
+   *
+   * POIs are not returned by MapTiler's default
+   * geocoding configuration, so enable them
+   * explicitly and exclude broad geographic
+   * features that add noise to autocomplete.
+   */
+  url.searchParams.set(
+    'types',
+    [
+      'poi',
+      'address',
+      'road',
+      'postal_code',
+      'place',
+      'locality',
+      'neighbourhood'
+    ].join(',')
+  );
+
+  /*
+   * Prefer Plymouth / Derriford results without
+   * excluding legitimate destinations elsewhere
+   * in the United Kingdom.
+   */
+  url.searchParams.set(
+    'proximity',
+    '-4.1427,50.4168'
+  );
+
+  url.searchParams.set(
+    'country',
+    'gb'
+  );
+
+  const response =
+    await fetch(
+      url,
+      {
+        method: 'GET',
+        headers: {
+          Accept:
+            'application/json'
+        },
+        signal
+      }
+    );
+
+  if (!response.ok) {
+    const error =
+      new Error(
+        `Geocoding service returned ${response.status}`
+      );
+
+    error.statusCode =
+      response.status === 403
+        ? 503
+        : 502;
+
+    throw error;
+  }
+
+  const data =
+    await response.json();
+
+  const features =
+    Array.isArray(data?.features)
+      ? data.features
+      : [];
+
+  return features
+    .map(
+      normaliseGeocodingFeature
+    )
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+
 function listFreshClearVehicles() {
   const rows =
     db.prepare(`
@@ -9253,6 +9524,50 @@ const server = http.createServer(async (req, res) => {
           )
       });
     }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/geocoding/search'
+    ) {
+      requireAuth(req);
+
+      const query =
+        parseGeocodingSearchQuery(
+          url.searchParams.get('q')
+        );
+
+      const controller =
+        new AbortController();
+
+      const timeoutId =
+        setTimeout(
+          () =>
+            controller.abort(),
+          6000
+        );
+
+      try {
+        const results =
+          await searchMapTilerGeocoding(
+            query,
+            controller.signal
+          );
+
+        return sendJson(
+          res,
+          200,
+          {
+            results
+          }
+        );
+      } finally {
+        clearTimeout(
+          timeoutId
+        );
+      }
+    }
+
 
     if (
       req.method === 'GET' &&

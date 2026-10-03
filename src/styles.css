@@ -2619,6 +2619,81 @@ button:disabled {
 }
 
 
+/* Booking address autocomplete */
+
+.booking-address-search {
+  position: relative;
+}
+
+.booking-address-search > input {
+  width: 100%;
+}
+
+.booking-address-search-state {
+  display: block;
+  margin-top: 5px;
+  color: #7b8998;
+  font-size: 10px;
+}
+
+.booking-address-search-state.error {
+  color: #9a5757;
+}
+
+.booking-address-results {
+  position: absolute;
+  z-index: 1200;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  overflow: auto;
+  max-height: 290px;
+  border: 1px solid #d9e3ec;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow:
+    0 12px 28px
+    rgba(27, 43, 65, 0.16);
+}
+
+.booking-address-result {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid #edf1f4;
+  border-radius: 0;
+  background: #fff;
+  color: #3b4d61;
+  text-align: left;
+  cursor: pointer;
+}
+
+.booking-address-result:last-child {
+  border-bottom: 0;
+}
+
+.booking-address-result:hover,
+.booking-address-result:focus-visible {
+  background: #f4f8fb;
+}
+
+.booking-address-result strong {
+  color: #31465f;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.booking-address-result span {
+  color: #778596;
+  font-size: 10px;
+}
+
+
 /* Booking page live planning map */
 
 .booking-planning-map-card {

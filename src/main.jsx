@@ -7345,7 +7345,262 @@ function MyBookingsPage({
   );
 }
 
-function BookingPlanningMap() {
+function createInitialBookingForm() {
+  const now =
+    new Date();
+
+  const pad = (value) =>
+    String(value).padStart(2, '0');
+
+  return {
+    pickupDate:
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+
+    pickupTime:
+      `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+
+    pickupAddress: '',
+    pickupPostcode: '',
+    pickupLatitude: null,
+    pickupLongitude: null,
+
+    destinationAddress: '',
+    destinationPostcode: '',
+    destinationLatitude: null,
+    destinationLongitude: null,
+
+    passengerName: '',
+    passengerMobile: '',
+    passengerCount: 1,
+    budgetId: '',
+    reasonCodeId: '',
+    driverNotes: ''
+  };
+}
+
+
+function BookingAddressAutocomplete({
+  value,
+  placeholder,
+  required = false,
+  onChange,
+  onSelect
+}) {
+  const [
+    results,
+    setResults
+  ] = useState([]);
+
+  const [
+    searchState,
+    setSearchState
+  ] = useState('idle');
+
+  const [
+    open,
+    setOpen
+  ] = useState(false);
+
+  const suppressNextSearch =
+    useRef(false);
+
+  useEffect(() => {
+    const query =
+      String(value || '')
+        .trim();
+
+    if (suppressNextSearch.current) {
+      suppressNextSearch.current = false;
+      return;
+    }
+
+    if (query.length < 3) {
+      setResults([]);
+      setSearchState('idle');
+      setOpen(false);
+      return;
+    }
+
+    const controller =
+      new AbortController();
+
+    const timer =
+      window.setTimeout(
+        async () => {
+          setSearchState('loading');
+
+          try {
+            const response =
+              await apiFetch(
+                `${API_BASE}/api/geocoding/search?` +
+                new URLSearchParams({
+                  q: query
+                }).toString(),
+                {
+                  signal:
+                    controller.signal
+                }
+              );
+
+            const data =
+              await response.json();
+
+            if (!response.ok) {
+              throw new Error(
+                data.error ||
+                'Unable to search addresses'
+              );
+            }
+
+            const nextResults =
+              Array.isArray(data.results)
+                ? data.results
+                : [];
+
+            setResults(
+              nextResults
+            );
+
+            setSearchState(
+              'ready'
+            );
+
+            setOpen(
+              nextResults.length > 0
+            );
+          } catch (error) {
+            if (
+              error?.name ===
+              'AbortError'
+            ) {
+              return;
+            }
+
+            setResults([]);
+            setSearchState('error');
+            setOpen(false);
+          }
+        },
+        300
+      );
+
+    return () => {
+      window.clearTimeout(
+        timer
+      );
+
+      controller.abort();
+    };
+  }, [value]);
+
+  function chooseResult(
+    result
+  ) {
+    suppressNextSearch.current =
+      true;
+
+    setResults([]);
+    setOpen(false);
+    setSearchState('idle');
+
+    onSelect(
+      result
+    );
+  }
+
+  return (
+    <div className="booking-address-search">
+      <input
+        required={required}
+        autoComplete="off"
+        placeholder={placeholder}
+        value={value}
+        onChange={(event) => {
+          const nextValue =
+            event.target.value;
+
+          onChange(
+            nextValue
+          );
+
+          if (
+            nextValue
+              .trim()
+              .length >= 3
+          ) {
+            setOpen(true);
+          }
+        }}
+        onFocus={() => {
+          if (results.length) {
+            setOpen(true);
+          }
+        }}
+        onBlur={() => {
+          window.setTimeout(
+            () =>
+              setOpen(false),
+            140
+          );
+        }}
+      />
+
+      {searchState === 'loading' && (
+        <span className="booking-address-search-state">
+          Searching…
+        </span>
+      )}
+
+      {open && results.length > 0 && (
+        <div
+          className="booking-address-results"
+          role="listbox"
+        >
+          {results.map(
+            (result) => (
+              <button
+                key={result.id}
+                type="button"
+                className="booking-address-result"
+                onMouseDown={(event) =>
+                  event.preventDefault()
+                }
+                onClick={() =>
+                  chooseResult(
+                    result
+                  )
+                }
+              >
+                <strong>
+                  {result.label}
+                </strong>
+
+                {result.postcode && (
+                  <span>
+                    {result.postcode}
+                  </span>
+                )}
+              </button>
+            )
+          )}
+        </div>
+      )}
+
+      {searchState === 'error' && (
+        <span className="booking-address-search-state error">
+          Address search temporarily unavailable
+        </span>
+      )}
+    </div>
+  );
+}
+
+
+function BookingPlanningMap({
+  pickup,
+  vias,
+  destination
+}) {
   const [
     clearVehicles,
     setClearVehicles
@@ -7360,6 +7615,16 @@ function BookingPlanningMap() {
     fleetUpdatedAt,
     setFleetUpdatedAt
   ] = useState(null);
+
+  const [
+    roadRouteCoordinates,
+    setRoadRouteCoordinates
+  ] = useState([]);
+
+  const [
+    roadRouteState,
+    setRoadRouteState
+  ] = useState('idle');
 
   useEffect(() => {
     let cancelled = false;
@@ -7387,7 +7652,9 @@ function BookingPlanningMap() {
         }
 
         setClearVehicles(
-          Array.isArray(data.vehicles)
+          Array.isArray(
+            data.vehicles
+          )
             ? data.vehicles
             : []
         );
@@ -7397,13 +7664,17 @@ function BookingPlanningMap() {
           new Date().toISOString()
         );
 
-        setFleetState('ready');
+        setFleetState(
+          'ready'
+        );
       } catch {
         if (cancelled) {
           return;
         }
 
-        setFleetState('error');
+        setFleetState(
+          'error'
+        );
       }
     }
 
@@ -7426,8 +7697,481 @@ function BookingPlanningMap() {
     };
   }, []);
 
+  function normalisePlanningStop(
+    stop
+  ) {
+    if (
+      stop?.latitude === null ||
+      stop?.latitude === undefined ||
+      stop?.longitude === null ||
+      stop?.longitude === undefined
+    ) {
+      return null;
+    }
+
+    const latitude =
+      Number(
+        stop.latitude
+      );
+
+    const longitude =
+      Number(
+        stop.longitude
+      );
+
+    if (
+      !Number.isFinite(
+        latitude
+      ) ||
+      !Number.isFinite(
+        longitude
+      ) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      return null;
+    }
+
+    return {
+      ...stop,
+      latitude,
+      longitude
+    };
+  }
+
+  const selectedPickup =
+    normalisePlanningStop({
+      stopType: 'pickup',
+      label: 'P',
+      address:
+        pickup?.address,
+      latitude:
+        pickup?.latitude,
+      longitude:
+        pickup?.longitude
+    });
+
+  const selectedDestination =
+    normalisePlanningStop({
+      stopType:
+        'destination',
+      label: 'D',
+      address:
+        destination?.address,
+      latitude:
+        destination?.latitude,
+      longitude:
+        destination?.longitude
+    });
+
+  const journeyViaSelections =
+    (
+      Array.isArray(vias)
+        ? vias
+        : []
+    )
+      .map(
+        (via, index) => ({
+          via,
+          index
+        })
+      )
+      .filter(
+        ({ via }) =>
+          String(
+            via?.address || ''
+          )
+            .trim()
+            .length > 0
+      )
+      .map(
+        ({ via, index }) =>
+          normalisePlanningStop({
+            stopType: 'via',
+            label:
+              String(
+                index + 1
+              ),
+            address:
+              via.address,
+            latitude:
+              via.latitude,
+            longitude:
+              via.longitude
+          })
+      );
+
+  const allJourneyViasSelected =
+    journeyViaSelections.every(
+      Boolean
+    );
+
+  const selectedVias =
+    journeyViaSelections
+      .filter(Boolean);
+
+  function distanceBetweenKm(
+    latitude1,
+    longitude1,
+    latitude2,
+    longitude2
+  ) {
+    const toRadians =
+      (degrees) =>
+        degrees *
+        Math.PI /
+        180;
+
+    const earthRadiusKm =
+      6371;
+
+    const deltaLatitude =
+      toRadians(
+        latitude2 -
+        latitude1
+      );
+
+    const deltaLongitude =
+      toRadians(
+        longitude2 -
+        longitude1
+      );
+
+    const firstLatitude =
+      toRadians(
+        latitude1
+      );
+
+    const secondLatitude =
+      toRadians(
+        latitude2
+      );
+
+    const a =
+      Math.sin(
+        deltaLatitude / 2
+      ) ** 2 +
+      Math.cos(
+        firstLatitude
+      ) *
+      Math.cos(
+        secondLatitude
+      ) *
+      Math.sin(
+        deltaLongitude / 2
+      ) ** 2;
+
+    return (
+      earthRadiusKm *
+      2 *
+      Math.atan2(
+        Math.sqrt(a),
+        Math.sqrt(1 - a)
+      )
+    );
+  }
+
+  const nearbyClearVehicles =
+    selectedPickup
+      ? clearVehicles
+          .map(
+            (vehicle) => ({
+              ...vehicle,
+
+              distanceKm:
+                distanceBetweenKm(
+                  selectedPickup.latitude,
+                  selectedPickup.longitude,
+                  Number(
+                    vehicle.latitude
+                  ),
+                  Number(
+                    vehicle.longitude
+                  )
+                )
+            })
+          )
+          .filter(
+            (vehicle) =>
+              Number.isFinite(
+                vehicle.distanceKm
+              ) &&
+              vehicle.distanceKm <= 15
+          )
+          .sort(
+            (a, b) =>
+              a.distanceKm -
+              b.distanceKm
+          )
+          .slice(
+            0,
+            5
+          )
+      : [];
+
+  const visibleStops =
+    [
+      selectedPickup,
+      ...selectedVias,
+      selectedDestination
+    ]
+      .filter(Boolean);
+
+  const canRoute =
+    Boolean(
+      selectedPickup &&
+      selectedDestination &&
+      allJourneyViasSelected
+    );
+
+  const routedStops =
+    canRoute
+      ? [
+          selectedPickup,
+          ...selectedVias,
+          selectedDestination
+        ]
+      : [];
+
+  const routeCoordinates =
+    routedStops.map(
+      (stop) => [
+        stop.latitude,
+        stop.longitude
+      ]
+    );
+
+  const routeRequestCoordinates =
+    canRoute
+      ? routedStops
+          .map(
+            (stop) =>
+              `${stop.longitude},${stop.latitude}`
+          )
+          .join(';')
+      : '';
+
+  useEffect(() => {
+    if (
+      !canRoute ||
+      routedStops.length < 2 ||
+      !routeRequestCoordinates
+    ) {
+      setRoadRouteCoordinates(
+        []
+      );
+
+      setRoadRouteState(
+        'idle'
+      );
+
+      return;
+    }
+
+    const controller =
+      new AbortController();
+
+    setRoadRouteCoordinates(
+      []
+    );
+
+    setRoadRouteState(
+      'loading'
+    );
+
+    const url =
+      `${API_BASE}/api/routing/route?` +
+      new URLSearchParams({
+        coordinates:
+          routeRequestCoordinates
+      }).toString();
+
+    apiFetch(
+      url,
+      {
+        signal:
+          controller.signal
+      }
+    )
+      .then(
+        async (response) => {
+          const data =
+            await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data.error ||
+              'Unable to calculate route'
+            );
+          }
+
+          return data;
+        }
+      )
+      .then((data) => {
+        const coordinates =
+          data?.route
+            ?.geometry
+            ?.coordinates;
+
+        if (
+          data?.code !== 'Ok' ||
+          !Array.isArray(
+            coordinates
+          )
+        ) {
+          throw new Error(
+            'Routing service returned no usable route'
+          );
+        }
+
+        const roadCoordinates =
+          coordinates
+            .map(
+              (coordinate) => [
+                Number(
+                  coordinate?.[1]
+                ),
+                Number(
+                  coordinate?.[0]
+                )
+              ]
+            )
+            .filter(
+              ([latitude, longitude]) =>
+                Number.isFinite(
+                  latitude
+                ) &&
+                Number.isFinite(
+                  longitude
+                )
+            );
+
+        if (
+          roadCoordinates.length < 2
+        ) {
+          throw new Error(
+            'Routing service returned an empty route'
+          );
+        }
+
+        setRoadRouteCoordinates(
+          roadCoordinates
+        );
+
+        setRoadRouteState(
+          'ready'
+        );
+      })
+      .catch((error) => {
+        if (
+          error?.name ===
+          'AbortError'
+        ) {
+          return;
+        }
+
+        setRoadRouteCoordinates(
+          []
+        );
+
+        setRoadRouteState(
+          'fallback'
+        );
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    canRoute,
+    routeRequestCoordinates
+  ]);
+
+  const displayedRouteCoordinates =
+    roadRouteCoordinates.length > 1
+      ? roadRouteCoordinates
+      : routeCoordinates;
+
+  const pickupFleetCoordinates =
+    selectedPickup
+      ? [
+          [
+            selectedPickup.latitude,
+            selectedPickup.longitude
+          ],
+
+          ...nearbyClearVehicles.map(
+            (vehicle) => [
+              Number(
+                vehicle.latitude
+              ),
+              Number(
+                vehicle.longitude
+              )
+            ]
+          )
+        ]
+      : [];
+
+  const mapBoundsCoordinates =
+    canRoute
+      ? displayedRouteCoordinates
+      : pickupFleetCoordinates.length
+        ? pickupFleetCoordinates
+        : visibleStops.map(
+            (stop) => [
+              stop.latitude,
+              stop.longitude
+            ]
+          );
+
   const defaultCentre =
+    mapBoundsCoordinates[0] ||
     [50.4169, -4.1138];
+
+  const createStopPinIcon = (
+    markerClass,
+    label
+  ) =>
+    L.divIcon({
+      className:
+        'booking-map-div-icon booking-map-pin-wrapper',
+
+      html: `
+        <span class="booking-map-pin ${markerClass}">
+          <span class="booking-map-pin-label">
+            ${label}
+          </span>
+        </span>
+      `,
+
+      iconSize: [32, 44],
+      iconAnchor: [16, 44],
+      popupAnchor: [0, -39]
+    });
+
+  const pickupIcon =
+    createStopPinIcon(
+      'pickup',
+      'P'
+    );
+
+  const destinationIcon =
+    createStopPinIcon(
+      'destination',
+      'D'
+    );
+
+  const viaIcon = (
+    label
+  ) =>
+    createStopPinIcon(
+      'via',
+      label
+    );
 
   const clearVehicleIcon =
     (vehicle) => {
@@ -7517,12 +8261,7 @@ function BookingPlanningMap() {
                   rx="1"
                 />
                 <path
-                  d="
-                    M13 5
-                    L16 2
-                    L19 5
-                    Z
-                  "
+                  d="M13 5 L16 2 L19 5 Z"
                 />
               </svg>
 
@@ -7552,10 +8291,12 @@ function BookingPlanningMap() {
             Live Fleet
           </span>
 
-          <h3>Journey Map</h3>
+          <h3>
+            Journey Map
+          </h3>
 
           <p>
-            Clear vehicles update automatically every 10 seconds.
+            The five nearest clear vehicles appear after a pickup is selected.
           </p>
         </div>
 
@@ -7563,13 +8304,14 @@ function BookingPlanningMap() {
           className={`booking-clear-count ${fleetState}`}
         >
           <strong>
-            {fleetState === 'ready'
-              ? clearVehicles.length
+            {selectedPickup &&
+            fleetState === 'ready'
+              ? nearbyClearVehicles.length
               : '—'}
           </strong>
 
           <span>
-            Clear
+            Nearby
           </span>
         </div>
       </div>
@@ -7586,11 +8328,80 @@ function BookingPlanningMap() {
               attribution={
                 MAP_TILE_ATTRIBUTION
               }
-              url={MAP_TILE_URL}
+              url={
+                MAP_TILE_URL
+              }
             />
           )}
 
-          {clearVehicles.map(
+          {mapBoundsCoordinates.length > 0 && (
+            <BookingMapBounds
+              coordinates={
+                mapBoundsCoordinates
+              }
+            />
+          )}
+
+          {displayedRouteCoordinates.length > 1 && (
+            <Polyline
+              positions={
+                displayedRouteCoordinates
+              }
+              pathOptions={{
+                weight: 4,
+                opacity: 0.78
+              }}
+            />
+          )}
+
+          {visibleStops.map(
+            (stop, index) => {
+              const icon =
+                stop.stopType ===
+                  'pickup'
+                  ? pickupIcon
+                  : stop.stopType ===
+                      'destination'
+                    ? destinationIcon
+                    : viaIcon(
+                        stop.label
+                      );
+
+              return (
+                <Marker
+                  key={
+                    `planning-${stop.stopType}-${index}`
+                  }
+                  position={[
+                    stop.latitude,
+                    stop.longitude
+                  ]}
+                  icon={icon}
+                  zIndexOffset={500}
+                >
+                  <Popup>
+                    <strong>
+                      {stop.stopType ===
+                      'pickup'
+                        ? 'Pickup'
+                        : stop.stopType ===
+                            'destination'
+                          ? 'Destination'
+                          : `Via ${stop.label}`}
+                    </strong>
+
+                    {stop.address && (
+                      <div>
+                        {stop.address}
+                      </div>
+                    )}
+                  </Popup>
+                </Marker>
+              );
+            }
+          )}
+
+          {nearbyClearVehicles.map(
             (vehicle) => (
               <Marker
                 key={
@@ -7611,23 +8422,12 @@ function BookingPlanningMap() {
                     Clear car {vehicle.callsign || '—'}
                   </strong>
 
-                  {vehicle.registration && (
-                    <div>
-                      {vehicle.registration}
-                    </div>
-                  )}
-
-                  {vehicle.plateNumber && (
-                    <div>
-                      Plate {vehicle.plateNumber}
-                    </div>
-                  )}
-
                   <div>
                     Available
-                    {vehicle.ageSeconds !== null &&
-                    vehicle.ageSeconds !== undefined
-                      ? ` · updated ${vehicle.ageSeconds}s ago`
+                    {Number.isFinite(
+                      vehicle.distanceKm
+                    )
+                      ? ` · ${vehicle.distanceKm.toFixed(1)} km from pickup`
                       : ''}
                   </div>
                 </Popup>
@@ -7642,24 +8442,32 @@ function BookingPlanningMap() {
               className="booking-map-live-car-symbol"
               aria-hidden="true"
             />
-            Clear vehicles
+
+            Nearest clear vehicles
           </span>
 
           <span>
-            {fleetState === 'loading'
-              ? 'Loading live fleet…'
-              : fleetState === 'error'
-                ? 'Live fleet temporarily unavailable'
-                : fleetUpdatedAt
-                  ? 'Live fleet connected'
-                  : ''}
+            {roadRouteState === 'loading'
+              ? 'Calculating road route…'
+              : roadRouteState === 'ready'
+                ? 'Road route ready'
+                : roadRouteState === 'fallback'
+                  ? 'Showing stop-to-stop route'
+                  : fleetState === 'loading'
+                    ? 'Loading live fleet…'
+                    : fleetState === 'error'
+                      ? 'Live fleet temporarily unavailable'
+                      : fleetUpdatedAt
+                        ? 'Live fleet connected'
+                        : ''}
           </span>
         </div>
       </div>
 
       <div className="booking-planning-route-hint">
-        Enter the journey below. The road route will appear here
-        once pickup and destination locations are selected.
+        {canRoute
+          ? 'Route updates automatically when journey locations change.'
+          : 'Select every entered journey location to show the road route.'}
       </div>
     </div>
   );
@@ -7669,22 +8477,13 @@ function BookingPlanningMap() {
 function BookTransportPage({ currentUser }) {
   const bookingUserId = currentUser.id;
 
-  const initialForm = {
-    pickupDate: '',
-    pickupTime: '',
-    pickupAddress: '',
-    pickupPostcode: '',
-    destinationAddress: '',
-    destinationPostcode: '',
-    passengerName: '',
-    passengerMobile: '',
-    passengerCount: 1,
-    budgetId: '',
-    reasonCodeId: '',
-    driverNotes: ''
-  };
-
-  const [form, setForm] = useState(initialForm);
+  const [
+    form,
+    setForm
+  ] = useState(
+    () =>
+      createInitialBookingForm()
+  );
   const [vias, setVias] = useState([]);
 
   const [bookingUser, setBookingUser] = useState(null);
@@ -7752,7 +8551,9 @@ function BookTransportPage({ currentUser }) {
       ...current,
       {
         address: '',
-        postcode: ''
+        postcode: '',
+        latitude: null,
+        longitude: null
       }
     ]);
   }
@@ -7777,7 +8578,10 @@ function BookTransportPage({ currentUser }) {
   }
 
   function resetBooking() {
-    setForm(initialForm);
+    setForm(
+      createInitialBookingForm()
+    );
+
     setVias([]);
     setConfirmation(null);
     setError('');
@@ -8056,14 +8860,45 @@ function BookTransportPage({ currentUser }) {
               <div className="stop-fields">
                 <label>
                   Pickup
-                  <input
+
+                  <BookingAddressAutocomplete
                     required
-                    placeholder="Enter pickup address"
-                    value={form.pickupAddress}
-                    onChange={(e) =>
-                      updateForm(
-                        'pickupAddress',
-                        e.target.value
+                    placeholder="Start typing pickup address"
+                    value={
+                      form.pickupAddress
+                    }
+                    onChange={(value) =>
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          pickupAddress:
+                            value,
+                          pickupPostcode:
+                            current.pickupLatitude !== null &&
+                            current.pickupLongitude !== null
+                              ? ''
+                              : current.pickupPostcode,
+                          pickupLatitude:
+                            null,
+                          pickupLongitude:
+                            null
+                        })
+                      )
+                    }
+                    onSelect={(result) =>
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          pickupAddress:
+                            result.address,
+                          pickupPostcode:
+                            result.postcode ||
+                            current.pickupPostcode,
+                          pickupLatitude:
+                            result.latitude,
+                          pickupLongitude:
+                            result.longitude
+                        })
                       )
                     }
                   />
@@ -8071,13 +8906,17 @@ function BookTransportPage({ currentUser }) {
 
                 <label className="postcode-field">
                   Postcode
+
                   <input
                     placeholder="Optional"
-                    value={form.pickupPostcode}
-                    onChange={(e) =>
+                    value={
+                      form.pickupPostcode
+                    }
+                    onChange={(event) =>
                       updateForm(
                         'pickupPostcode',
-                        e.target.value.toUpperCase()
+                        event.target.value
+                          .toUpperCase()
                       )
                     }
                   />
@@ -8085,61 +8924,121 @@ function BookTransportPage({ currentUser }) {
               </div>
             </div>
 
-            {vias.map((via, index) => (
-              <div
-                className="journey-stop via-stop"
-                key={index}
-              >
-                <div className="stop-marker">
-                  <span/>
-                </div>
+            {vias.map(
+              (via, index) => (
+                <div
+                  className="journey-stop via-stop"
+                  key={index}
+                >
+                  <div className="stop-marker">
+                    <span/>
+                  </div>
 
-                <div className="stop-fields">
-                  <label>
-                    Via {index + 1}
-                    <input
-                      placeholder="Enter via address"
-                      value={via.address}
-                      onChange={(e) =>
-                        updateVia(
-                          index,
-                          'address',
-                          e.target.value
+                  <div className="stop-fields">
+                    <label>
+                      Via {index + 1}
+
+                      <BookingAddressAutocomplete
+                        placeholder="Start typing via address"
+                        value={
+                          via.address
+                        }
+                        onChange={(value) =>
+                          setVias(
+                            (current) =>
+                              current.map(
+                                (
+                                  currentVia,
+                                  viaIndex
+                                ) =>
+                                  viaIndex === index
+                                    ? {
+                                        ...currentVia,
+                                        address:
+                                          value,
+                                        postcode:
+                                          currentVia.latitude !== null &&
+                                          currentVia.longitude !== null
+                                            ? ''
+                                            : currentVia.postcode,
+                                        latitude:
+                                          null,
+                                        longitude:
+                                          null
+                                      }
+                                    : currentVia
+                              )
+                          )
+                        }
+                        onSelect={(result) =>
+                          setVias(
+                            (current) =>
+                              current.map(
+                                (
+                                  currentVia,
+                                  viaIndex
+                                ) =>
+                                  viaIndex === index
+                                    ? {
+                                        ...currentVia,
+                                        address:
+                                          result.address,
+                                        postcode:
+                                          result.postcode ||
+                                          currentVia.postcode,
+                                        latitude:
+                                          result.latitude,
+                                        longitude:
+                                          result.longitude
+                                      }
+                                    : currentVia
+                              )
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label className="postcode-field">
+                      Postcode
+
+                      <input
+                        placeholder="Optional"
+                        value={
+                          via.postcode
+                        }
+                        onChange={(event) =>
+                          updateVia(
+                            index,
+                            'postcode',
+                            event.target.value
+                              .toUpperCase()
+                          )
+                        }
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      className="remove-stop"
+                      onClick={() =>
+                        removeVia(
+                          index
                         )
                       }
-                    />
-                  </label>
-
-                  <label className="postcode-field">
-                    Postcode
-                    <input
-                      placeholder="Optional"
-                      value={via.postcode}
-                      onChange={(e) =>
-                        updateVia(
-                          index,
-                          'postcode',
-                          e.target.value.toUpperCase()
-                        )
-                      }
-                    />
-                  </label>
-
-                  <button
-                    type="button"
-                    className="remove-stop"
-                    onClick={() => removeVia(index)}
-                  >
-                    Remove
-                  </button>
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            )}
 
             <button
               type="button"
               className="add-via"
-              onClick={addVia}
+              onClick={
+                addVia
+              }
             >
               <Plus size={16}/>
               Add Via
@@ -8153,14 +9052,45 @@ function BookTransportPage({ currentUser }) {
               <div className="stop-fields">
                 <label>
                   Destination
-                  <input
+
+                  <BookingAddressAutocomplete
                     required
-                    placeholder="Enter destination address"
-                    value={form.destinationAddress}
-                    onChange={(e) =>
-                      updateForm(
-                        'destinationAddress',
-                        e.target.value
+                    placeholder="Start typing destination address"
+                    value={
+                      form.destinationAddress
+                    }
+                    onChange={(value) =>
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          destinationAddress:
+                            value,
+                          destinationPostcode:
+                            current.destinationLatitude !== null &&
+                            current.destinationLongitude !== null
+                              ? ''
+                              : current.destinationPostcode,
+                          destinationLatitude:
+                            null,
+                          destinationLongitude:
+                            null
+                        })
+                      )
+                    }
+                    onSelect={(result) =>
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          destinationAddress:
+                            result.address,
+                          destinationPostcode:
+                            result.postcode ||
+                            current.destinationPostcode,
+                          destinationLatitude:
+                            result.latitude,
+                          destinationLongitude:
+                            result.longitude
+                        })
                       )
                     }
                   />
@@ -8168,13 +9098,17 @@ function BookTransportPage({ currentUser }) {
 
                 <label className="postcode-field">
                   Postcode
+
                   <input
                     placeholder="Optional"
-                    value={form.destinationPostcode}
-                    onChange={(e) =>
+                    value={
+                      form.destinationPostcode
+                    }
+                    onChange={(event) =>
                       updateForm(
                         'destinationPostcode',
-                        e.target.value.toUpperCase()
+                        event.target.value
+                          .toUpperCase()
                       )
                     }
                   />
@@ -8360,7 +9294,27 @@ function BookTransportPage({ currentUser }) {
         </div>
 
         <aside className="booking-summary">
-          <BookingPlanningMap/>
+          <BookingPlanningMap
+            pickup={{
+              address:
+                form.pickupAddress,
+              latitude:
+                form.pickupLatitude,
+              longitude:
+                form.pickupLongitude
+            }}
+            vias={
+              vias
+            }
+            destination={{
+              address:
+                form.destinationAddress,
+              latitude:
+                form.destinationLatitude,
+              longitude:
+                form.destinationLongitude
+            }}
+          />
 
           <div className="card summary-card">
             <h3>UHP Account Booking</h3>
