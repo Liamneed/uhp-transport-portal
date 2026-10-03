@@ -1766,6 +1766,7 @@ function formatOperationalStatus(status) {
   const map = {
     draft: 'Request Recorded',
     submitting: 'Sending to Dispatch',
+    cancelling: 'Cancelling',
     booked: 'Booked',
     confirmed: 'Confirmed',
     driver_allocated: 'Driver Allocated',
@@ -1880,9 +1881,21 @@ const BOOKED_OPERATIONAL_STATUSES =
   new Set([
     'draft',
     'submitting',
+    'cancelling',
     'booked',
     'confirmed',
     'requires_review'
+  ]);
+
+
+const CANCELLABLE_OPERATIONAL_STATUSES =
+  new Set([
+    'draft',
+    'booked',
+    'confirmed',
+    'driver_allocated',
+    'driver_en_route',
+    'driver_arrived'
   ]);
 
 
@@ -6025,6 +6038,7 @@ function MyBookingsPage({
     const map = {
       draft: 'Request Recorded',
       submitting: 'Sending to Dispatch',
+      cancelling: 'Cancelling',
       booked: 'Booked',
       confirmed: 'Confirmed',
       driver_allocated: 'Driver Allocated',
@@ -6993,7 +7007,14 @@ function MyBookingsPage({
                 >
                   Amend Booking
                 </button>
+              </div>
+            )}
 
+          {ownScope &&
+            CANCELLABLE_OPERATIONAL_STATUSES.has(
+              selectedBooking.operationalStatus
+            ) && (
+              <div className="booking-actions booking-modal-footer-actions">
                 <button
                   type="button"
                   className="danger-button"
@@ -7680,9 +7701,22 @@ function MyBookingsPage({
 
             <form onSubmit={confirmCancel}>
               <div className="cancel-warning">
-                This will cancel the UHP transport
-                request. The booking will remain in
-                the audit history.
+                {cancelBooking.operationalStatus ===
+                'draft'
+                  ? (
+                    <>
+                      This will cancel the UHP transport
+                      request. It has not yet been sent to
+                      dispatch.
+                    </>
+                  )
+                  : (
+                    <>
+                      This will send a cancellation request
+                      to Autocab. The booking will remain in
+                      the audit history.
+                    </>
+                  )}
               </div>
 
               <label>

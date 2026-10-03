@@ -853,7 +853,8 @@ button:disabled {
   color: #8996a5;
 }
 
-.badge.draft {
+.badge.draft,
+.badge.cancelling {
   background: #eef4fb;
   color: #42698b;
 }
