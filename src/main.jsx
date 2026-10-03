@@ -5772,6 +5772,13 @@ function MyBookingsPage({
   const ownScope =
     scope === 'mine';
 
+  const selectedBookingOwnedByCurrentUser =
+    Boolean(
+      selectedBooking &&
+      selectedBooking.createdByUserId ===
+        currentUser.id
+    );
+
   const broaderScope =
     budgetScope || allScope;
 
@@ -6990,7 +6997,7 @@ function MyBookingsPage({
               </div>
             )}
 
-          {ownScope &&
+          {selectedBookingOwnedByCurrentUser &&
             selectedBooking.operationalStatus ===
               'draft' && (
               <div className="booking-actions booking-modal-footer-actions">
@@ -7010,7 +7017,7 @@ function MyBookingsPage({
               </div>
             )}
 
-          {ownScope &&
+          {selectedBookingOwnedByCurrentUser &&
             CANCELLABLE_OPERATIONAL_STATUSES.has(
               selectedBooking.operationalStatus
             ) && (
