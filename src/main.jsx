@@ -2818,6 +2818,7 @@ function BookingDetailModal({
   booking: initialBooking,
   onClose,
   context = 'uhp',
+  actions = null,
   children
 }) {
   const [
@@ -3086,6 +3087,12 @@ function BookingDetailModal({
         </div>
 
         <div className="booking-modal-body">
+          {actions && (
+            <div className="booking-modal-primary-actions">
+              {actions}
+            </div>
+          )}
+
           {booking.hasException && (
             <div className="exception-panel">
               <strong>
@@ -5772,13 +5779,6 @@ function MyBookingsPage({
   const ownScope =
     scope === 'mine';
 
-  const selectedBookingOwnedByCurrentUser =
-    Boolean(
-      selectedBooking &&
-      selectedBooking.createdByUserId ===
-        currentUser.id
-    );
-
   const broaderScope =
     budgetScope || allScope;
 
@@ -5798,6 +5798,13 @@ function MyBookingsPage({
 
   const [selectedBooking, setSelectedBooking] =
     useState(null);
+
+  const selectedBookingOwnedByCurrentUser =
+    Boolean(
+      selectedBooking &&
+      selectedBooking.createdByUserId ===
+        currentUser.id
+    );
 
   const [editingBooking, setEditingBooking] = useState(null);
   const [editOptions, setEditOptions] = useState({
@@ -6938,6 +6945,48 @@ function MyBookingsPage({
           onClose={() =>
             setSelectedBooking(null)
           }
+          actions={
+            selectedBookingOwnedByCurrentUser
+              ? (
+                <>
+                  {selectedBooking.operationalStatus ===
+                    'draft' && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => {
+                        const id =
+                          selectedBooking.id;
+
+                        setSelectedBooking(null);
+                        openAmend(id);
+                      }}
+                    >
+                      Amend Booking
+                    </button>
+                  )}
+
+                  {CANCELLABLE_OPERATIONAL_STATUSES.has(
+                    selectedBooking.operationalStatus
+                  ) && (
+                    <button
+                      type="button"
+                      className="danger-button"
+                      onClick={() => {
+                        const booking =
+                          selectedBooking;
+
+                        setSelectedBooking(null);
+                        openCancel(booking);
+                      }}
+                    >
+                      Cancel Booking
+                    </button>
+                  )}
+                </>
+              )
+              : null
+          }
         >
           {budgetScope &&
             selectedBooking.operationalStatus ===
@@ -6994,47 +7043,6 @@ function MyBookingsPage({
                       : 'Approve for Invoice'}
                   </button>
                 </div>
-              </div>
-            )}
-
-          {selectedBookingOwnedByCurrentUser &&
-            selectedBooking.operationalStatus ===
-              'draft' && (
-              <div className="booking-actions booking-modal-footer-actions">
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => {
-                    const id =
-                      selectedBooking.id;
-
-                    setSelectedBooking(null);
-                    openAmend(id);
-                  }}
-                >
-                  Amend Booking
-                </button>
-              </div>
-            )}
-
-          {selectedBookingOwnedByCurrentUser &&
-            CANCELLABLE_OPERATIONAL_STATUSES.has(
-              selectedBooking.operationalStatus
-            ) && (
-              <div className="booking-actions booking-modal-footer-actions">
-                <button
-                  type="button"
-                  className="danger-button"
-                  onClick={() => {
-                    const booking =
-                      selectedBooking;
-
-                    setSelectedBooking(null);
-                    openCancel(booking);
-                  }}
-                >
-                  Cancel Booking
-                </button>
               </div>
             )}
 
