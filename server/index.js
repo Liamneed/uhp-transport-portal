@@ -5331,6 +5331,255 @@ function reviewTransportRequest(
 }
 
 
+function resolveTransportRequestCoding(
+  payload,
+  authUser
+) {
+  const budgetId =
+    Number(
+      payload.budgetId
+    );
+
+  const reasonCodeId =
+    Number(
+      payload.reasonCodeId
+    );
+
+  if (
+    !Number.isInteger(budgetId) ||
+    budgetId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid UHP budget is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(reasonCodeId) ||
+    reasonCodeId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid reason code is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const budget =
+    db.prepare(`
+      SELECT
+        b.id,
+        b.budget_number
+          AS budgetNumber,
+        b.name,
+        b.department_id
+          AS departmentId,
+        d.name
+          AS departmentName,
+        b.status
+
+      FROM budgets b
+
+      LEFT JOIN departments d
+        ON d.id = b.department_id
+
+      WHERE b.id = ?
+    `).get(
+      budgetId
+    );
+
+  if (
+    !budget ||
+    budget.status !== 'active'
+  ) {
+    const error =
+      new Error(
+        'The selected UHP budget is not active'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(
+      Number(
+        budget.departmentId
+      )
+    )
+  ) {
+    const error =
+      new Error(
+        'The selected UHP budget has no department'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const isUhpAdmin =
+    userHasRoleById(
+      authUser.id,
+      'uhp_admin'
+    );
+
+  if (!isUhpAdmin) {
+    const permission =
+      db.prepare(`
+        SELECT id
+
+        FROM user_budget_access
+
+        WHERE user_id = ?
+          AND budget_id = ?
+          AND can_book = 1
+          AND (
+            valid_from IS NULL OR
+            valid_from <= date('now')
+          )
+          AND (
+            valid_to IS NULL OR
+            valid_to >= date('now')
+          )
+
+        ORDER BY id DESC
+        LIMIT 1
+      `).get(
+        authUser.id,
+        budgetId
+      );
+
+    if (!permission) {
+      const error =
+        new Error(
+          'You are not authorised to use the selected UHP budget'
+        );
+
+      error.statusCode = 403;
+      throw error;
+    }
+  }
+
+  const reasonCode =
+    db.prepare(`
+      SELECT
+        id,
+        code,
+        description,
+        status
+
+      FROM reason_codes
+
+      WHERE id = ?
+    `).get(
+      reasonCodeId
+    );
+
+  if (
+    !reasonCode ||
+    reasonCode.status !== 'active'
+  ) {
+    const error =
+      new Error(
+        'The selected reason code is not active'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const budgetHolder =
+    db.prepare(`
+      SELECT
+        u.id,
+        u.first_name
+          AS firstName,
+        u.last_name
+          AS lastName
+
+      FROM budget_assignments ba
+
+      JOIN users u
+        ON u.id = ba.user_id
+        AND u.status = 'active'
+
+      WHERE ba.budget_id = ?
+        AND ba.assignment_type =
+          'primary_holder'
+        AND ba.is_active = 1
+        AND (
+          ba.valid_from IS NULL OR
+          ba.valid_from <= date('now')
+        )
+        AND (
+          ba.valid_to IS NULL OR
+          ba.valid_to >= date('now')
+        )
+
+      ORDER BY ba.id DESC
+      LIMIT 1
+    `).get(
+      budgetId
+    );
+
+  if (!budgetHolder) {
+    const error =
+      new Error(
+        'The selected budget has no active primary budget holder'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return {
+    departmentId:
+      Number(
+        budget.departmentId
+      ),
+
+    departmentName:
+      budget.departmentName,
+
+    budgetId:
+      Number(
+        budget.id
+      ),
+
+    budgetNumber:
+      budget.budgetNumber,
+
+    budgetName:
+      budget.name,
+
+    reasonCodeId:
+      Number(
+        reasonCode.id
+      ),
+
+    reasonCode:
+      reasonCode.code,
+
+    reasonDescription:
+      reasonCode.description,
+
+    budgetHolderUserId:
+      Number(
+        budgetHolder.id
+      ),
+
+    budgetHolderName:
+      `${budgetHolder.firstName} ${budgetHolder.lastName}`
+  };
+}
+
+
 function createTransportRequest(
   payload,
   authUser
@@ -5443,6 +5692,12 @@ function createTransportRequest(
     error.statusCode = 409;
     throw error;
   }
+
+  const coding =
+    resolveTransportRequestCoding(
+      payload,
+      authUser
+    );
 
   const passengerName =
     String(
@@ -5645,6 +5900,11 @@ function createTransportRequest(
           accessibility_notes,
           passenger_notes,
 
+          department_id,
+          budget_id,
+          reason_code_id,
+          budget_holder_user_id,
+
           status
         )
         VALUES (
@@ -5655,6 +5915,7 @@ function createTransportRequest(
           ?, ?, ?, ?,
           ?,
           ?, ?,
+          ?, ?, ?, ?,
           'submitted'
         )
       `).run(
@@ -5681,7 +5942,12 @@ function createTransportRequest(
         passengerCount,
 
         accessibilityNotes,
-        passengerNotes
+        passengerNotes,
+
+        coding.departmentId,
+        coding.budgetId,
+        coding.reasonCodeId,
+        coding.budgetHolderUserId
       );
 
     const requestId =
@@ -5726,6 +5992,14 @@ function createTransportRequest(
           passengerName,
           direction,
           shiftTime,
+          departmentId:
+            coding.departmentId,
+          budgetId:
+            coding.budgetId,
+          reasonCodeId:
+            coding.reasonCodeId,
+          budgetHolderUserId:
+            coding.budgetHolderUserId,
           status:
             'submitted'
         }),
