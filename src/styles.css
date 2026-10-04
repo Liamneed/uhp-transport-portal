@@ -4466,3 +4466,22 @@ button:disabled {
 .booking-eta-preview.pickup-eta-preview.eta-neutral strong {
   color: #657786;
 }
+
+
+.amended-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 5px;
+  margin-left: 6px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #edf7f2;
+  color: #397050;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.booking-modal-title-row .amended-chip {
+  margin-top: 0;
+}

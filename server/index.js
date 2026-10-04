@@ -4554,7 +4554,7 @@ function listOperationalBookings() {
       'requires_review'
     ) {
       exceptionReasons.push(
-        'Booking requires review'
+        'Booking update needs attention'
       );
     }
 
@@ -4585,6 +4585,9 @@ function listOperationalBookings() {
       );
     }
 
+    const bookingEvents =
+      eventsStatement.all(booking.id);
+
     return {
       ...booking,
 
@@ -4592,7 +4595,14 @@ function listOperationalBookings() {
         stopsStatement.all(booking.id),
 
       events:
-        eventsStatement.all(booking.id),
+        bookingEvents,
+
+      hasBeenAmended:
+        bookingEvents.some(
+          (event) =>
+            event.eventType ===
+              'booking_amended'
+        ),
 
       auditEvents:
         auditEventsStatement.all(booking.id),
@@ -5039,7 +5049,12 @@ function getUhpOperationalEnrichment(
       operational.codingHolderStatus ?? null,
 
     codingCheckedAt:
-      operational.codingCheckedAt ?? null
+      operational.codingCheckedAt ?? null,
+
+    hasBeenAmended:
+      Boolean(
+        operational.hasBeenAmended
+      )
   };
 }
 
@@ -5789,6 +5804,169 @@ function getBookingById(bookingId) {
 }
 
 
+function getUhpManageableRawBooking(
+  bookingId,
+  userId
+) {
+  const booking =
+    db.prepare(`
+      SELECT *
+      FROM bookings
+      WHERE id = ?
+    `).get(bookingId);
+
+  if (!booking) {
+    const error =
+      new Error('Booking not found');
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  /*
+    Normal portal users may manage only
+    bookings they created themselves.
+  */
+  if (
+    Number(
+      booking.created_by_user_id
+    ) === Number(userId)
+  ) {
+    return booking;
+  }
+
+  /*
+    Wider management authority belongs only
+    to UHP Admin. Budget-holder visibility
+    does not grant mutation rights.
+  */
+  if (
+    !userHasRoleById(
+      userId,
+      'uhp_admin'
+    )
+  ) {
+    const error =
+      new Error('Booking not found');
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  /*
+    Portal-created rows are UHP-scoped by
+    construction because portal creation is
+    restricted to uhp_account_only.
+  */
+  if (booking.source === 'portal') {
+    return booking;
+  }
+
+  /*
+    Imported rows require local proof that
+    the original BookingCreated payload
+    belonged to the configured UHP account.
+
+    This also safely validates historical
+    imported rows created before the newer
+    import-time account guard existed.
+  */
+  if (booking.source === 'import') {
+    const settings =
+      db.prepare(`
+        SELECT
+          autocab_customer_id
+            AS autocabCustomerId,
+          booking_scope
+            AS bookingScope
+        FROM portal_settings
+        WHERE id = 1
+      `).get();
+
+    const createdEvent =
+      db.prepare(`
+        SELECT
+          payload_json AS payloadJson
+        FROM integration_events
+        WHERE booking_id = ?
+          AND provider = 'autocab'
+          AND direction = 'inbound'
+          AND route_suffix = 'created'
+        ORDER BY id
+        LIMIT 1
+      `).get(bookingId);
+
+    let eventPayload = null;
+
+    try {
+      eventPayload =
+        createdEvent?.payloadJson
+          ? JSON.parse(
+              createdEvent.payloadJson
+            )
+          : null;
+    } catch {
+      eventPayload = null;
+    }
+
+    const payloadCustomerId =
+      normaliseAutocabScalar(
+        eventPayload?.Account?.Id
+      );
+
+    const configuredCustomerId =
+      normaliseAutocabScalar(
+        settings?.autocabCustomerId
+      );
+
+    if (
+      settings?.bookingScope ===
+        'uhp_account_only' &&
+      payloadCustomerId &&
+      configuredCustomerId &&
+      payloadCustomerId ===
+        configuredCustomerId
+    ) {
+      return booking;
+    }
+  }
+
+  const error =
+    new Error('Booking not found');
+
+  error.statusCode = 404;
+  throw error;
+}
+
+
+function getUhpManageableBookingDetails(
+  bookingId,
+  userId
+) {
+  getUhpManageableRawBooking(
+    bookingId,
+    userId
+  );
+
+  const booking =
+    getBookingById(bookingId);
+
+  if (!booking) {
+    const error =
+      new Error('Booking not found');
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return {
+    ...booking,
+    stops:
+      getBookingStops(bookingId)
+  };
+}
+
+
 function getOwnedBookingDetails(
   bookingId,
   userId
@@ -6006,23 +6184,15 @@ function parseRequiredPositiveInteger(value, label) {
 }
 
 
-function getOwnedEditableBooking(bookingId, userId) {
-  const booking = db.prepare(`
-    SELECT
-      *
-    FROM bookings
-    WHERE id = ?
-      AND created_by_user_id = ?
-  `).get(
-    bookingId,
-    userId
-  );
-
-  if (!booking) {
-    const error = new Error('Booking not found');
-    error.statusCode = 404;
-    throw error;
-  }
+function getManageableEditableBooking(
+  bookingId,
+  userId
+) {
+  const booking =
+    getUhpManageableRawBooking(
+      bookingId,
+      userId
+    );
 
   if (booking.operational_status !== 'draft') {
     const error = new Error(
@@ -6178,10 +6348,11 @@ function amendPortalBooking(
   userId,
   payload
 ) {
-  const existing = getOwnedEditableBooking(
-    bookingId,
-    userId
-  );
+  const existing =
+    getManageableEditableBooking(
+      bookingId,
+      userId
+    );
 
   const requestedPickupAt = String(
     payload.requestedPickupAt || ''
@@ -7533,6 +7704,42 @@ function importAutocabCreatedBooking(
           ? 'review_required'
           : 'existing'
     };
+  }
+
+  const portalSettings =
+    db.prepare(`
+      SELECT
+        autocab_customer_id AS autocabCustomerId,
+        booking_scope AS bookingScope
+      FROM portal_settings
+      WHERE id = 1
+    `).get();
+
+  const payloadCustomerId =
+    normaliseAutocabScalar(
+      payload?.Account?.Id
+    );
+
+  const configuredCustomerId =
+    normaliseAutocabScalar(
+      portalSettings?.autocabCustomerId
+    );
+
+  if (
+    !portalSettings ||
+    portalSettings.bookingScope !==
+      'uhp_account_only' ||
+    !payloadCustomerId ||
+    !configuredCustomerId ||
+    payloadCustomerId !==
+      configuredCustomerId
+  ) {
+    const error = new Error(
+      'Autocab booking is outside the configured UHP account'
+    );
+
+    error.statusCode = 403;
+    throw error;
   }
 
   const requestedPickupAt =
@@ -9515,26 +9722,10 @@ async function cancelPortalBooking(
   payload
 ) {
   const booking =
-    db.prepare(`
-      SELECT
-        *
-      FROM bookings
-      WHERE id = ?
-        AND created_by_user_id = ?
-    `).get(
+    getUhpManageableRawBooking(
       bookingId,
       userId
     );
-
-  if (!booking) {
-    const error =
-      new Error(
-        'Booking not found'
-      );
-
-    error.statusCode = 404;
-    throw error;
-  }
 
   const reason =
     String(
@@ -11616,31 +11807,15 @@ function createAutocabOutboundEvent({
 }
 
 
-function getOwnedLiveModifiableBooking(
+function getManageableLiveModifiableBooking(
   bookingId,
   userId
 ) {
   const booking =
-    db.prepare(`
-      SELECT
-        *
-      FROM bookings
-      WHERE id = ?
-        AND created_by_user_id = ?
-    `).get(
+    getUhpManageableRawBooking(
       bookingId,
       userId
     );
-
-  if (!booking) {
-    const error =
-      new Error(
-        'Booking not found'
-      );
-
-    error.statusCode = 404;
-    throw error;
-  }
 
   const modifiableStatuses =
     new Set([
@@ -12440,7 +12615,7 @@ function commitSuccessfulLiveModification({
   previousStatus,
   validated,
   oldState,
-  verifiedRowVersion
+  responseStatus
 }) {
   const {
     requestedPickupAt,
@@ -12680,17 +12855,17 @@ function commitSuccessfulLiveModification({
     writeAutocabModificationBookingEvent({
       bookingId,
       eventType:
-        'booking_amended_live',
+        'booking_amended',
       oldStatus:
         'modifying',
       newStatus:
         newState.operationalStatus,
       userId,
       notes:
-        'Live booking amendment confirmed by Autocab',
+        'UHP portal live booking amended',
       rawPayload: {
         autocabBookingId,
-        verifiedRowVersion
+        responseStatus
       }
     });
 
@@ -13209,7 +13384,7 @@ async function modifyLivePortalBooking(
   payload
 ) {
   /*
-    1. Confirm ownership/current state.
+    1. Confirm management authority/current state.
     2. Fully validate the proposed UHP data.
     3. GET the authoritative Autocab booking.
     4. Build a full-object modification using
@@ -13217,14 +13392,14 @@ async function modifyLivePortalBooking(
     5. Create the outbound integration record.
     6. CAS-lock the local booking as modifying.
     7. POST the modification.
-    8. GET again and verify the remote result.
-    9. Only then commit the new data locally.
+    8. Treat any HTTP 2xx as authoritative success.
+    9. Commit the validated amendment locally.
   */
   const {
     booking,
     autocabBookingId
   } =
-    getOwnedLiveModifiableBooking(
+    getManageableLiveModifiableBooking(
       bookingId,
       userId
     );
@@ -13543,79 +13718,15 @@ async function modifyLivePortalBooking(
   }
 
   /*
-    POST success is not enough. Read the booking
-    back from Autocab and verify all portal-owned
-    values plus an advanced rowVersion.
+    Any HTTP 2xx response from the Autocab
+    modification endpoint is authoritative
+    success for this amendment.
+
+    Do not perform a second GET here. The
+    validated local amendment can be committed
+    immediately, avoiding an unnecessary
+    Autocab API call.
   */
-  let afterBooking;
-  let verification;
-
-  try {
-    afterBooking =
-      await getAutocabBookingForModification(
-        autocabBookingId
-      );
-
-    verification =
-      verifyAutocabModificationResult({
-        beforeBooking,
-        expectedPayload:
-          modificationPayload,
-        afterBooking
-      });
-  } catch (error) {
-    markLiveBookingModificationUncertain({
-      bookingId,
-      userId,
-      autocabBookingId,
-      reason:
-        'Autocab accepted the booking amendment but the final state could not be verified',
-      responseStatus:
-        response.status
-    });
-
-    updateAutocabOutboundEvent(
-      eventId,
-      {
-        processingStatus:
-          'failed',
-        autocabBookingId,
-        autocabReference:
-          booking.autocab_reference,
-        payload: {
-          request: {
-            method:
-              'POST',
-            bookingId:
-              autocabBookingId,
-            body:
-              modificationPayload
-          },
-          responseStatus:
-            response.status,
-          response:
-            response.responsePayload,
-          verificationError:
-            String(
-              error?.message ||
-              'Verification failed'
-            )
-        },
-        processingError:
-          'Autocab modification could not be verified'
-      }
-    );
-
-    const verificationError =
-      new Error(
-        'Autocab accepted the booking amendment but its final state could not be verified. Check Autocab before retrying.'
-      );
-
-    verificationError.statusCode =
-      502;
-
-    throw verificationError;
-  }
 
   let amendedBooking;
 
@@ -13628,14 +13739,14 @@ async function modifyLivePortalBooking(
         previousStatus,
         validated,
         oldState,
-        verifiedRowVersion:
-          verification.rowVersion
+        responseStatus:
+          response.status
       });
   } catch (error) {
     /*
-      Remote modification has now been verified.
-      A local persistence failure therefore means
-      UHP and Autocab may differ and requires
+      Autocab has already returned a successful
+      response. A local persistence failure therefore
+      means UHP and Autocab may differ and requires
       reconciliation rather than rollback/retry.
     */
     markLiveBookingModificationUncertain({
@@ -13669,8 +13780,6 @@ async function modifyLivePortalBooking(
             response.status,
           response:
             response.responsePayload,
-          verifiedRowVersion:
-            verification.rowVersion,
           persistenceError:
             String(
               error?.message ||
@@ -13713,9 +13822,7 @@ async function modifyLivePortalBooking(
         responseStatus:
           response.status,
         response:
-          response.responsePayload,
-        verifiedRowVersion:
-          verification.rowVersion
+          response.responsePayload
       },
       processingError:
         null
@@ -13727,8 +13834,8 @@ async function modifyLivePortalBooking(
       amendedBooking,
     modified:
       true,
-    verifiedRowVersion:
-      verification.rowVersion
+    responseStatus:
+      response.status
   };
 }
 
@@ -16229,7 +16336,7 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, 200, {
         booking:
-          getOwnedBookingDetails(
+          getUhpManageableBookingDetails(
             bookingId,
             auth.user.id
           )
@@ -16259,7 +16366,7 @@ const server = http.createServer(async (req, res) => {
         workflow.
       */
       const existing =
-        getOwnedBookingDetails(
+        getUhpManageableBookingDetails(
           bookingId,
           auth.user.id
         );

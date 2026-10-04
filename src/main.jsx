@@ -1778,7 +1778,7 @@ function formatOperationalStatus(status) {
     no_show: 'No Show',
     no_fare: 'No Fare',
     failed: 'Failed',
-    requires_review: 'Requires Review'
+    requires_review: 'Needs Attention'
   };
 
   return map[status] || formatStatus(status);
@@ -2818,6 +2818,7 @@ function formatBookingAuditEvent(event) {
   const labels = {
     booking_created: 'Booking Created',
     booking_imported: 'Booking Created',
+    booking_amended: 'Booking Amended',
     booking_modified: 'Booking Modified',
     autocab_submission_started: 'Sent to Autocab',
     autocab_booking_created: 'Autocab Booking Created',
@@ -3226,6 +3227,12 @@ function BookingDetailModal({
                   booking.operationalStatus
                 )}
               </span>
+
+              {booking.hasBeenAmended && (
+                <span className="amended-chip">
+                  Amended
+                </span>
+              )}
 
               {booking.hasException && (
                 <span className="exception-chip">
@@ -4772,6 +4779,12 @@ function NacBookingsPage({
                               )}
                             </span>
 
+                            {booking.hasBeenAmended && (
+                              <span className="amended-chip">
+                                Amended
+                              </span>
+                            )}
+
                             {bookingIsStale(
                               booking
                             ) && (
@@ -6080,6 +6093,15 @@ function MyBookingsPage({
         currentUser.id
     );
 
+  const selectedBookingManageable =
+    Boolean(
+      selectedBooking &&
+      (
+        selectedBookingOwnedByCurrentUser ||
+        allScope
+      )
+    );
+
   const [editingBooking, setEditingBooking] = useState(null);
   const [editOptions, setEditOptions] = useState({
     budgets: [],
@@ -6344,7 +6366,7 @@ function MyBookingsPage({
       no_show: 'No Show',
       no_fare: 'No Fare',
       failed: 'Needs Attention',
-      requires_review: 'Needs Review'
+      requires_review: 'Needs Attention'
     };
 
     return map[status] || formatStatus(status);
@@ -7549,7 +7571,7 @@ function MyBookingsPage({
             setSelectedBooking(null)
           }
           actions={
-            selectedBookingOwnedByCurrentUser
+            selectedBookingManageable
               ? (
                 <>
                   {[
