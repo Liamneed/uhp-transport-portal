@@ -699,6 +699,24 @@ function TransportOperationsPage() {
   const [error, setError] =
     useState('');
 
+  const [
+    transportPlanningCandidates,
+    setTransportPlanningCandidates
+  ] =
+    useState(null);
+
+  const [
+    transportPlanningLoading,
+    setTransportPlanningLoading
+  ] =
+    useState(true);
+
+  const [
+    transportPlanningError,
+    setTransportPlanningError
+  ] =
+    useState('');
+
   const [search, setSearch] =
     useState('');
 
@@ -836,6 +854,62 @@ function TransportOperationsPage() {
         )
     );
   }
+
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPlanningCandidates() {
+      setTransportPlanningLoading(true);
+      setTransportPlanningError('');
+
+      try {
+        const response =
+          await fetch(
+            `${API_BASE}/api/transport-operations/planning-candidates`,
+            {
+              credentials: 'include'
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data?.error ||
+              'Unable to load planning candidates'
+          );
+        }
+
+        if (!cancelled) {
+          setTransportPlanningCandidates(
+            data
+          );
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setTransportPlanningError(
+            loadError.message ||
+              'Unable to load planning candidates'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setTransportPlanningLoading(
+            false
+          );
+        }
+      }
+    }
+
+    loadPlanningCandidates();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
 
   const transportOperationsFilteredRequests =
     useMemo(() => {
@@ -1857,6 +1931,309 @@ function TransportOperationsPage() {
             transportOperationsAnalysis.destinationAreas
           )}
         </div>
+      </section>
+
+
+      <section className="transport-planning-section">
+        <div className="transport-analysis-title">
+          <div>
+            <small>
+              Operational planning
+            </small>
+
+            <h2>
+              Planning Candidates
+            </h2>
+
+            <p>
+              Requests that have completed review
+              and are ready for transport planning.
+            </p>
+          </div>
+        </div>
+
+        {transportPlanningLoading ? (
+          <div className="card state-panel">
+            Loading planning candidates...
+          </div>
+        ) : transportPlanningError ? (
+          <div className="card state-panel error">
+            {transportPlanningError}
+          </div>
+        ) : (
+          <>
+            <div className="overview-kpi-grid transport-planning-kpis">
+              <div className="overview-kpi">
+                <small>
+                  Ready Requests
+                </small>
+
+                <strong>
+                  {
+                    transportPlanningCandidates
+                      ?.summary
+                      ?.readyRequests || 0
+                  }
+                </strong>
+
+                <span>
+                  ready to plan
+                </span>
+              </div>
+
+              <div className="overview-kpi">
+                <small>
+                  Ready Passengers
+                </small>
+
+                <strong>
+                  {
+                    transportPlanningCandidates
+                      ?.summary
+                      ?.readyPassengers || 0
+                  }
+                </strong>
+
+                <span>
+                  people travelling
+                </span>
+              </div>
+
+              <div className="overview-kpi">
+                <small>
+                  Planning Groups
+                </small>
+
+                <strong>
+                  {
+                    transportPlanningCandidates
+                      ?.summary
+                      ?.planningGroups || 0
+                  }
+                </strong>
+
+                <span>
+                  shift/direction groups
+                </span>
+              </div>
+
+              <div
+                className={`overview-kpi ${
+                  (
+                    transportPlanningCandidates
+                      ?.summary
+                      ?.groupsWithoutCapacity ||
+                    0
+                  ) > 0
+                    ? 'attention'
+                    : ''
+                }`}
+              >
+                <small>
+                  Capacity Missing
+                </small>
+
+                <strong>
+                  {
+                    transportPlanningCandidates
+                      ?.summary
+                      ?.groupsWithoutCapacity || 0
+                  }
+                </strong>
+
+                <span>
+                  groups not configured
+                </span>
+              </div>
+            </div>
+
+            {
+              transportPlanningCandidates
+                ?.groups
+                ?.length ? (
+                <div className="transport-planning-grid">
+                  {
+                    transportPlanningCandidates
+                      .groups
+                      .map(
+                        (group) => (
+                          <article
+                            className="card transport-planning-group"
+                            key={group.key}
+                          >
+                            <div className="transport-planning-group-heading">
+                              <div>
+                                <small>
+                                  {group.shiftDay}
+                                  {' · '}
+                                  {group.shiftDate}
+                                </small>
+
+                                <h3>
+                                  {group.shiftHour}
+                                  {' · '}
+                                  {directionLabel(
+                                    group.direction
+                                  )}
+                                </h3>
+                              </div>
+
+                              <span className="transport-planning-count">
+                                {group.requestCount}
+                                {' '}
+                                {
+                                  group.requestCount === 1
+                                    ? 'request'
+                                    : 'requests'
+                                }
+                                {' · '}
+                                {group.passengerCount}
+                                {' '}
+                                {
+                                  group.passengerCount === 1
+                                    ? 'passenger'
+                                    : 'passengers'
+                                }
+                              </span>
+                            </div>
+
+                            <div className="transport-planning-areas">
+                              <div>
+                                <small>
+                                  Pickup areas
+                                </small>
+
+                                <strong>
+                                  {
+                                    Object.entries(
+                                      group.pickupAreas || {}
+                                    )
+                                      .map(
+                                        ([area, count]) =>
+                                          `${area} (${count})`
+                                      )
+                                      .join(', ') ||
+                                    'None'
+                                  }
+                                </strong>
+                              </div>
+
+                              <div>
+                                <small>
+                                  Destination areas
+                                </small>
+
+                                <strong>
+                                  {
+                                    Object.entries(
+                                      group.destinationAreas || {}
+                                    )
+                                      .map(
+                                        ([area, count]) =>
+                                          `${area} (${count})`
+                                      )
+                                      .join(', ') ||
+                                    'None'
+                                  }
+                                </strong>
+                              </div>
+                            </div>
+
+                            <div
+                              className={`transport-capacity-state ${
+                                group.capacityConfigured
+                                  ? 'configured'
+                                  : 'missing'
+                              }`}
+                            >
+                              {group.capacityConfigured ? (
+                                <>
+                                  <strong>
+                                    Vehicle capacity configured
+                                  </strong>
+
+                                  <span>
+                                    {group.hasUnlimitedCapacity
+                                      ? 'Unlimited capacity available'
+                                      : `${group.finiteSeatCapacity} configured seats`}
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <strong>
+                                    Capacity not configured
+                                  </strong>
+
+                                  <span>
+                                    Vehicle availability must be configured before final planning.
+                                  </span>
+                                </>
+                              )}
+                            </div>
+
+                            <div className="transport-planning-passengers">
+                              {
+                                group.requests.map(
+                                  (request) => (
+                                    <div
+                                      className="transport-planning-passenger"
+                                      key={request.id}
+                                    >
+                                      <div>
+                                        <strong>
+                                          {
+                                            request.passengerName
+                                          }
+                                        </strong>
+
+                                        <span>
+                                          {
+                                            request.pickupArea
+                                          }
+                                          {' → '}
+                                          {
+                                            request.destinationArea
+                                          }
+                                        </span>
+                                      </div>
+
+                                      <span>
+                                        {
+                                          request.passengerCount
+                                        }
+                                        {' '}
+                                        {
+                                          request.passengerCount === 1
+                                            ? 'passenger'
+                                            : 'passengers'
+                                        }
+                                      </span>
+                                    </div>
+                                  )
+                                )
+                              }
+                            </div>
+                          </article>
+                        )
+                      )
+                  }
+                </div>
+              ) : (
+                <div className="card role-dashboard-empty success">
+                  <CheckCircle2 size={28}/>
+
+                  <strong>
+                    No requests ready for planning
+                  </strong>
+
+                  <span>
+                    Requests will appear here once UHP review marks them ready for planning.
+                  </span>
+                </div>
+              )
+            }
+          </>
+        )}
       </section>
 
 

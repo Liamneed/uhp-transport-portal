@@ -7537,3 +7537,208 @@ button:disabled {
     gap: 2px;
   }
 }
+
+
+/* Stage 2 Special Transport planning candidates */
+
+.transport-planning-section {
+  margin-top: 20px;
+}
+
+.transport-planning-kpis {
+  margin-top: 12px;
+}
+
+.transport-planning-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.transport-planning-group {
+  padding: 16px;
+  min-width: 0;
+}
+
+.transport-planning-group-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.transport-planning-group-heading small {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.transport-planning-group-heading h3 {
+  margin: 0;
+}
+
+.transport-planning-count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.transport-planning-areas {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.transport-planning-areas > div {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background:
+    rgba(15, 45, 75, 0.04);
+}
+
+.transport-planning-areas small {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.transport-planning-areas strong {
+  display: block;
+  font-size: 0.78rem;
+}
+
+.transport-capacity-state {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+
+.transport-capacity-state strong {
+  font-size: 0.78rem;
+}
+
+.transport-capacity-state span {
+  font-size: 0.7rem;
+}
+
+.transport-capacity-state.configured {
+  background:
+    rgba(28, 132, 85, 0.09);
+  color:
+    rgb(23, 105, 70);
+}
+
+.transport-capacity-state.missing {
+  background:
+    rgba(201, 125, 20, 0.1);
+  color:
+    rgb(140, 87, 14);
+}
+
+.transport-planning-passengers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.transport-planning-passenger {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding-top: 9px;
+  border-top:
+    1px solid rgba(15, 45, 75, 0.08);
+}
+
+.transport-planning-passenger > div {
+  min-width: 0;
+}
+
+.transport-planning-passenger strong {
+  display: block;
+  font-size: 0.78rem;
+}
+
+.transport-planning-passenger span {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.transport-planning-passenger > span {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+@media (max-width: 1100px) {
+  .transport-planning-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .transport-planning-group-heading {
+    flex-direction: column;
+  }
+
+  .transport-planning-areas {
+    grid-template-columns: 1fr;
+  }
+
+  .transport-planning-passenger {
+    align-items: flex-start;
+  }
+}
+
+
+/* Stage 2 planning KPI polish */
+
+.transport-planning-kpis {
+  display: grid;
+  grid-template-columns:
+    repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.transport-planning-kpis
+  .overview-kpi {
+  background: #fff;
+  border:
+    1px solid rgba(15, 45, 75, 0.08);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.transport-planning-kpis
+  .overview-kpi.attention {
+  border-color:
+    rgba(201, 125, 20, 0.25);
+  background:
+    rgba(255, 250, 242, 0.9);
+}
+
+@media (max-width: 1000px) {
+  .transport-planning-kpis {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .transport-planning-kpis {
+    grid-template-columns: 1fr;
+  }
+}

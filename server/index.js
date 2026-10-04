@@ -9863,6 +9863,214 @@ function getTransportOperationsOverview() {
 
 
 
+
+function getTransportPlanningCandidates() {
+  const overview =
+    getTransportOperationsOverview();
+
+  const ready =
+    overview.requests.filter(
+      request =>
+        request.status ===
+          'ready_for_planning'
+    );
+
+  const groups =
+    new Map();
+
+  for (const request of ready) {
+    const windowId =
+      Number(
+        request.programmeWindowId
+      );
+
+    const key = [
+      windowId,
+      request.shiftDate,
+      request.shiftHour,
+      request.direction
+    ].join('|');
+
+    let group =
+      groups.get(key);
+
+    if (!group) {
+      const capacity =
+        listTransportProgrammeCapacity(
+          windowId
+        );
+
+      const finiteSeatCapacity =
+        capacity.reduce(
+          (total, row) => {
+            if (
+              Number(
+                row.isUnlimited
+              )
+            ) {
+              return total;
+            }
+
+            return (
+              total +
+              Number(
+                row.seatCapacity || 0
+              ) *
+                Number(
+                  row.quantity || 0
+                )
+            );
+          },
+          0
+        );
+
+      group = {
+        key,
+        programmeWindowId:
+          windowId,
+        programmeWindowName:
+          request.programmeWindowName,
+        programmeId:
+          request.programmeId,
+        programmeCode:
+          request.programmeCode,
+        programmeName:
+          request.programmeName,
+
+        shiftDate:
+          request.shiftDate,
+        shiftDay:
+          request.shiftDay,
+        shiftHour:
+          request.shiftHour,
+        direction:
+          request.direction,
+
+        requestCount: 0,
+        passengerCount: 0,
+
+        pickupAreas: {},
+        destinationAreas: {},
+
+        capacityConfigured:
+          capacity.length > 0,
+
+        hasUnlimitedCapacity:
+          capacity.some(
+            row =>
+              Number(
+                row.isUnlimited
+              ) === 1
+          ),
+
+        finiteSeatCapacity,
+        capacity,
+
+        requests: []
+      };
+
+      groups.set(
+        key,
+        group
+      );
+    }
+
+    group.requestCount += 1;
+
+    group.passengerCount +=
+      Number(
+        request.passengerCount ||
+        0
+      );
+
+    group.pickupAreas[
+      request.pickupArea
+    ] =
+      (
+        group.pickupAreas[
+          request.pickupArea
+        ] || 0
+      ) + 1;
+
+    group.destinationAreas[
+      request.destinationArea
+    ] =
+      (
+        group.destinationAreas[
+          request.destinationArea
+        ] || 0
+      ) + 1;
+
+    group.requests.push(
+      request
+    );
+  }
+
+  const result =
+    Array.from(
+      groups.values()
+    ).sort(
+      (a, b) =>
+        String(
+          a.shiftDate
+        ).localeCompare(
+          String(
+            b.shiftDate
+          )
+        ) ||
+        String(
+          a.shiftHour
+        ).localeCompare(
+          String(
+            b.shiftHour
+          )
+        ) ||
+        String(
+          a.direction
+        ).localeCompare(
+          String(
+            b.direction
+          )
+        )
+    );
+
+  return {
+    summary: {
+      readyRequests:
+        ready.length,
+
+      readyPassengers:
+        ready.reduce(
+          (total, request) =>
+            total +
+            Number(
+              request.passengerCount ||
+              0
+            ),
+          0
+        ),
+
+      planningGroups:
+        result.length,
+
+      groupsWithCapacity:
+        result.filter(
+          group =>
+            group.capacityConfigured
+        ).length,
+
+      groupsWithoutCapacity:
+        result.filter(
+          group =>
+            !group.capacityConfigured
+        ).length
+    },
+
+    groups: result
+  };
+}
+
+
 function listTransportRequestEvents(
   requestId
 ) {
@@ -27374,6 +27582,20 @@ const server = http.createServer(async (req, res) => {
         res,
         200,
         getTransportOperationsOverview()
+      );
+    }
+
+
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/transport-operations/planning-candidates'
+    ) {
+      return sendJson(
+        res,
+        200,
+        getTransportPlanningCandidates()
       );
     }
 
