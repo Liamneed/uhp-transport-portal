@@ -3677,12 +3677,14 @@ function writeAudit({
   oldValue = null,
   newValue = null,
   source = 'uhp_admin',
-  actorUserId = null
+  actorUserId = null,
+  actorStaffIdentityId = null
 }) {
   db.prepare(`
     INSERT INTO audit_log
       (
         actor_user_id,
+        actor_staff_identity_id,
         action,
         entity_type,
         entity_id,
@@ -3691,9 +3693,10 @@ function writeAudit({
         new_value,
         source
       )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     actorUserId,
+    actorStaffIdentityId,
     action,
     entityType,
     String(entityId),
@@ -6370,8 +6373,26 @@ function listTransportRequestsForStaffIdentity(
       tr.pickup_address
         AS pickupAddress,
 
+      tr.pickup_postcode
+        AS pickupPostcode,
+
+      tr.pickup_latitude
+        AS pickupLatitude,
+
+      tr.pickup_longitude
+        AS pickupLongitude,
+
       tr.destination_address
         AS destinationAddress,
+
+      tr.destination_postcode
+        AS destinationPostcode,
+
+      tr.destination_latitude
+        AS destinationLatitude,
+
+      tr.destination_longitude
+        AS destinationLongitude,
 
       tr.passenger_count
         AS passengerCount,
@@ -7692,6 +7713,563 @@ function findStaffTransportDuplicate({
 }
 
 
+function amendStaffTransportRequest(
+  requestId,
+  payload,
+  staff
+) {
+  const request =
+    getTransportRequestForStaffIdentity(
+      requestId,
+      staff.id
+    );
+
+  const amendableStatuses = [
+    'submitted',
+    'needs_information',
+    'ready_for_planning'
+  ];
+
+  if (
+    !amendableStatuses.includes(
+      request.status
+    )
+  ) {
+    const error =
+      new Error(
+        'This transport request can no longer be amended online'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const direction =
+    String(
+      payload.direction ??
+      request.direction ??
+      ''
+    ).trim();
+
+  if (
+    ![
+      'to_work',
+      'from_work'
+    ].includes(direction)
+  ) {
+    const error =
+      new Error(
+        'Invalid transport direction'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const shiftTime =
+    normaliseOptionalDateTime(
+      payload.shiftTime ??
+        request.shiftTime,
+      'Shift time'
+    );
+
+  const pickupAddress =
+    String(
+      payload.pickupAddress ??
+      request.pickupAddress ??
+      ''
+    ).trim();
+
+  const pickupPostcode =
+    String(
+      payload.pickupPostcode ??
+      request.pickupPostcode ??
+      ''
+    ).trim() || null;
+
+  const destinationAddress =
+    String(
+      payload.destinationAddress ??
+      request.destinationAddress ??
+      ''
+    ).trim();
+
+  const destinationPostcode =
+    String(
+      payload.destinationPostcode ??
+      request.destinationPostcode ??
+      ''
+    ).trim() || null;
+
+  if (
+    !shiftTime ||
+    !pickupAddress ||
+    !destinationAddress
+  ) {
+    const error =
+      new Error(
+        'Shift time, pickup and destination are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const pickupLatitude =
+    normaliseOptionalTransportCoordinate(
+      payload.pickupLatitude ===
+        undefined
+        ? request.pickupLatitude
+        : payload.pickupLatitude,
+      'Pickup latitude'
+    );
+
+  const pickupLongitude =
+    normaliseOptionalTransportCoordinate(
+      payload.pickupLongitude ===
+        undefined
+        ? request.pickupLongitude
+        : payload.pickupLongitude,
+      'Pickup longitude'
+    );
+
+  const destinationLatitude =
+    normaliseOptionalTransportCoordinate(
+      payload.destinationLatitude ===
+        undefined
+        ? request.destinationLatitude
+        : payload.destinationLatitude,
+      'Destination latitude'
+    );
+
+  const destinationLongitude =
+    normaliseOptionalTransportCoordinate(
+      payload.destinationLongitude ===
+        undefined
+        ? request.destinationLongitude
+        : payload.destinationLongitude,
+      'Destination longitude'
+    );
+
+  if (
+    (
+      pickupLatitude === null
+    ) !== (
+      pickupLongitude === null
+    )
+  ) {
+    const error =
+      new Error(
+        'Pickup latitude and longitude must be supplied together'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    (
+      destinationLatitude === null
+    ) !== (
+      destinationLongitude === null
+    )
+  ) {
+    const error =
+      new Error(
+        'Destination latitude and longitude must be supplied together'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const passengerNotes =
+    String(
+      payload.passengerNotes ===
+        undefined
+        ? request.passengerNotes ||
+          ''
+        : payload.passengerNotes ||
+          ''
+    ).trim() || null;
+
+  const coding =
+    (
+      payload.budgetId !==
+        undefined ||
+      payload.reasonCodeId !==
+        undefined
+    )
+      ? resolveStaffTransportRequestCoding({
+          budgetId:
+            payload.budgetId ??
+            request.budgetId,
+
+          reasonCodeId:
+            payload.reasonCodeId ??
+            request.reasonCodeId
+        })
+      : {
+          departmentId:
+            request.departmentId,
+
+          budgetId:
+            request.budgetId,
+
+          reasonCodeId:
+            request.reasonCodeId,
+
+          budgetHolderUserId:
+            request.budgetHolderUserId
+        };
+
+  const before =
+    {
+      direction:
+        request.direction,
+
+      shiftTime:
+        request.shiftTime,
+
+      pickupAddress:
+        request.pickupAddress,
+
+      pickupPostcode:
+        request.pickupPostcode,
+
+      pickupLatitude:
+        request.pickupLatitude,
+
+      pickupLongitude:
+        request.pickupLongitude,
+
+      destinationAddress:
+        request.destinationAddress,
+
+      destinationPostcode:
+        request.destinationPostcode,
+
+      destinationLatitude:
+        request.destinationLatitude,
+
+      destinationLongitude:
+        request.destinationLongitude,
+
+      passengerNotes:
+        request.passengerNotes,
+
+      departmentId:
+        request.departmentId,
+
+      budgetId:
+        request.budgetId,
+
+      reasonCodeId:
+        request.reasonCodeId,
+
+      budgetHolderUserId:
+        request.budgetHolderUserId
+    };
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_requests
+      SET
+        direction = ?,
+        shift_time = ?,
+
+        pickup_address = ?,
+        pickup_postcode = ?,
+        pickup_latitude = ?,
+        pickup_longitude = ?,
+
+        destination_address = ?,
+        destination_postcode = ?,
+        destination_latitude = ?,
+        destination_longitude = ?,
+
+        passenger_notes = ?,
+
+        department_id = ?,
+        budget_id = ?,
+        reason_code_id = ?,
+        budget_holder_user_id = ?,
+
+        updated_at =
+          CURRENT_TIMESTAMP
+
+      WHERE id = ?
+    `).run(
+      direction,
+      shiftTime,
+
+      pickupAddress,
+      pickupPostcode,
+      pickupLatitude,
+      pickupLongitude,
+
+      destinationAddress,
+      destinationPostcode,
+      destinationLatitude,
+      destinationLongitude,
+
+      passengerNotes,
+
+      coding.departmentId,
+      coding.budgetId,
+      coding.reasonCodeId,
+      coding.budgetHolderUserId,
+
+      requestId
+    );
+
+    db.prepare(`
+      INSERT INTO transport_request_events
+      (
+        transport_request_id,
+        event_type,
+        actor_user_id,
+        actor_staff_identity_id,
+        old_status,
+        new_status,
+        notes
+      )
+      VALUES (
+        ?,
+        'amended',
+        NULL,
+        ?,
+        ?,
+        ?,
+        'Transport request amended by staff member'
+      )
+    `).run(
+      requestId,
+      staff.id,
+      request.status,
+      request.status
+    );
+
+    const updated =
+      getTransportRequestById(
+        requestId
+      );
+
+    writeAudit({
+      action:
+        'UPDATE',
+
+      entityType:
+        'transport_request',
+
+      entityId:
+        requestId,
+
+      fieldName:
+        'staff_amendment',
+
+      oldValue:
+        JSON.stringify(
+          before
+        ),
+
+      newValue:
+        JSON.stringify({
+          direction:
+            updated.direction,
+
+          shiftTime:
+            updated.shiftTime,
+
+          pickupAddress:
+            updated.pickupAddress,
+
+          pickupPostcode:
+            updated.pickupPostcode,
+
+          pickupLatitude:
+            updated.pickupLatitude,
+
+          pickupLongitude:
+            updated.pickupLongitude,
+
+          destinationAddress:
+            updated.destinationAddress,
+
+          destinationPostcode:
+            updated.destinationPostcode,
+
+          destinationLatitude:
+            updated.destinationLatitude,
+
+          destinationLongitude:
+            updated.destinationLongitude,
+
+          passengerNotes:
+            updated.passengerNotes,
+
+          departmentId:
+            updated.departmentId,
+
+          budgetId:
+            updated.budgetId,
+
+          reasonCodeId:
+            updated.reasonCodeId,
+
+          budgetHolderUserId:
+            updated.budgetHolderUserId
+        }),
+
+      source:
+        'staff_self_service',
+
+      actorUserId:
+        null,
+
+      actorStaffIdentityId:
+        staff.id
+    });
+
+    db.exec('COMMIT');
+
+    return getTransportRequestForStaffIdentity(
+      requestId,
+      staff.id
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function cancelStaffTransportRequest(
+  requestId,
+  staff
+) {
+  const request =
+    getTransportRequestForStaffIdentity(
+      requestId,
+      staff.id
+    );
+
+  const cancellableStatuses = [
+    'submitted',
+    'needs_information',
+    'ready_for_planning',
+    'planned',
+    'awaiting_confirmation',
+    'confirmed'
+  ];
+
+  if (
+    !cancellableStatuses.includes(
+      request.status
+    )
+  ) {
+    const error =
+      new Error(
+        'This transport request can no longer be cancelled online'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_requests
+      SET
+        status =
+          'cancelled',
+
+        cancelled_at =
+          COALESCE(
+            cancelled_at,
+            CURRENT_TIMESTAMP
+          ),
+
+        updated_at =
+          CURRENT_TIMESTAMP
+
+      WHERE id = ?
+    `).run(
+      requestId
+    );
+
+    db.prepare(`
+      INSERT INTO transport_request_events
+      (
+        transport_request_id,
+        event_type,
+        actor_user_id,
+        actor_staff_identity_id,
+        old_status,
+        new_status,
+        notes
+      )
+      VALUES (
+        ?,
+        'cancelled',
+        NULL,
+        ?,
+        ?,
+        'cancelled',
+        'Transport request cancelled by staff member'
+      )
+    `).run(
+      requestId,
+      staff.id,
+      request.status
+    );
+
+    writeAudit({
+      action:
+        'UPDATE',
+
+      entityType:
+        'transport_request',
+
+      entityId:
+        requestId,
+
+      fieldName:
+        'status',
+
+      oldValue:
+        request.status,
+
+      newValue:
+        'cancelled',
+
+      source:
+        'staff_self_service',
+
+      actorUserId:
+        null,
+
+      actorStaffIdentityId:
+        staff.id
+    });
+
+    db.exec('COMMIT');
+
+    return getTransportRequestForStaffIdentity(
+      requestId,
+      staff.id
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
 function createStaffTransportRequest(
   payload,
   staff
@@ -8167,7 +8745,10 @@ function createStaffTransportRequest(
         'staff_self_service',
 
       actorUserId:
-        null
+        null,
+
+      actorStaffIdentityId:
+        staff.id
     });
 
     db.exec('COMMIT');
@@ -20549,6 +21130,180 @@ function normaliseGeocodingFeature(
 }
 
 
+function geocodingDistanceKm(
+  latitude,
+  longitude,
+  targetLatitude = 50.4168,
+  targetLongitude = -4.1427
+) {
+  const lat =
+    Number(latitude);
+
+  const lon =
+    Number(longitude);
+
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lon)
+  ) {
+    return null;
+  }
+
+  const toRadians =
+    (value) =>
+      value * Math.PI / 180;
+
+  const earthRadiusKm =
+    6371;
+
+  const dLat =
+    toRadians(
+      lat - targetLatitude
+    );
+
+  const dLon =
+    toRadians(
+      lon - targetLongitude
+    );
+
+  const a =
+    Math.sin(
+      dLat / 2
+    ) ** 2 +
+    Math.cos(
+      toRadians(
+        targetLatitude
+      )
+    ) *
+    Math.cos(
+      toRadians(lat)
+    ) *
+    Math.sin(
+      dLon / 2
+    ) ** 2;
+
+  return (
+    earthRadiusKm *
+    2 *
+    Math.atan2(
+      Math.sqrt(a),
+      Math.sqrt(1 - a)
+    )
+  );
+}
+
+
+function scoreGeocodingResult(
+  result,
+  query
+) {
+  const text =
+    [
+      result?.label,
+      result?.address,
+      result?.postcode
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+  const cleanQuery =
+    String(
+      query || ''
+    )
+      .trim()
+      .toLowerCase();
+
+  let score = 0;
+
+  /*
+   * Plymouth / PL results should beat similarly
+   * named distant addresses for this local taxi
+   * operation, while UK-wide destinations remain
+   * available lower in the results.
+   */
+  if (
+    /^pl\d/i.test(
+      String(
+        result?.postcode || ''
+      ).trim()
+    )
+  ) {
+    score += 1200;
+  }
+
+  if (
+    text.includes(
+      'plymouth'
+    )
+  ) {
+    score += 900;
+  }
+
+  if (
+    text.includes(
+      'derriford'
+    )
+  ) {
+    score += 250;
+  }
+
+  const distanceKm =
+    geocodingDistanceKm(
+      result?.latitude,
+      result?.longitude
+    );
+
+  if (
+    distanceKm !== null
+  ) {
+    if (distanceKm <= 10) {
+      score += 700;
+    } else if (
+      distanceKm <= 25
+    ) {
+      score += 450;
+    } else if (
+      distanceKm <= 60
+    ) {
+      score += 180;
+    }
+  }
+
+  if (
+    cleanQuery &&
+    text.startsWith(
+      cleanQuery
+    )
+  ) {
+    score += 220;
+  }
+
+  const queryTokens =
+    cleanQuery
+      .split(
+        /[^a-z0-9]+/i
+      )
+      .filter(
+        (token) =>
+          token.length >= 3
+      );
+
+  for (
+    const token of
+    queryTokens
+  ) {
+    if (
+      text.includes(token)
+    ) {
+      score += 40;
+    }
+  }
+
+  return score;
+}
+
+
 async function searchMapTilerGeocoding(
   query,
   signal
@@ -20564,9 +21319,38 @@ async function searchMapTilerGeocoding(
     throw error;
   }
 
+  const queryText =
+    String(
+      query || ''
+    ).trim();
+
+  /*
+   * MapTiler can rank an exact-number match in another
+   * city above a partially typed local street, for example:
+   *
+   *   11 thack
+   *
+   * Search the street portion instead and let Plymouth
+   * proximity rank the local street. The user's house
+   * number is preserved by the autocomplete when they
+   * select the result.
+   *
+   * This is still one MapTiler request.
+   */
+  const houseNumberQuery =
+    queryText.match(
+      /^(\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?)\s+(.+)$/
+    );
+
+  const providerQuery =
+    houseNumberQuery?.[2] &&
+    houseNumberQuery[2].trim().length >= 3
+      ? houseNumberQuery[2].trim()
+      : queryText;
+
   const url =
     new URL(
-      `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json`
+      `https://api.maptiler.com/geocoding/${encodeURIComponent(providerQuery)}.json`
     );
 
   url.searchParams.set(
@@ -20574,9 +21358,14 @@ async function searchMapTilerGeocoding(
     MAPTILER_GEOCODING_API_KEY
   );
 
+  /*
+   * Pull a slightly wider candidate set, then
+   * rank it locally. This does not add another
+   * API request.
+   */
   url.searchParams.set(
     'limit',
-    '8'
+    '10'
   );
 
   url.searchParams.set(
@@ -20661,7 +21450,27 @@ async function searchMapTilerGeocoding(
       normaliseGeocodingFeature
     )
     .filter(Boolean)
-    .slice(0, 8);
+    .map(
+      (result, index) => ({
+        result,
+        index,
+        score:
+          scoreGeocodingResult(
+            result,
+            query
+          )
+      })
+    )
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.index - b.index
+    )
+    .slice(0, 8)
+    .map(
+      (entry) =>
+        entry.result
+    );
 }
 
 
@@ -21512,6 +22321,67 @@ const server = http.createServer(async (req, res) => {
       url.pathname.match(
         /^\/api\/staff-transport\/requests\/(\d+)$/
       );
+
+    if (
+      req.method === 'PATCH' &&
+      staffTransportRequestMatch
+    ) {
+      const auth =
+        requireActiveStaffTransportAuth(
+          req
+        );
+
+      const payload =
+        await readJson(req);
+
+      const request =
+        amendStaffTransportRequest(
+          Number(
+            staffTransportRequestMatch[1]
+          ),
+          payload,
+          auth.staff
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          request
+        }
+      );
+    }
+
+    const staffTransportCancelMatch =
+      url.pathname.match(
+        /^\/api\/staff-transport\/requests\/(\d+)\/cancel$/
+      );
+
+    if (
+      req.method === 'POST' &&
+      staffTransportCancelMatch
+    ) {
+      const auth =
+        requireActiveStaffTransportAuth(
+          req
+        );
+
+      const request =
+        cancelStaffTransportRequest(
+          Number(
+            staffTransportCancelMatch[1]
+          ),
+          auth.staff
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          request
+        }
+      );
+    }
 
     if (
       req.method === 'GET' &&

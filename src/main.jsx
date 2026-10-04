@@ -11048,6 +11048,54 @@ function sortExternalAddressResults(
 }
 
 
+function preserveSelectedAddressHouseNumber(
+  typedValue,
+  result
+) {
+  const selected =
+    String(
+      result?.address ||
+      result?.label ||
+      ''
+    ).trim();
+
+  const typed =
+    String(
+      typedValue ||
+      ''
+    ).trim();
+
+  if (
+    !selected ||
+    !typed
+  ) {
+    return selected;
+  }
+
+  const typedNumber =
+    typed.match(
+      /^(\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?)\b/
+    )?.[1];
+
+  if (!typedNumber) {
+    return selected;
+  }
+
+  const selectedNumber =
+    selected.match(
+      /^(\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?)\b/
+    )?.[1];
+
+  if (selectedNumber) {
+    return selected;
+  }
+
+  return (
+    `${typedNumber} ${selected}`
+  );
+}
+
+
 function BookingAddressAutocomplete({
   value,
   placeholder,
@@ -11075,10 +11123,16 @@ function BookingAddressAutocomplete({
   const suppressNextSearch =
     useRef(false);
 
+  const searchRequestSequence =
+    useRef(0);
+
   useEffect(() => {
     const query =
       String(value || '')
         .trim();
+
+    const requestSequence =
+      ++searchRequestSequence.current;
 
     if (!searchEnabled) {
       suppressNextSearch.current =
@@ -11184,6 +11238,13 @@ function BookingAddressAutocomplete({
 
               const data =
                 await response.json();
+
+              if (
+                requestSequence !==
+                  searchRequestSequence.current
+              ) {
+                return;
+              }
 
               if (!response.ok) {
                 throw new Error(
@@ -11407,13 +11468,21 @@ function BookingAddressAutocomplete({
     suppressNextSearch.current =
       true;
 
+    searchRequestSequence.current +=
+      1;
+
     setResults([]);
     setOpen(false);
     setSearchState('idle');
 
-    onSelect(
-      result
-    );
+    onSelect({
+      ...result,
+      address:
+        preserveSelectedAddressHouseNumber(
+          value,
+          result
+        )
+    });
   }
 
   return (
@@ -12908,6 +12977,3789 @@ function SpecialTransportAddressSearch({
       savedLocations={savedLocations}
       onChange={onChange}
       onSelect={onSelect}
+    />
+  );
+}
+
+
+function formatStaffTransportDateTimeLocal(
+  value
+) {
+  if (!value) return '';
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return '';
+  }
+
+  const pad = (number) =>
+    String(number).padStart(
+      2,
+      '0'
+    );
+
+  return [
+    date.getFullYear(),
+    '-',
+    pad(
+      date.getMonth() + 1
+    ),
+    '-',
+    pad(
+      date.getDate()
+    ),
+    'T',
+    pad(
+      date.getHours()
+    ),
+    ':',
+    pad(
+      date.getMinutes()
+    )
+  ].join('');
+}
+
+
+function staffTransportQuickDates(
+  option
+) {
+  if (
+    !option?.startsAt ||
+    !option?.endsAt
+  ) {
+    return [];
+  }
+
+  const start =
+    new Date(
+      option.startsAt
+    );
+
+  const end =
+    new Date(
+      option.endsAt
+    );
+
+  if (
+    Number.isNaN(
+      start.getTime()
+    ) ||
+    Number.isNaN(
+      end.getTime()
+    )
+  ) {
+    return [];
+  }
+
+  const dates = [];
+  const cursor =
+    new Date(start);
+
+  cursor.setHours(
+    12,
+    0,
+    0,
+    0
+  );
+
+  while (
+    cursor < end &&
+    dates.length < 8
+  ) {
+    dates.push(
+      new Date(cursor)
+    );
+
+    cursor.setDate(
+      cursor.getDate() + 1
+    );
+  }
+
+  return dates;
+}
+
+
+function formatStaffTransportQuickDate(
+  value
+) {
+  return new Intl.DateTimeFormat(
+    'en-GB',
+    {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short'
+    }
+  ).format(value);
+}
+
+
+function applyStaffTransportQuickDate(
+  currentValue,
+  date
+) {
+  const current =
+    currentValue
+      ? new Date(
+          currentValue
+        )
+      : null;
+
+  const next =
+    new Date(date);
+
+  if (
+    current &&
+    !Number.isNaN(
+      current.getTime()
+    )
+  ) {
+    next.setHours(
+      current.getHours(),
+      current.getMinutes(),
+      0,
+      0
+    );
+  } else {
+    next.setHours(
+      8,
+      0,
+      0,
+      0
+    );
+  }
+
+  return formatStaffTransportDateTimeLocal(
+    next
+  );
+}
+
+
+function staffTransportStatusTone(
+  status
+) {
+  if (
+    [
+      'confirmed',
+      'locked',
+      'booked'
+    ].includes(status)
+  ) {
+    return 'green';
+  }
+
+  if (
+    [
+      'needs_information',
+      'change_requested',
+      'not_accommodated',
+      'cancelled'
+    ].includes(status)
+  ) {
+    return 'red';
+  }
+
+  return 'amber';
+}
+
+
+function preserveStaffTransportHouseNumber(
+  typedValue,
+  result
+) {
+  const selected =
+    String(
+      result?.address ||
+      result?.label ||
+      ''
+    ).trim();
+
+  const typed =
+    String(
+      typedValue ||
+      ''
+    ).trim();
+
+  if (
+    !selected ||
+    !typed
+  ) {
+    return selected;
+  }
+
+  const typedNumber =
+    typed.match(
+      /^(\d+[A-Za-z]?(?:-\d+[A-Za-z]?)?)\b/
+    )?.[1];
+
+  if (!typedNumber) {
+    return selected;
+  }
+
+  const selectedNumber =
+    selected.match(
+      /^(\d+[A-Za-z]?(?:-\d+[A-Za-z]?)?)\b/
+    )?.[1];
+
+  if (selectedNumber) {
+    return selected;
+  }
+
+  return `${typedNumber} ${selected}`;
+}
+
+
+function staffTransportStatusMessage(
+  status
+) {
+  const messages = {
+    submitted:
+      'Your request has been received and is waiting to be checked.',
+
+    needs_information:
+      'We need some more information before planning can continue.',
+
+    ready_for_planning:
+      'Your details have been checked and your request is ready for route planning.',
+
+    planned:
+      'Your journey is currently being grouped and route planned.',
+
+    awaiting_confirmation:
+      'Your proposed travel arrangements are ready for confirmation.',
+
+    confirmed:
+      'Your transport request has been confirmed.',
+
+    locked:
+      'Your travel arrangements are now locked for operation.',
+
+    booked:
+      'Your transport has been booked.',
+
+    change_requested:
+      'A change has been requested and is waiting to be reviewed.',
+
+    not_accommodated:
+      'Unfortunately this request could not be accommodated.',
+
+    cancelled:
+      'This transport request has been cancelled.'
+  };
+
+  return (
+    messages[status] ||
+    'Your transport request is being processed.'
+  );
+}
+
+
+function createInitialStaffTransportForm() {
+  return {
+    programmeWindowId: '',
+    direction: 'to_work',
+    shiftTime: '',
+
+    pickupAddress: '',
+    pickupPostcode: '',
+    pickupLatitude: null,
+    pickupLongitude: null,
+
+    destinationAddress: '',
+    destinationPostcode: '',
+    destinationLatitude: null,
+    destinationLongitude: null,
+
+    budgetId: '',
+    reasonCodeId: '',
+
+    passengerNotes: ''
+  };
+}
+
+
+function StaffTransportAddressShortcuts({
+  title,
+  locations,
+  onSelect
+}) {
+  if (
+    !Array.isArray(
+      locations
+    ) ||
+    locations.length === 0
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="staff-transport-address-shortcuts">
+      <span>
+        {title}
+      </span>
+
+      <div>
+        {locations.map(
+          (location) => (
+            <button
+              key={
+                `${location.id || location.address}`
+              }
+              type="button"
+              onClick={() =>
+                onSelect(
+                  location
+                )
+              }
+            >
+              {location.name ||
+                location.label ||
+                location.address}
+            </button>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+function StaffTransportAddressSearch({
+  value,
+  savedLocations,
+  placeholder,
+  onChange,
+  onSelect
+}) {
+  const [
+    results,
+    setResults
+  ] = useState([]);
+
+  const [
+    searchState,
+    setSearchState
+  ] = useState('idle');
+
+  const [
+    open,
+    setOpen
+  ] = useState(false);
+
+  const suppressNextSearch =
+    useRef(false);
+
+  const searchRequestSequence =
+    useRef(0);
+
+  useEffect(
+    () => {
+      const query =
+        String(
+          value || ''
+        ).trim();
+
+      const requestSequence =
+        ++searchRequestSequence.current;
+
+      if (
+        suppressNextSearch.current
+      ) {
+        suppressNextSearch.current =
+          false;
+
+        return;
+      }
+
+      if (query.length < 3) {
+        setResults([]);
+        setSearchState('idle');
+        setOpen(false);
+
+        return;
+      }
+
+      const normalisedQuery =
+        query.toLowerCase();
+
+      const sharedMatches =
+        (
+          Array.isArray(
+            savedLocations
+          )
+            ? savedLocations
+            : []
+        )
+          .filter(
+            (location) => {
+              const searchable =
+                [
+                  location.name,
+                  location.address,
+                  location.postcode,
+                  location.category
+                ]
+                  .filter(Boolean)
+                  .join(' ')
+                  .toLowerCase();
+
+              return searchable.includes(
+                normalisedQuery
+              );
+            }
+          )
+          .slice(0, 8)
+          .map(
+            sharedLocationSearchResult
+          );
+
+      setResults(
+        sharedMatches
+      );
+
+      setSearchState(
+        sharedMatches.length
+          ? 'ready'
+          : 'loading'
+      );
+
+      setOpen(
+        sharedMatches.length > 0
+      );
+
+      const controller =
+        new AbortController();
+
+      const timer =
+        window.setTimeout(
+          async () => {
+            try {
+              const response =
+                await apiFetch(
+                  `${API_BASE}/api/staff-transport/geocoding/search?` +
+                  new URLSearchParams({
+                    q: query
+                  }).toString(),
+                  {
+                    signal:
+                      controller.signal
+                  }
+                );
+
+              const data =
+                await response.json();
+
+              if (
+                requestSequence !==
+                  searchRequestSequence.current
+              ) {
+                return;
+              }
+
+              if (!response.ok) {
+                throw new Error(
+                  data.error ||
+                    'Unable to search addresses'
+                );
+              }
+
+              const sharedAddresses =
+                new Set(
+                  sharedMatches
+                    .map(
+                      (result) =>
+                        String(
+                          result.address ||
+                            ''
+                        )
+                          .trim()
+                          .toLowerCase()
+                    )
+                    .filter(Boolean)
+                );
+
+              const externalResults =
+                (
+                  Array.isArray(
+                    data.results
+                  )
+                    ? data.results
+                    : []
+                )
+                  .map(
+                    (result) => ({
+                      ...result,
+                      source:
+                        'maptiler'
+                    })
+                  )
+                  .filter(
+                    (result) =>
+                      !sharedAddresses.has(
+                        String(
+                          result.address ||
+                            ''
+                        )
+                          .trim()
+                          .toLowerCase()
+                      )
+                  );
+
+              const nextResults = [
+                ...sharedMatches,
+                ...externalResults
+              ];
+
+              setResults(
+                nextResults
+              );
+
+              setSearchState(
+                'ready'
+              );
+
+              setOpen(
+                nextResults.length > 0
+              );
+            } catch (error) {
+              if (
+                error?.name ===
+                  'AbortError'
+              ) {
+                return;
+              }
+
+              if (
+                sharedMatches.length
+              ) {
+                setResults(
+                  sharedMatches
+                );
+
+                setSearchState(
+                  'ready'
+                );
+
+                setOpen(true);
+                return;
+              }
+
+              setResults([]);
+              setSearchState(
+                'error'
+              );
+              setOpen(false);
+            }
+          },
+          300
+        );
+
+      return () => {
+        window.clearTimeout(
+          timer
+        );
+
+        controller.abort();
+      };
+    },
+    [
+      value,
+      savedLocations
+    ]
+  );
+
+  function chooseResult(
+    result
+  ) {
+    suppressNextSearch.current =
+      true;
+
+    searchRequestSequence.current +=
+      1;
+
+    setResults([]);
+    setOpen(false);
+    setSearchState('idle');
+
+    onSelect({
+      ...result,
+      address:
+        preserveSelectedAddressHouseNumber(
+          value,
+          result
+        )
+    });
+  }
+
+  return (
+    <div className="booking-address-search staff-transport-address-search">
+      <input
+        required
+        autoComplete="off"
+        placeholder={placeholder}
+        value={value}
+        onChange={(event) => {
+          const nextValue =
+            event.target.value;
+
+          onChange(
+            nextValue
+          );
+
+          if (
+            nextValue.trim().length >= 3
+          ) {
+            setOpen(true);
+          }
+        }}
+        onFocus={() => {
+          if (results.length) {
+            setOpen(true);
+          }
+        }}
+        onBlur={() => {
+          window.setTimeout(
+            () =>
+              setOpen(false),
+            140
+          );
+        }}
+      />
+
+      {searchState ===
+        'loading' && (
+        <span className="booking-address-search-state">
+          Searching…
+        </span>
+      )}
+
+      {open &&
+        results.length > 0 && (
+        <div
+          className="booking-address-results"
+          role="listbox"
+        >
+          {results.map(
+            (result) => (
+              <button
+                key={result.id}
+                type="button"
+                className={
+                  `booking-address-result${
+                    result.source === 'uhp'
+                      ? ' uhp'
+                      : ''
+                  }`
+                }
+                onMouseDown={(event) =>
+                  event.preventDefault()
+                }
+                onClick={() =>
+                  chooseResult(
+                    result
+                  )
+                }
+              >
+                <div className="booking-address-result-heading">
+                  <strong>
+                    {result.label}
+                  </strong>
+
+                  {result.source ===
+                    'uhp' && (
+                    <span className="booking-address-result-badge">
+                      UHP location
+                    </span>
+                  )}
+                </div>
+
+                {result.source ===
+                  'uhp' && (
+                  <span className="booking-address-result-context">
+                    {result.address}
+                  </span>
+                )}
+
+                {result.postcode && (
+                  <span className="booking-address-result-postcode">
+                    {result.postcode}
+                  </span>
+                )}
+              </button>
+            )
+          )}
+        </div>
+      )}
+
+      {searchState ===
+        'error' && (
+        <span className="booking-address-search-state error">
+          Address search temporarily unavailable
+        </span>
+      )}
+    </div>
+  );
+}
+
+
+function StaffTransportAuth({
+  initialStaff,
+  onAuthenticated
+}) {
+  const initialStage = () => {
+    if (!initialStaff) {
+      return 'email';
+    }
+
+    if (
+      !initialStaff.firstName ||
+      !initialStaff.lastName ||
+      !initialStaff.mobile
+    ) {
+      return 'profile';
+    }
+
+    if (
+      !initialStaff.mobileVerifiedAt
+    ) {
+      return 'sms_request';
+    }
+
+    return 'complete';
+  };
+
+  const [
+    step,
+    setStep
+  ] = useState(
+    initialStage()
+  );
+
+  const [
+    staff,
+    setStaff
+  ] = useState(
+    initialStaff || null
+  );
+
+  const [
+    email,
+    setEmail
+  ] = useState(
+    initialStaff?.email || ''
+  );
+
+  const [
+    firstName,
+    setFirstName
+  ] = useState(
+    initialStaff?.firstName || ''
+  );
+
+  const [
+    lastName,
+    setLastName
+  ] = useState(
+    initialStaff?.lastName || ''
+  );
+
+  const [
+    mobile,
+    setMobile
+  ] = useState(
+    initialStaff?.mobile || ''
+  );
+
+  const [
+    challengeId,
+    setChallengeId
+  ] = useState('');
+
+  const [
+    code,
+    setCode
+  ] = useState('');
+
+  const [
+    sending,
+    setSending
+  ] = useState(false);
+
+  const [
+    error,
+    setError
+  ] = useState('');
+
+  useEffect(
+    () => {
+      if (
+        step === 'complete' &&
+        staff?.status === 'active'
+      ) {
+        onAuthenticated(
+          staff
+        );
+      }
+    },
+    [
+      step,
+      staff,
+      onAuthenticated
+    ]
+  );
+
+  async function requestEmailCode(
+    event
+  ) {
+    event.preventDefault();
+
+    setSending(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/staff-transport/auth/request-email-code`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({
+                email
+              })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to send verification code'
+        );
+      }
+
+      setEmail(
+        data.email
+      );
+
+      setChallengeId(
+        data.challengeId
+      );
+
+      setCode('');
+      setStep(
+        'email_code'
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to continue'
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function verifyEmailCode(
+    event
+  ) {
+    event.preventDefault();
+
+    setSending(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/staff-transport/auth/verify-email-code`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({
+                challengeId,
+                code
+              })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to verify code'
+        );
+      }
+
+      setStaff(
+        data.staff
+      );
+
+      setFirstName(
+        data.staff?.firstName ||
+          ''
+      );
+
+      setLastName(
+        data.staff?.lastName ||
+          ''
+      );
+
+      setMobile(
+        data.staff?.mobile ||
+          ''
+      );
+
+      setCode('');
+
+      if (
+        data.staff?.status ===
+          'active' &&
+        data.staff?.mobileVerifiedAt
+      ) {
+        setStep(
+          'complete'
+        );
+      } else if (
+        data.staff?.firstName &&
+        data.staff?.lastName &&
+        data.staff?.mobile
+      ) {
+        setStep(
+          'sms_request'
+        );
+      } else {
+        setStep(
+          'profile'
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to verify code'
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function saveProfile(
+    event
+  ) {
+    event.preventDefault();
+
+    setSending(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/staff-transport/auth/profile`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({
+                firstName,
+                lastName,
+                mobile
+              })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to save your details'
+        );
+      }
+
+      setStaff(
+        data.staff
+      );
+
+      setMobile(
+        data.staff?.mobile ||
+          mobile
+      );
+
+      await requestSmsCode();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to save your details'
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function requestSmsCode() {
+    setSending(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/staff-transport/auth/request-sms-code`,
+          {
+            method: 'POST'
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to send text message'
+        );
+      }
+
+      setChallengeId(
+        data.challengeId
+      );
+
+      setCode('');
+      setStep(
+        'sms_code'
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to send text message'
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function verifySmsCode(
+    event
+  ) {
+    event.preventDefault();
+
+    setSending(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/staff-transport/auth/verify-sms-code`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({
+                challengeId,
+                code
+              })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to verify mobile'
+        );
+      }
+
+      setStaff(
+        data.staff
+      );
+
+      setStep(
+        'complete'
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to verify mobile'
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const heading =
+    step === 'email'
+      ? 'Christmas & New Year Staff Transport'
+      : step === 'email_code'
+        ? 'Check your email'
+        : step === 'profile'
+          ? 'Your contact details'
+          : step === 'sms_request' ||
+              step === 'sms_code'
+            ? 'Verify your mobile'
+            : 'Signing you in…';
+
+  return (
+    <div className="staff-transport-auth-shell">
+      <div className="staff-transport-auth-panel">
+        <div className="staff-transport-brand">
+          <strong>UHP</strong>
+
+          <span>
+            Staff Transport
+          </span>
+        </div>
+
+        <div className="staff-transport-auth-card">
+          <span className="auth-kicker">
+            Secure staff access
+          </span>
+
+          <h1>
+            {heading}
+          </h1>
+
+          <p className="staff-transport-auth-intro">
+            Request special staff transport for
+            yourself using your verified work email
+            and mobile number.
+          </p>
+
+          {error && (
+            <div className="notice error">
+              {error}
+            </div>
+          )}
+
+          {step === 'email' && (
+            <form
+              className="staff-transport-auth-form"
+              onSubmit={
+                requestEmailCode
+              }
+            >
+              <label>
+                Work email address
+
+                <input
+                  type="email"
+                  autoComplete="email"
+                  placeholder="name@nhs.net"
+                  value={email}
+                  onChange={(event) =>
+                    setEmail(
+                      event.target.value
+                    )
+                  }
+                  required
+                  autoFocus
+                />
+              </label>
+
+              <button
+                type="submit"
+                className="primary-button staff-transport-primary"
+                disabled={sending}
+              >
+                {sending
+                  ? 'Sending…'
+                  : 'Send email code'}
+              </button>
+            </form>
+          )}
+
+          {step ===
+            'email_code' && (
+            <form
+              className="staff-transport-auth-form"
+              onSubmit={
+                verifyEmailCode
+              }
+            >
+              <p className="staff-transport-code-destination">
+                Code sent to{' '}
+                <strong>
+                  {email}
+                </strong>
+              </p>
+
+              <label>
+                6-digit email code
+
+                <input
+                  className="auth-code-input"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength="6"
+                  pattern="[0-9]{6}"
+                  value={code}
+                  onChange={(event) =>
+                    setCode(
+                      event.target.value
+                        .replace(
+                          /\D/g,
+                          ''
+                        )
+                        .slice(
+                          0,
+                          6
+                        )
+                    )
+                  }
+                  placeholder="000000"
+                  required
+                  autoFocus
+                />
+              </label>
+
+              <button
+                type="submit"
+                className="primary-button staff-transport-primary"
+                disabled={sending}
+              >
+                {sending
+                  ? 'Checking…'
+                  : 'Continue'}
+              </button>
+
+              <button
+                type="button"
+                className="auth-back-button"
+                disabled={sending}
+                onClick={() => {
+                  setCode('');
+                  setChallengeId('');
+                  setStep(
+                    'email'
+                  );
+                }}
+              >
+                Use another email
+              </button>
+            </form>
+          )}
+
+          {step === 'profile' && (
+            <form
+              className="staff-transport-auth-form"
+              onSubmit={
+                saveProfile
+              }
+            >
+              <div className="staff-transport-name-grid">
+                <label>
+                  First name
+
+                  <input
+                    autoComplete="given-name"
+                    value={firstName}
+                    onChange={(event) =>
+                      setFirstName(
+                        event.target.value
+                      )
+                    }
+                    required
+                  />
+                </label>
+
+                <label>
+                  Last name
+
+                  <input
+                    autoComplete="family-name"
+                    value={lastName}
+                    onChange={(event) =>
+                      setLastName(
+                        event.target.value
+                      )
+                    }
+                    required
+                  />
+                </label>
+              </div>
+
+              <label>
+                Mobile number
+
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  placeholder="07..."
+                  value={mobile}
+                  onChange={(event) =>
+                    setMobile(
+                      event.target.value
+                    )
+                  }
+                  required
+                />
+              </label>
+
+              <p className="staff-transport-form-help">
+                We will verify this number before
+                transport can be requested.
+              </p>
+
+              <button
+                type="submit"
+                className="primary-button staff-transport-primary"
+                disabled={sending}
+              >
+                {sending
+                  ? 'Saving…'
+                  : 'Save and verify mobile'}
+              </button>
+            </form>
+          )}
+
+          {step ===
+            'sms_request' && (
+            <div className="staff-transport-auth-form">
+              <p className="staff-transport-code-destination">
+                We need to verify{' '}
+                <strong>
+                  {staff?.mobile ||
+                    mobile}
+                </strong>
+              </p>
+
+              <button
+                type="button"
+                className="primary-button staff-transport-primary"
+                disabled={sending}
+                onClick={
+                  requestSmsCode
+                }
+              >
+                {sending
+                  ? 'Sending…'
+                  : 'Send text code'}
+              </button>
+
+              <button
+                type="button"
+                className="auth-back-button"
+                disabled={sending}
+                onClick={() =>
+                  setStep(
+                    'profile'
+                  )
+                }
+              >
+                Change mobile number
+              </button>
+            </div>
+          )}
+
+          {step === 'sms_code' && (
+            <form
+              className="staff-transport-auth-form"
+              onSubmit={
+                verifySmsCode
+              }
+            >
+              <p className="staff-transport-code-destination">
+                Code sent to{' '}
+                <strong>
+                  {staff?.mobile ||
+                    mobile}
+                </strong>
+              </p>
+
+              <label>
+                6-digit text code
+
+                <input
+                  className="auth-code-input"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength="6"
+                  pattern="[0-9]{6}"
+                  value={code}
+                  onChange={(event) =>
+                    setCode(
+                      event.target.value
+                        .replace(
+                          /\D/g,
+                          ''
+                        )
+                        .slice(
+                          0,
+                          6
+                        )
+                    )
+                  }
+                  placeholder="000000"
+                  required
+                  autoFocus
+                />
+              </label>
+
+              <button
+                type="submit"
+                className="primary-button staff-transport-primary"
+                disabled={sending}
+              >
+                {sending
+                  ? 'Checking…'
+                  : 'Verify and continue'}
+              </button>
+
+              <button
+                type="button"
+                className="auth-back-button"
+                disabled={sending}
+                onClick={
+                  requestSmsCode
+                }
+              >
+                Send another code
+              </button>
+            </form>
+          )}
+
+          <div className="auth-security-note">
+            This portal is only for your own
+            Christmas & New Year staff transport
+            requests.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function staffTransportEventLabel(
+  event,
+  fallbackStatus
+) {
+  const eventType =
+    String(
+      event?.eventType ||
+      ''
+    );
+
+  const labels = {
+    submitted:
+      'Request submitted',
+
+    amended:
+      'Request amended',
+
+    cancelled:
+      'Request cancelled',
+
+    needs_information:
+      'More information needed',
+
+    ready_for_planning:
+      'Details checked',
+
+    planned:
+      'Route planning started',
+
+    awaiting_confirmation:
+      'Itinerary ready',
+
+    confirmed:
+      'Transport confirmed',
+
+    locked:
+      'Transport locked',
+
+    booked:
+      'Transport booked',
+
+    change_requested:
+      'Change requested',
+
+    not_accommodated:
+      'Unable to accommodate'
+  };
+
+  return (
+    labels[eventType] ||
+    specialTransportStatusLabel(
+      event?.newStatus ||
+      fallbackStatus
+    )
+  );
+}
+
+
+function StaffTransportRequestDetail({
+  request,
+  onBack,
+  onAmend,
+  onCancel,
+  actionBusy
+}) {
+  if (!request) {
+    return null;
+  }
+
+  return (
+    <section className="staff-transport-card">
+      <button
+        type="button"
+        className="staff-transport-text-button"
+        onClick={onBack}
+      >
+        ← Back to my requests
+      </button>
+
+      <div className="staff-transport-detail-heading">
+        <div>
+          <span className="staff-transport-eyebrow">
+            Transport request
+          </span>
+
+          <h2>
+            {request.programmeWindowName ||
+              request.programmeName}
+          </h2>
+        </div>
+
+        <span
+          className={
+            `staff-transport-status-indicator ${staffTransportStatusTone(
+              request.status
+            )}`
+          }
+        >
+          <span
+            className="staff-transport-status-dot"
+            aria-hidden="true"
+          />
+
+          {specialTransportStatusLabel(
+            request.status
+          )}
+        </span>
+      </div>
+
+      <div
+        className={
+          `staff-transport-status-panel ${staffTransportStatusTone(
+            request.status
+          )}`
+        }
+      >
+        <div className="staff-transport-status-panel-title">
+          <span
+            className="staff-transport-status-dot"
+            aria-hidden="true"
+          />
+
+          <strong>
+            {specialTransportStatusLabel(
+              request.status
+            )}
+          </strong>
+        </div>
+
+        <p>
+          {staffTransportStatusMessage(
+            request.status
+          )}
+        </p>
+      </div>
+
+      {(
+        [
+          'submitted',
+          'needs_information',
+          'ready_for_planning',
+          'planned',
+          'awaiting_confirmation',
+          'confirmed'
+        ].includes(
+          request.status
+        )
+      ) && (
+        <div className="staff-transport-detail-actions">
+          {[
+            'submitted',
+            'needs_information',
+            'ready_for_planning'
+          ].includes(
+            request.status
+          ) && (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={actionBusy}
+              onClick={() =>
+                onAmend(
+                  request
+                )
+              }
+            >
+              Amend request
+            </button>
+          )}
+
+          {[
+            'submitted',
+            'needs_information',
+            'ready_for_planning',
+            'planned',
+            'awaiting_confirmation',
+            'confirmed'
+          ].includes(
+            request.status
+          ) && (
+            <button
+              type="button"
+              className="staff-transport-cancel-button"
+              disabled={actionBusy}
+              onClick={() =>
+                onCancel(
+                  request
+                )
+              }
+            >
+              {actionBusy
+                ? 'Please wait…'
+                : 'Cancel request'}
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="staff-transport-detail-grid">
+        <div>
+          <span>Journey</span>
+          <strong>
+            {request.direction ===
+            'to_work'
+              ? 'To work'
+              : 'From work'}
+          </strong>
+        </div>
+
+        <div>
+          <span>
+            {request.direction ===
+            'to_work'
+              ? 'Shift starts'
+              : 'Shift finishes'}
+          </span>
+
+          <strong>
+            {formatSpecialTransportWindow(
+              request.shiftTime
+            )}
+          </strong>
+        </div>
+
+        <div>
+          <span>Pickup</span>
+          <strong>
+            {request.pickupAddress}
+          </strong>
+
+          {request.pickupPostcode && (
+            <small>
+              {request.pickupPostcode}
+            </small>
+          )}
+        </div>
+
+        <div>
+          <span>Destination</span>
+          <strong>
+            {request.destinationAddress}
+          </strong>
+
+          {request.destinationPostcode && (
+            <small>
+              {request.destinationPostcode}
+            </small>
+          )}
+        </div>
+
+        <div>
+          <span>Budget Number</span>
+          <strong>
+            {request.budgetNumber ||
+              '—'}
+          </strong>
+        </div>
+
+        <div>
+          <span>Reason</span>
+          <strong>
+            {request.reasonCode ||
+              '—'}
+          </strong>
+
+          {request.reasonDescription && (
+            <small>
+              {request.reasonDescription}
+            </small>
+          )}
+        </div>
+      </div>
+
+      {request.passengerNotes && (
+        <div className="staff-transport-detail-notes">
+          <span>
+            Important information
+          </span>
+
+          <p>
+            {request.passengerNotes}
+          </p>
+        </div>
+      )}
+
+      <div className="staff-transport-detail-journey-map">
+        <SpecialTransportJourneyMap
+          pickupAddress={
+            request.pickupAddress
+          }
+          pickupLatitude={
+            request.pickupLatitude
+          }
+          pickupLongitude={
+            request.pickupLongitude
+          }
+          destinationAddress={
+            request.destinationAddress
+          }
+          destinationLatitude={
+            request.destinationLatitude
+          }
+          destinationLongitude={
+            request.destinationLongitude
+          }
+        />
+      </div>
+
+      <div className="staff-transport-history">
+        <h3>
+          Request history
+        </h3>
+
+        {(request.events || []).map(
+          (event) => (
+            <div
+              className="staff-transport-history-row"
+              key={event.id}
+            >
+              <div>
+                <strong>
+                  {staffTransportEventLabel(
+                    event,
+                    request.status
+                  )}
+                </strong>
+
+                {event.notes && (
+                  <span>
+                    {event.notes}
+                  </span>
+                )}
+
+                {event.actorName && (
+                  <span className="staff-transport-history-actor">
+                    By {event.actorName}
+                  </span>
+                )}
+              </div>
+
+              <small>
+                {formatSpecialTransportWindow(
+                  event.createdAt
+                )}
+              </small>
+            </div>
+          )
+        )}
+      </div>
+    </section>
+  );
+}
+
+
+function StaffTransportPortal({
+  staff,
+  onLogout
+}) {
+  const [
+    view,
+    setView
+  ] = useState(
+    'requests'
+  );
+
+  const [
+    options,
+    setOptions
+  ] = useState([]);
+
+  const [
+    budgets,
+    setBudgets
+  ] = useState([]);
+
+  const [
+    reasonCodes,
+    setReasonCodes
+  ] = useState([]);
+
+  const [
+    savedLocations,
+    setSavedLocations
+  ] = useState([]);
+
+  const [
+    requests,
+    setRequests
+  ] = useState([]);
+
+  const [
+    form,
+    setForm
+  ] = useState(
+    createInitialStaffTransportForm()
+  );
+
+  const [
+    selectedRequest,
+    setSelectedRequest
+  ] = useState(null);
+
+  const [
+    editingRequestId,
+    setEditingRequestId
+  ] = useState(null);
+
+  const [
+    requestActionBusy,
+    setRequestActionBusy
+  ] = useState(false);
+
+  const [
+    loading,
+    setLoading
+  ] = useState(true);
+
+  const [
+    saving,
+    setSaving
+  ] = useState(false);
+
+  const [
+    error,
+    setError
+  ] = useState('');
+
+  const [
+    success,
+    setSuccess
+  ] = useState('');
+
+  const [
+    validationIssues,
+    setValidationIssues
+  ] = useState([]);
+
+  async function loadPortal() {
+    setLoading(true);
+    setError('');
+
+    try {
+      const [
+        optionsResponse,
+        requestsResponse
+      ] =
+        await Promise.all([
+          apiFetch(
+            `${API_BASE}/api/staff-transport/request-options`
+          ),
+          apiFetch(
+            `${API_BASE}/api/staff-transport/requests`
+          )
+        ]);
+
+      const optionsData =
+        await optionsResponse.json();
+
+      const requestsData =
+        await requestsResponse.json();
+
+      if (!optionsResponse.ok) {
+        throw new Error(
+          optionsData.error ||
+            'Unable to load transport options'
+        );
+      }
+
+      if (!requestsResponse.ok) {
+        throw new Error(
+          requestsData.error ||
+            'Unable to load your requests'
+        );
+      }
+
+      const nextOptions =
+        Array.isArray(
+          optionsData.options
+        )
+          ? optionsData.options
+          : [];
+
+      setOptions(
+        nextOptions
+      );
+
+      setBudgets(
+        Array.isArray(
+          optionsData.budgets
+        )
+          ? optionsData.budgets
+          : []
+      );
+
+      setReasonCodes(
+        Array.isArray(
+          optionsData.reasonCodes
+        )
+          ? optionsData.reasonCodes
+          : []
+      );
+
+      setSavedLocations(
+        Array.isArray(
+          optionsData.savedLocations
+        )
+          ? optionsData.savedLocations
+          : []
+      );
+
+      setRequests(
+        Array.isArray(
+          requestsData.requests
+        )
+          ? requestsData.requests
+          : []
+      );
+
+      setForm(
+        (current) => {
+          const valid =
+            nextOptions.some(
+              (option) =>
+                String(
+                  option.windowId
+                ) ===
+                String(
+                  current.programmeWindowId
+                )
+            );
+
+          if (
+            valid ||
+            !nextOptions.length
+          ) {
+            return current;
+          }
+
+          return {
+            ...current,
+            programmeWindowId:
+              String(
+                nextOptions[0].windowId
+              ),
+            shiftTime:
+              nextOptions[0]?.startsAt
+                ? formatStaffTransportDateTimeLocal(
+                    nextOptions[0].startsAt
+                  )
+                : current.shiftTime
+          };
+        }
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load staff transport'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(
+    () => {
+      loadPortal();
+    },
+    []
+  );
+
+  function updateField(
+    field,
+    value
+  ) {
+    setValidationIssues([]);
+
+    setForm(
+      (current) => ({
+        ...current,
+        [field]: value
+      })
+    );
+  }
+
+  function updateAddress(
+    prefix,
+    value
+  ) {
+    setValidationIssues([]);
+
+    setForm(
+      (current) => ({
+        ...current,
+
+        [`${prefix}Address`]:
+          value,
+
+        [`${prefix}Postcode`]:
+          '',
+
+        [`${prefix}Latitude`]:
+          null,
+
+        [`${prefix}Longitude`]:
+          null
+      })
+    );
+  }
+
+  function selectAddress(
+    prefix,
+    result
+  ) {
+    setValidationIssues([]);
+
+    setForm(
+      (current) => ({
+        ...current,
+
+        [`${prefix}Address`]:
+          preserveStaffTransportHouseNumber(
+            current[
+              `${prefix}Address`
+            ],
+            result
+          ),
+
+        [`${prefix}Postcode`]:
+          result.postcode ||
+          '',
+
+        [`${prefix}Latitude`]:
+          result.latitude ??
+          null,
+
+        [`${prefix}Longitude`]:
+          result.longitude ??
+          null
+      })
+    );
+  }
+
+  function startAmendRequest(
+    request
+  ) {
+    if (!request) return;
+
+    setEditingRequestId(
+      request.id
+    );
+
+    setSelectedRequest(
+      request
+    );
+
+    setError('');
+    setSuccess('');
+
+    setForm({
+      programmeWindowId:
+        String(
+          request.programmeWindowId ||
+          ''
+        ),
+
+      direction:
+        request.direction ||
+        'to_work',
+
+      shiftTime:
+        formatStaffTransportDateTimeLocal(
+          request.shiftTime
+        ),
+
+      pickupAddress:
+        request.pickupAddress ||
+        '',
+
+      pickupPostcode:
+        request.pickupPostcode ||
+        '',
+
+      pickupLatitude:
+        request.pickupLatitude ??
+        null,
+
+      pickupLongitude:
+        request.pickupLongitude ??
+        null,
+
+      destinationAddress:
+        request.destinationAddress ||
+        '',
+
+      destinationPostcode:
+        request.destinationPostcode ||
+        '',
+
+      destinationLatitude:
+        request.destinationLatitude ??
+        null,
+
+      destinationLongitude:
+        request.destinationLongitude ??
+        null,
+
+      budgetId:
+        String(
+          request.budgetId ||
+          ''
+        ),
+
+      reasonCodeId:
+        String(
+          request.reasonCodeId ||
+          ''
+        ),
+
+      passengerNotes:
+        request.passengerNotes ||
+        ''
+    });
+
+    setView(
+      'request'
+    );
+
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
+  }
+
+
+  function stopAmendingRequest() {
+    setEditingRequestId(
+      null
+    );
+
+    setForm(
+      createInitialStaffTransportForm()
+    );
+
+    setError('');
+    setSuccess('');
+
+    setView(
+      'requests'
+    );
+  }
+
+
+  async function cancelStaffRequest(
+    request
+  ) {
+    if (!request) return;
+
+    const confirmed =
+      window.confirm(
+        'Cancel this transport request?\n\nThis will remove this journey from Christmas transport planning. This action cannot be undone online.'
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setRequestActionBusy(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/staff-transport/requests/${request.id}/cancel`,
+          {
+            method: 'POST'
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          'Unable to cancel transport request'
+        );
+      }
+
+      setSelectedRequest(
+        data.request
+      );
+
+      setSuccess(
+        'Your transport request has been cancelled.'
+      );
+
+      await loadPortal();
+
+      setView(
+        'requests'
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to cancel transport request'
+      );
+    } finally {
+      setRequestActionBusy(false);
+    }
+  }
+
+
+  useEffect(
+    () => {
+      if (
+        view !== 'request' ||
+        editingRequestId ||
+        form.programmeWindowId ||
+        !options.length
+      ) {
+        return;
+      }
+
+      const firstOption =
+        options[0];
+
+      setForm(
+        (current) => ({
+          ...current,
+
+          programmeWindowId:
+            String(
+              firstOption.windowId
+            ),
+
+          shiftTime:
+            firstOption.startsAt
+              ? formatStaffTransportDateTimeLocal(
+                  firstOption.startsAt
+                )
+              : current.shiftTime
+        })
+      );
+    },
+    [
+      view,
+      editingRequestId,
+      form.programmeWindowId,
+      options
+    ]
+  );
+
+
+  const selectedOption =
+    options.find(
+      (option) =>
+        String(
+          option.windowId
+        ) ===
+        String(
+          form.programmeWindowId
+        )
+    ) || null;
+
+  const recentAddressShortcuts =
+    (() => {
+      const seen =
+        new Set();
+
+      const locations = [];
+
+      const addLocation =
+        (
+          address,
+          postcode,
+          latitude,
+          longitude
+        ) => {
+          const cleanAddress =
+            String(
+              address || ''
+            ).trim();
+
+          const key =
+            cleanAddress.toLowerCase();
+
+          if (
+            !cleanAddress ||
+            seen.has(
+              key
+            )
+          ) {
+            return;
+          }
+
+          const lat =
+            Number(
+              latitude
+            );
+
+          const lng =
+            Number(
+              longitude
+            );
+
+          if (
+            !Number.isFinite(
+              lat
+            ) ||
+            !Number.isFinite(
+              lng
+            )
+          ) {
+            return;
+          }
+
+          seen.add(
+            key
+          );
+
+          locations.push({
+            id:
+              `recent-${locations.length}-${key}`,
+            name:
+              cleanAddress
+                .split(',')
+                [0],
+            label:
+              cleanAddress,
+            address:
+              cleanAddress,
+            postcode:
+              postcode ||
+              '',
+            latitude:
+              lat,
+            longitude:
+              lng,
+            source:
+              'recent'
+          });
+        };
+
+      for (
+        const request
+        of requests
+      ) {
+        addLocation(
+          request.pickupAddress,
+          request.pickupPostcode,
+          request.pickupLatitude,
+          request.pickupLongitude
+        );
+
+        addLocation(
+          request.destinationAddress,
+          request.destinationPostcode,
+          request.destinationLatitude,
+          request.destinationLongitude
+        );
+
+        if (
+          locations.length >= 5
+        ) {
+          break;
+        }
+      }
+
+      return locations.slice(
+        0,
+        5
+      );
+    })();
+
+
+  const quickUhpLocations =
+    (
+      Array.isArray(
+        savedLocations
+      )
+        ? savedLocations
+        : []
+    ).slice(
+      0,
+      3
+    );
+
+
+  const duplicateRequest =
+    !editingRequestId &&
+    form.programmeWindowId &&
+    form.direction
+      ? requests.find(
+          (request) =>
+            String(
+              request.programmeWindowId
+            ) ===
+              String(
+                form.programmeWindowId
+              ) &&
+            request.direction ===
+              form.direction &&
+            ![
+              'cancelled',
+              'not_accommodated'
+            ].includes(
+              request.status
+            )
+        ) || null
+      : null;
+
+
+  async function submitRequest(
+    event
+  ) {
+    event.preventDefault();
+
+    setError('');
+    setSuccess('');
+    setValidationIssues([]);
+
+    const missing = [];
+
+    if (!form.programmeWindowId) {
+      missing.push(
+        'Transport service'
+      );
+    }
+
+    if (!form.shiftTime) {
+      missing.push(
+        form.direction ===
+        'to_work'
+          ? 'Shift start time'
+          : 'Shift finish time'
+      );
+    }
+
+    if (
+      !String(
+        form.pickupAddress ||
+        ''
+      ).trim()
+    ) {
+      missing.push(
+        form.direction ===
+        'to_work'
+          ? 'Home / pickup address'
+          : 'Work pickup'
+      );
+    }
+
+    if (
+      !String(
+        form.destinationAddress ||
+        ''
+      ).trim()
+    ) {
+      missing.push(
+        form.direction ===
+        'to_work'
+          ? 'Work destination'
+          : 'Home / destination'
+      );
+    }
+
+    if (!form.budgetId) {
+      missing.push(
+        'Budget Number'
+      );
+    }
+
+    if (!form.reasonCodeId) {
+      missing.push(
+        'Reason Code'
+      );
+    }
+
+    if (missing.length) {
+      setValidationIssues(
+        missing
+      );
+
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+
+      return;
+    }
+
+    if (duplicateRequest) {
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const response =
+        await apiFetch(
+          editingRequestId
+            ? `${API_BASE}/api/staff-transport/requests/${editingRequestId}`
+            : `${API_BASE}/api/staff-transport/requests`,
+          {
+            method:
+              editingRequestId
+                ? 'PATCH'
+                : 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify(
+                form
+              )
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to submit transport request'
+        );
+      }
+
+      setSelectedRequest(
+        data.request
+      );
+
+      const wasEditing =
+        Boolean(
+          editingRequestId
+        );
+
+      setEditingRequestId(
+        null
+      );
+
+      setForm(
+        createInitialStaffTransportForm()
+      );
+
+      setSuccess(
+        wasEditing
+          ? 'Your transport request has been updated.'
+          : 'Your transport request has been received.'
+      );
+
+      await loadPortal();
+
+      setView(
+        'requests'
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to submit transport request'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function openRequest(
+    requestId
+  ) {
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/staff-transport/requests/${requestId}`
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to open transport request'
+        );
+      }
+
+      setSelectedRequest(
+        data.request
+      );
+
+      setView(
+        'detail'
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to open transport request'
+      );
+    }
+  }
+
+  const staffName =
+    [
+      staff?.firstName,
+      staff?.lastName
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+  return (
+    <div className="staff-transport-shell">
+      <header className="staff-transport-header">
+        <div>
+          <span className="staff-transport-header-kicker">
+            UHP
+          </span>
+
+          <strong>
+            Christmas & New Year Staff Transport
+          </strong>
+        </div>
+
+        <button
+          type="button"
+          className="staff-transport-signout"
+          onClick={onLogout}
+        >
+          Sign out
+        </button>
+      </header>
+
+      <main className="staff-transport-main">
+        <div className="staff-transport-welcome">
+          <div>
+            <span>
+              Signed in as
+            </span>
+
+            <strong>
+              {staffName}
+            </strong>
+          </div>
+
+          <small>
+            {staff?.email}
+          </small>
+        </div>
+
+        <div className="staff-transport-tabs">
+          <button
+            type="button"
+            className={
+              view === 'request'
+                ? 'active'
+                : ''
+            }
+            onClick={() => {
+              setError('');
+              setSuccess('');
+              setView(
+                'request'
+              );
+            }}
+          >
+            Request transport
+          </button>
+
+          <button
+            type="button"
+            className={
+              view === 'requests' ||
+              view === 'detail'
+                ? 'active'
+                : ''
+            }
+            onClick={() => {
+              setError('');
+              setView(
+                'requests'
+              );
+            }}
+          >
+            My requests
+          </button>
+        </div>
+
+        {error && (
+          <div className="notice error">
+            {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="notice success">
+            {success}
+          </div>
+        )}
+
+        {loading ? (
+          <section className="staff-transport-card staff-transport-loading">
+            Loading staff transport…
+          </section>
+        ) : view ===
+          'detail' ? (
+          <StaffTransportRequestDetail
+            request={
+              selectedRequest
+            }
+            actionBusy={
+              requestActionBusy
+            }
+            onAmend={
+              startAmendRequest
+            }
+            onCancel={
+              cancelStaffRequest
+            }
+            onBack={() =>
+              setView(
+                'requests'
+              )
+            }
+          />
+        ) : view ===
+          'request' ? (
+          <section className="staff-transport-card">
+            <div className="staff-transport-card-heading">
+              <span className="staff-transport-eyebrow">
+                {editingRequestId
+                  ? 'Amend request'
+                  : 'New request'}
+              </span>
+
+              <h1>
+                {editingRequestId
+                  ? 'Amend staff transport'
+                  : 'Request staff transport'}
+              </h1>
+
+              <p>
+                Tell us when your shift starts or
+                finishes. Your final pickup time will
+                be confirmed later after route
+                planning.
+              </p>
+            </div>
+
+            {editingRequestId && (
+              <div className="staff-transport-amend-notice">
+                <strong>
+                  You are amending an existing request
+                </strong>
+
+                <span>
+                  Update the details below and choose
+                  Save changes. Your request will keep
+                  its current planning status.
+                </span>
+              </div>
+            )}
+
+            <div className="staff-transport-shared-notice">
+              <div className="staff-transport-shared-notice-icon">
+                <UsersRound
+                  size={20}
+                  aria-hidden="true"
+                />
+              </div>
+
+              <div>
+                <strong>
+                  Shared staff transport
+                </strong>
+
+                <p>
+                  Christmas &amp; New Year Staff
+                  Transport is a shared travel scheme
+                  for UHP staff. Journeys may be
+                  grouped with colleagues travelling
+                  at similar times and may be provided
+                  by shared taxi, minibus or coach.
+                </p>
+
+                <p>
+                  Sharing journeys helps us provide
+                  transport for as many colleagues as
+                  possible. Your final pickup time and
+                  travel arrangements will be
+                  confirmed after route planning.
+                </p>
+              </div>
+            </div>
+
+            {options.length === 0 ? (
+              <div className="staff-transport-empty">
+                <strong>
+                  Requests are not open yet
+                </strong>
+
+                <span>
+                  There are currently no staff transport
+                  services accepting requests.
+                </span>
+              </div>
+            ) : (
+              <form
+                className="staff-transport-request-form"
+                onSubmit={
+                  submitRequest
+                }
+                noValidate
+              >
+                {validationIssues.length > 0 && (
+                  <div
+                    className="staff-transport-validation-summary"
+                    role="alert"
+                  >
+                    <strong>
+                      Please complete the missing information
+                    </strong>
+
+                    <span>
+                      Check the following before submitting:
+                    </span>
+
+                    <ul>
+                      {validationIssues.map(
+                        (issue) => (
+                          <li
+                            key={
+                              issue
+                            }
+                          >
+                            {issue}
+                          </li>
+                        )
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+                <label>
+                  Transport service
+
+                  <select
+                    value={
+                      form.programmeWindowId
+                    }
+                    onChange={(event) => {
+                      const nextWindowId =
+                        event.target.value;
+
+                      const nextOption =
+                        options.find(
+                          (option) =>
+                            String(
+                              option.windowId
+                            ) ===
+                            String(
+                              nextWindowId
+                            )
+                        ) || null;
+
+                      setForm(
+                        (current) => ({
+                          ...current,
+                          programmeWindowId:
+                            nextWindowId,
+                          shiftTime:
+                            nextOption?.startsAt
+                              ? formatStaffTransportDateTimeLocal(
+                                  nextOption.startsAt
+                                )
+                              : ''
+                        })
+                      );
+                    }}
+                    required
+                    disabled={
+                      Boolean(
+                        editingRequestId
+                      )
+                    }
+                  >
+                    <option value="">
+                      Select service…
+                    </option>
+
+                    {options.map(
+                      (option) => (
+                        <option
+                          key={
+                            option.windowId
+                          }
+                          value={
+                            option.windowId
+                          }
+                        >
+                          {option.programmeName}
+                          {' — '}
+                          {option.windowName}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+
+                {selectedOption && (
+                  <div className="staff-transport-service-box">
+                    <strong>
+                      {selectedOption.windowName}
+                    </strong>
+
+                    <span>
+                      {formatSpecialTransportWindow(
+                        selectedOption.startsAt
+                      )}
+                      {' – '}
+                      {formatSpecialTransportWindow(
+                        selectedOption.endsAt
+                      )}
+                    </span>
+
+                    {selectedOption.windowPublicNotes && (
+                      <p>
+                        {
+                          selectedOption.windowPublicNotes
+                        }
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <fieldset className="staff-transport-direction">
+                  <legend>
+                    Journey
+                  </legend>
+
+                  <div>
+                    <button
+                      type="button"
+                      className={
+                        form.direction ===
+                        'to_work'
+                          ? 'active'
+                          : ''
+                      }
+                      onClick={() =>
+                        updateField(
+                          'direction',
+                          'to_work'
+                        )
+                      }
+                    >
+                      To work
+                    </button>
+
+                    <button
+                      type="button"
+                      className={
+                        form.direction ===
+                        'from_work'
+                          ? 'active'
+                          : ''
+                      }
+                      onClick={() =>
+                        updateField(
+                          'direction',
+                          'from_work'
+                        )
+                      }
+                    >
+                      From work
+                    </button>
+                  </div>
+                </fieldset>
+
+                {duplicateRequest && (
+                  <div className="staff-transport-duplicate-warning">
+                    <div>
+                      <strong>
+                        Possible duplicate — you already have an active request
+                      </strong>
+
+                      <p>
+                        You cannot submit another request for the same
+                        service and journey direction. Check your existing
+                        request first.
+                      </p>
+
+                      <span>
+                        {duplicateRequest.programmeWindowName ||
+                          duplicateRequest.programmeName}
+                        {' · '}
+                        {duplicateRequest.direction ===
+                        'to_work'
+                          ? 'To work'
+                          : 'From work'}
+                        {' · '}
+                        {formatSpecialTransportWindow(
+                          duplicateRequest.shiftTime
+                        )}
+                      </span>
+
+                      <small>
+                        Status:{' '}
+                        {specialTransportStatusLabel(
+                          duplicateRequest.status
+                        )}
+                      </small>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openRequest(
+                          duplicateRequest.id
+                        )
+                      }
+                    >
+                      View existing request
+                    </button>
+                  </div>
+                )}
+
+                <div className="staff-transport-shift-field">
+                  <label>
+                    <strong className="staff-transport-shift-label">
+                      {form.direction ===
+                      'to_work'
+                        ? 'Your shift start time'
+                        : 'Your shift finish time'}
+                    </strong>
+
+                    <span className="staff-transport-shift-help">
+                      This is your shift time, not the
+                      time you want the taxi. We will
+                      calculate and confirm your taxi
+                      pickup time later.
+                    </span>
+
+                    {selectedOption && (
+                      <div className="staff-transport-date-shortcuts">
+                        {staffTransportQuickDates(
+                          selectedOption
+                        ).map(
+                          (date) => {
+                            const dateKey =
+                              formatStaffTransportDateTimeLocal(
+                                date
+                              ).slice(
+                                0,
+                                10
+                              );
+
+                            const selectedDate =
+                              String(
+                                form.shiftTime ||
+                                ''
+                              ).slice(
+                                0,
+                                10
+                              );
+
+                            return (
+                              <button
+                                key={
+                                  dateKey
+                                }
+                                type="button"
+                                className={
+                                  selectedDate ===
+                                  dateKey
+                                    ? 'active'
+                                    : ''
+                                }
+                                onClick={() =>
+                                  updateField(
+                                    'shiftTime',
+                                    applyStaffTransportQuickDate(
+                                      form.shiftTime,
+                                      date
+                                    )
+                                  )
+                                }
+                              >
+                                {formatStaffTransportQuickDate(
+                                  date
+                                )}
+                              </button>
+                            );
+                          }
+                        )}
+                      </div>
+                    )}
+
+                    <input
+                      type="datetime-local"
+                      value={
+                        form.shiftTime
+                      }
+                      onChange={(event) =>
+                        updateField(
+                          'shiftTime',
+                          event.target.value
+                        )
+                      }
+                      required
+                    />
+                  </label>
+                </div>
+
+                <label>
+                  {form.direction ===
+                  'to_work'
+                    ? 'Home / pickup address'
+                    : 'Work pickup'}
+
+                  {form.direction ===
+                  'from_work' && (
+                    <StaffTransportAddressShortcuts
+                      title="Quick UHP locations"
+                      locations={
+                        quickUhpLocations
+                      }
+                      onSelect={(location) =>
+                        selectAddress(
+                          'pickup',
+                          location
+                        )
+                      }
+                    />
+                  )}
+
+                  <StaffTransportAddressShortcuts
+                    title="Recent addresses"
+                    locations={
+                      recentAddressShortcuts
+                    }
+                    onSelect={(location) =>
+                      selectAddress(
+                        'pickup',
+                        location
+                      )
+                    }
+                  />
+
+                  <StaffTransportAddressSearch
+                    value={
+                      form.pickupAddress
+                    }
+                    savedLocations={
+                      savedLocations
+                    }
+                    placeholder="Start typing an address or UHP location…"
+                    onChange={(value) =>
+                      updateAddress(
+                        'pickup',
+                        value
+                      )
+                    }
+                    onSelect={(result) =>
+                      selectAddress(
+                        'pickup',
+                        result
+                      )
+                    }
+                  />
+
+                  {form.pickupPostcode && (
+                    <small className="staff-transport-address-meta">
+                      {form.pickupPostcode}
+                    </small>
+                  )}
+                </label>
+
+                <label>
+                  {form.direction ===
+                  'to_work'
+                    ? 'Work destination'
+                    : 'Home / destination'}
+
+                  {form.direction ===
+                  'to_work' && (
+                    <StaffTransportAddressShortcuts
+                      title="Quick UHP locations"
+                      locations={
+                        quickUhpLocations
+                      }
+                      onSelect={(location) =>
+                        selectAddress(
+                          'destination',
+                          location
+                        )
+                      }
+                    />
+                  )}
+
+                  <StaffTransportAddressShortcuts
+                    title="Recent addresses"
+                    locations={
+                      recentAddressShortcuts
+                    }
+                    onSelect={(location) =>
+                      selectAddress(
+                        'destination',
+                        location
+                      )
+                    }
+                  />
+
+                  <StaffTransportAddressSearch
+                    value={
+                      form.destinationAddress
+                    }
+                    savedLocations={
+                      savedLocations
+                    }
+                    placeholder="Start typing an address or UHP location…"
+                    onChange={(value) =>
+                      updateAddress(
+                        'destination',
+                        value
+                      )
+                    }
+                    onSelect={(result) =>
+                      selectAddress(
+                        'destination',
+                        result
+                      )
+                    }
+                  />
+
+                  {form.destinationPostcode && (
+                    <small className="staff-transport-address-meta">
+                      {form.destinationPostcode}
+                    </small>
+                  )}
+                </label>
+
+                <div className="staff-transport-journey-check">
+                  <SpecialTransportJourneyMap
+                    pickupAddress={
+                      form.pickupAddress
+                    }
+                    pickupLatitude={
+                      form.pickupLatitude
+                    }
+                    pickupLongitude={
+                      form.pickupLongitude
+                    }
+                    destinationAddress={
+                      form.destinationAddress
+                    }
+                    destinationLatitude={
+                      form.destinationLatitude
+                    }
+                    destinationLongitude={
+                      form.destinationLongitude
+                    }
+                  />
+                </div>
+
+                <label>
+                  Budget Number
+
+                  <select
+                    value={
+                      form.budgetId
+                    }
+                    onChange={(event) =>
+                      updateField(
+                        'budgetId',
+                        event.target.value
+                      )
+                    }
+                    required
+                  >
+                    <option value="">
+                      Select budget…
+                    </option>
+
+                    {budgets.map(
+                      (budget) => (
+                        <option
+                          key={
+                            budget.id
+                          }
+                          value={
+                            budget.id
+                          }
+                        >
+                          {budget.budgetNumber}
+                          {' — '}
+                          {budget.name}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+
+                <label>
+                  Reason Code
+
+                  <select
+                    value={
+                      form.reasonCodeId
+                    }
+                    onChange={(event) =>
+                      updateField(
+                        'reasonCodeId',
+                        event.target.value
+                      )
+                    }
+                    required
+                  >
+                    <option value="">
+                      Select reason…
+                    </option>
+
+                    {reasonCodes.map(
+                      (reason) => (
+                        <option
+                          key={
+                            reason.id
+                          }
+                          value={
+                            reason.id
+                          }
+                        >
+                          {reason.code}
+                          {' — '}
+                          {reason.description}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+
+                <label>
+                  Important information
+                  <span className="staff-transport-optional">
+                    Optional
+                  </span>
+
+                  <textarea
+                    rows="3"
+                    value={
+                      form.passengerNotes
+                    }
+                    onChange={(event) =>
+                      updateField(
+                        'passengerNotes',
+                        event.target.value
+                      )
+                    }
+                    placeholder="Include any important mobility, access or collection information we should be aware of."
+                  />
+                </label>
+
+                <div className="staff-transport-shared-reminder">
+                  <strong>
+                    Please note:
+                  </strong>
+                  {' '}
+                  this is a shared transport request,
+                  not a private taxi booking.
+                </div>
+
+                <div className="staff-transport-self-only">
+                  <CheckCircle2
+                    size={18}
+                  />
+
+                  <span>
+                    This request will be submitted for
+                    <strong>
+                      {' '}
+                      {staffName}
+                    </strong>
+                    . Passenger details come from your
+                    verified account.
+                  </span>
+                </div>
+
+                <div className="staff-transport-form-actions">
+                  {editingRequestId && (
+                    <button
+                      type="button"
+                      className="staff-transport-secondary-button"
+                      disabled={saving}
+                      onClick={
+                        stopAmendingRequest
+                      }
+                    >
+                      Keep existing request
+                    </button>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="primary-button staff-transport-submit"
+                    disabled={
+                      saving ||
+                      Boolean(
+                        duplicateRequest
+                      )
+                    }
+                  >
+                    {saving
+                      ? (
+                          editingRequestId
+                            ? 'Saving changes…'
+                            : 'Submitting…'
+                        )
+                      : (
+                          editingRequestId
+                            ? 'Save changes'
+                            : 'Submit transport request'
+                        )}
+                  </button>
+                </div>
+              </form>
+            )}
+          </section>
+        ) : (
+          <section className="staff-transport-card">
+            <div className="staff-transport-card-heading staff-transport-list-heading">
+              <div>
+                <span className="staff-transport-eyebrow">
+                  Your transport
+                </span>
+
+                <h1>
+                  My requests
+                </h1>
+              </div>
+
+              <button
+                type="button"
+                className="primary-button staff-transport-new-button"
+                onClick={() => {
+                  setEditingRequestId(
+                    null
+                  );
+
+                  setForm(
+                    createInitialStaffTransportForm()
+                  );
+
+                  setError('');
+                  setSuccess('');
+                  setValidationIssues([]);
+
+                  setView(
+                    'request'
+                  );
+                }}
+              >
+                New request
+              </button>
+            </div>
+
+            {requests.length === 0 ? (
+              <div className="staff-transport-empty">
+                <strong>
+                  No transport requests yet
+                </strong>
+
+                <span>
+                  Your submitted staff transport
+                  requests will appear here.
+                </span>
+
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() =>
+                    setView(
+                      'request'
+                    )
+                  }
+                >
+                  Request transport
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="staff-transport-list-notice">
+                  <UsersRound
+                    size={17}
+                    aria-hidden="true"
+                  />
+
+                  <span>
+                    <strong>
+                      Shared staff transport:
+                    </strong>
+                    {' '}
+                    your journey may be grouped with
+                    colleagues travelling at similar times
+                    and provided by taxi, minibus or coach.
+                    Final pickup arrangements will be
+                    confirmed after route planning.
+                  </span>
+                </div>
+
+                <div className="staff-transport-request-list">
+                  {requests.map(
+                    (request) => (
+                      <button
+                        key={
+                          request.id
+                        }
+                        type="button"
+                        className={
+                          `staff-transport-request-item status-${staffTransportStatusTone(
+                            request.status
+                          )}`
+                        }
+                        onClick={() =>
+                          openRequest(
+                            request.id
+                          )
+                        }
+                      >
+                        <div className="staff-transport-request-item-top">
+                          <strong>
+                            {request.programmeWindowName ||
+                              request.programmeName}
+                          </strong>
+
+                          <span
+                            className={
+                              `staff-transport-status-indicator ${staffTransportStatusTone(
+                                request.status
+                              )}`
+                            }
+                          >
+                            <span
+                              className="staff-transport-status-dot"
+                              aria-hidden="true"
+                            />
+
+                            {specialTransportStatusLabel(
+                              request.status
+                            )}
+                          </span>
+                        </div>
+
+                        <span>
+                          {request.direction ===
+                          'to_work'
+                            ? 'To work'
+                            : 'From work'}
+                          {' · '}
+                          {formatSpecialTransportWindow(
+                            request.shiftTime
+                          )}
+                        </span>
+
+                        <small>
+                          {request.pickupAddress}
+                          {' → '}
+                          {request.destinationAddress}
+                        </small>
+
+                        <span className="staff-transport-request-status-copy">
+                          {staffTransportStatusMessage(
+                            request.status
+                          )}
+                        </span>
+                      </button>
+                    )
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}
+
+
+function StaffTransportApp() {
+  const [
+    checkingSession,
+    setCheckingSession
+  ] = useState(true);
+
+  const [
+    staff,
+    setStaff
+  ] = useState(null);
+
+  useEffect(
+    () => {
+      let cancelled = false;
+
+      async function restoreSession() {
+        try {
+          const response =
+            await apiFetch(
+              `${API_BASE}/api/staff-transport/auth/me`
+            );
+
+          if (!response.ok) {
+            if (!cancelled) {
+              setStaff(null);
+            }
+
+            return;
+          }
+
+          const data =
+            await response.json();
+
+          if (!cancelled) {
+            setStaff(
+              data.staff || null
+            );
+          }
+        } catch {
+          if (!cancelled) {
+            setStaff(null);
+          }
+        } finally {
+          if (!cancelled) {
+            setCheckingSession(false);
+          }
+        }
+      }
+
+      restoreSession();
+
+      return () => {
+        cancelled = true;
+      };
+    },
+    []
+  );
+
+  async function logout() {
+    try {
+      await apiFetch(
+        `${API_BASE}/api/staff-transport/auth/logout`,
+        {
+          method: 'POST'
+        }
+      );
+    } finally {
+      setStaff(null);
+    }
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="staff-transport-auth-shell">
+        <div className="auth-loading">
+          Checking secure staff session…
+        </div>
+      </div>
+    );
+  }
+
+  const fullyVerified =
+    staff?.status ===
+      'active' &&
+    staff?.emailVerifiedAt &&
+    staff?.mobileVerifiedAt;
+
+  if (!fullyVerified) {
+    return (
+      <StaffTransportAuth
+        initialStaff={
+          staff
+        }
+        onAuthenticated={
+          setStaff
+        }
+      />
+    );
+  }
+
+  return (
+    <StaffTransportPortal
+      staff={staff}
+      onLogout={logout}
     />
   );
 }
@@ -19171,4 +23023,16 @@ function Placeholder({role, active}) {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App/>);
+const isStaffTransportRoute =
+  window.location.pathname ===
+    '/staff-transport' ||
+  window.location.pathname ===
+    '/staff-transport/';
+
+createRoot(
+  document.getElementById('root')
+).render(
+  isStaffTransportRoute
+    ? <StaffTransportApp/>
+    : <App/>
+);
