@@ -5433,3 +5433,418 @@ button:disabled {
 .special-transport-requests-card {
   overflow: hidden;
 }
+
+
+/* UHP special transport review */
+
+.special-transport-review-row {
+  cursor: pointer;
+}
+
+.special-transport-review-row:hover {
+  background: #f5f9fc;
+}
+
+.special-transport-review-row:focus-visible {
+  outline: 2px solid #005eb8;
+  outline-offset: -2px;
+}
+
+.special-transport-review-modal {
+  width: min(920px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.special-transport-review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.special-transport-review-header h2 {
+  margin: 3px 0 0;
+}
+
+.special-transport-review-header small {
+  color: #6f7e91;
+  font-weight: 700;
+}
+
+.special-transport-review-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  border-radius: 8px;
+  background: #f3f7fa;
+}
+
+.special-transport-review-status span {
+  color: #6f7e91;
+}
+
+.special-transport-review-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.special-transport-review-grid > div,
+.special-transport-review-notes > div {
+  padding: 13px 14px;
+  border: 1px solid #dce4ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.special-transport-review-grid span,
+.special-transport-review-notes span {
+  display: block;
+  margin-bottom: 5px;
+  color: #6f7e91;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.special-transport-review-grid strong,
+.special-transport-review-grid small {
+  display: block;
+}
+
+.special-transport-review-grid small {
+  margin-top: 3px;
+  color: #6f7e91;
+}
+
+.special-transport-review-notes {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.special-transport-review-notes p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.special-transport-internal-note {
+  display: block;
+  margin-bottom: 22px;
+  font-weight: 700;
+}
+
+.special-transport-internal-note textarea {
+  width: 100%;
+  margin-top: 7px;
+  resize: vertical;
+}
+
+.special-transport-review-history {
+  margin-top: 10px;
+}
+
+.special-transport-review-history h3 {
+  margin-bottom: 12px;
+}
+
+.special-transport-history-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 11px 0;
+  border-top: 1px solid #e4e9ef;
+}
+
+.special-transport-history-item div {
+  min-width: 0;
+}
+
+.special-transport-history-item strong,
+.special-transport-history-item span {
+  display: block;
+}
+
+.special-transport-history-item span,
+.special-transport-history-item small {
+  margin-top: 3px;
+  color: #6f7e91;
+}
+
+.special-transport-history-item small {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.special-transport-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #e4e9ef;
+}
+
+@media (max-width: 760px) {
+  .special-transport-review-grid,
+  .special-transport-review-notes {
+    grid-template-columns: 1fr;
+  }
+
+  .special-transport-history-item {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .special-transport-history-item small {
+    text-align: left;
+  }
+
+  .special-transport-review-actions {
+    flex-direction: column;
+  }
+
+  .special-transport-review-actions button {
+    width: 100%;
+  }
+}
+
+/* Compact Special Transport request form */
+
+.special-transport-form-card {
+  padding: 20px 22px;
+}
+
+.special-transport-form-card .special-transport-section-heading {
+  margin-bottom: 12px;
+}
+
+.special-transport-info {
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  font-size: 0.9rem;
+}
+
+.special-transport-service-picker {
+  margin-bottom: 12px;
+}
+
+.special-transport-field-label {
+  display: block;
+  margin-bottom: 7px;
+  font-weight: 700;
+}
+
+.special-transport-window-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.special-transport-window-buttons button {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid #cbd7e3;
+  border-radius: 999px;
+  background: #fff;
+  color: #34495e;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.special-transport-window-buttons button:hover {
+  border-color: #005eb8;
+  background: #f4f9fd;
+}
+
+.special-transport-window-buttons button.active {
+  border-color: #005eb8;
+  background: #005eb8;
+  color: #fff;
+}
+
+.special-transport-compact-row {
+  margin-top: 10px;
+}
+
+.special-transport-service-summary {
+  padding: 10px 12px;
+  margin: 10px 0 14px;
+}
+
+.special-transport-subheading {
+  margin: 16px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid #e5ebf1;
+}
+
+.special-transport-form-card .form-grid {
+  gap: 10px 14px;
+}
+
+.special-transport-form-card label {
+  min-width: 0;
+}
+
+.special-transport-address-search {
+  margin-top: 0;
+}
+
+.special-transport-address-meta {
+  display: block;
+  margin-top: 4px;
+  color: #6f7e91;
+  font-weight: 500;
+}
+
+.special-transport-funding-summary {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.special-transport-funding-summary > div {
+  padding: 9px 11px;
+  border: 1px solid #dce4ec;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.special-transport-funding-summary span,
+.special-transport-funding-summary strong {
+  display: block;
+}
+
+.special-transport-funding-summary span {
+  margin-bottom: 2px;
+  color: #6f7e91;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.special-transport-notes-field {
+  display: block;
+  margin-top: 12px;
+}
+
+.special-transport-notes-field textarea {
+  margin-top: 6px;
+  min-height: 58px;
+}
+
+.special-transport-actions {
+  margin-top: 14px;
+}
+
+@media (max-width: 760px) {
+  .special-transport-form-card {
+    padding: 16px;
+  }
+
+  .special-transport-window-buttons {
+    gap: 6px;
+  }
+
+  .special-transport-window-buttons button {
+    flex: 1 1 auto;
+  }
+
+  .special-transport-funding-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Special Transport journey check map */
+
+.special-transport-journey-map-card {
+  position: relative;
+  isolation: isolate;
+  z-index: 0;
+  overflow: hidden;
+  margin: 4px 0 14px;
+  border: 1px solid #dfe7ef;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.special-transport-journey-map-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px 9px;
+  background: #f8fafc;
+}
+
+.special-transport-journey-map-heading > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.special-transport-journey-map-heading strong {
+  color: #31465f;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.special-transport-journey-map-heading span,
+.special-transport-journey-map-heading small {
+  color: #748397;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.special-transport-journey-map-heading small {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.special-transport-journey-map-shell {
+  position: relative;
+  isolation: isolate;
+  z-index: 0;
+  overflow: hidden;
+  border-top: 1px solid #e6edf3;
+  border-bottom: 1px solid #e6edf3;
+}
+
+.special-transport-journey-map {
+  width: 100%;
+  height: 230px;
+  min-height: 230px;
+}
+
+.special-transport-journey-map-note {
+  padding: 8px 12px;
+  color: #748397;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+@media (max-width: 700px) {
+  .special-transport-journey-map {
+    height: 200px;
+    min-height: 200px;
+  }
+
+  .special-transport-journey-map-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}

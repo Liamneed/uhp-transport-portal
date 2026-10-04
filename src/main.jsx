@@ -10834,6 +10834,220 @@ function sharedLocationSearchResult(
 }
 
 
+
+function parseAddressHouseNumberQuery(
+  rawQuery
+) {
+  const query =
+    String(rawQuery || '')
+      .trim();
+
+  const match =
+    query.match(
+      /^(\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?)\s+(.+)$/
+    );
+
+  if (!match) {
+    return {
+      houseNumber: '',
+      streetQuery: ''
+    };
+  }
+
+  return {
+    houseNumber:
+      match[1].trim(),
+
+    streetQuery:
+      match[2].trim()
+  };
+}
+
+
+function normaliseAddressComparison(
+  value
+) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(
+      /\s+/g,
+      ' '
+    );
+}
+
+
+function isLocalAddressResult(
+  result
+) {
+  const value =
+    [
+      result?.label,
+      result?.address,
+      result?.postcode
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+  return (
+    value.includes('plymouth') ||
+    /\bpl\d/i.test(
+      String(
+        result?.postcode || ''
+      )
+    )
+  );
+}
+
+
+function preserveAddressHouseNumber(
+  result,
+  houseNumber,
+  streetQuery
+) {
+  if (
+    !houseNumber ||
+    !streetQuery
+  ) {
+    return result;
+  }
+
+  const address =
+    String(
+      result?.address || ''
+    ).trim();
+
+  const label =
+    String(
+      result?.label ||
+      address
+    ).trim();
+
+  const normalAddress =
+    normaliseAddressComparison(
+      address
+    );
+
+  const normalLabel =
+    normaliseAddressComparison(
+      label
+    );
+
+  const normalStreet =
+    normaliseAddressComparison(
+      streetQuery
+    );
+
+  const alreadyNumbered =
+    new RegExp(
+      `^${houseNumber.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        '\\$&'
+      )}\\b`,
+      'i'
+    );
+
+  if (
+    alreadyNumbered.test(
+      address
+    ) ||
+    alreadyNumbered.test(
+      label
+    )
+  ) {
+    return result;
+  }
+
+  /*
+   * Only apply the typed house number when
+   * MapTiler returned the actual searched
+   * street. Never prepend it to an unrelated
+   * POI or similarly named address.
+   */
+  /*
+   * A user may type extra locality or postcode
+   * information after the street name, e.g.
+   * "11 Thackeray Gardens Plymouth PL5".
+   *
+   * Compare the returned street portion with
+   * the beginning of the typed street query
+   * rather than requiring the entire query to
+   * match the formatted provider address.
+   */
+  const returnedStreet =
+    normaliseAddressComparison(
+      (
+        address ||
+        label
+      )
+        .split(',')[0]
+        .replace(
+          /[^\p{L}\p{N}\s'-]/gu,
+          ' '
+        )
+    );
+
+  const typedStreet =
+    normaliseAddressComparison(
+      streetQuery
+        .replace(
+          /[^\p{L}\p{N}\s'-]/gu,
+          ' '
+        )
+    );
+
+  const streetMatches =
+    Boolean(
+      returnedStreet &&
+      typedStreet
+    ) &&
+    (
+      typedStreet ===
+        returnedStreet ||
+      typedStreet.startsWith(
+        `${returnedStreet} `
+      )
+    );
+
+  if (!streetMatches) {
+    return result;
+  }
+
+  return {
+    ...result,
+
+    label:
+      `${houseNumber} ${label}`,
+
+    address:
+      `${houseNumber} ${address}`
+  };
+}
+
+
+function sortExternalAddressResults(
+  results
+) {
+  return [...results]
+    .sort(
+      (a, b) => {
+        const aLocal =
+          isLocalAddressResult(a)
+            ? 0
+            : 1;
+
+        const bLocal =
+          isLocalAddressResult(b)
+            ? 0
+            : 1;
+
+        return aLocal - bLocal;
+      }
+    );
+}
+
+
 function BookingAddressAutocomplete({
   value,
   placeholder,
@@ -10953,26 +11167,101 @@ function BookingAddressAutocomplete({
           }
 
           try {
-            const response =
-              await apiFetch(
-                `${API_BASE}/api/geocoding/search?` +
-                new URLSearchParams({
-                  q: query
-                }).toString(),
-                {
-                  signal:
-                    controller.signal
+            async function fetchExternalAddresses(
+              searchQuery
+            ) {
+              const response =
+                await apiFetch(
+                  `${API_BASE}/api/geocoding/search?` +
+                    new URLSearchParams({
+                      q: searchQuery
+                    }).toString(),
+                  {
+                    signal:
+                      controller.signal
+                  }
+                );
+
+              const data =
+                await response.json();
+
+              if (!response.ok) {
+                throw new Error(
+                  data.error ||
+                    'Unable to search addresses'
+                );
+              }
+
+              return (
+                Array.isArray(
+                  data.results
+                )
+                  ? data.results
+                  : []
+              );
+            }
+
+            const {
+              houseNumber,
+              streetQuery
+            } =
+              parseAddressHouseNumberQuery(
+                query
+              );
+
+            const fullResults =
+              await fetchExternalAddresses(
+                query
+              );
+
+            /*
+             * Avoid a second geocoding request
+             * when MapTiler already resolved the
+             * entered house number satisfactorily.
+             */
+            const normalisedFullQuery =
+              normaliseAddressComparison(
+                query
+              );
+
+            const hasGoodFullMatch =
+              fullResults.some(
+                (result) => {
+                  const candidate =
+                    normaliseAddressComparison(
+                      result.address ||
+                        result.label
+                    );
+
+                  return (
+                    candidate.startsWith(
+                      normalisedFullQuery
+                    ) ||
+                    (
+                      houseNumber &&
+                      new RegExp(
+                        `^${houseNumber.replace(
+                          /[.*+?^${}()|[\]\\]/g,
+                          '\\$&'
+                        )}\\b`,
+                        'i'
+                      ).test(candidate)
+                    )
+                  );
                 }
               );
 
-            const data =
-              await response.json();
+            let fallbackResults = [];
 
-            if (!response.ok) {
-              throw new Error(
-                data.error ||
-                'Unable to search addresses'
-              );
+            if (
+              houseNumber &&
+              streetQuery.length >= 3 &&
+              !hasGoodFullMatch
+            ) {
+              fallbackResults =
+                await fetchExternalAddresses(
+                  streetQuery
+                );
             }
 
             const sharedAddresses =
@@ -10980,50 +11269,74 @@ function BookingAddressAutocomplete({
                 sharedMatches
                   .map(
                     (result) =>
-                      String(
-                        result.address ||
-                        ''
+                      normaliseAddressComparison(
+                        result.address
                       )
-                        .trim()
-                        .toLowerCase()
                   )
                   .filter(Boolean)
               );
 
+            const seenExternal =
+              new Set();
+
             const externalResults =
-              (
-                Array.isArray(
-                  data.results
-                )
-                  ? data.results
-                  : []
-              )
-                .map(
-                  (result) => ({
-                    ...result,
-                    source:
-                      'maptiler',
-                    savedLocationId:
-                      null,
-                    locationName:
-                      null,
-                    pickupInstructions:
-                      null,
-                    parentSite:
-                      null
-                  })
-                )
-                .filter(
-                  (result) =>
-                    !sharedAddresses.has(
-                      String(
-                        result.address ||
-                        ''
-                      )
-                        .trim()
-                        .toLowerCase()
-                    )
-                );
+              sortExternalAddressResults(
+                [
+                  ...fullResults,
+                  ...fallbackResults
+                ]
+                  .map(
+                    (result) => ({
+                      ...preserveAddressHouseNumber(
+                        result,
+                        houseNumber,
+                        streetQuery
+                      ),
+
+                      source:
+                        'maptiler',
+
+                      savedLocationId:
+                        null,
+
+                      locationName:
+                        null,
+
+                      pickupInstructions:
+                        null,
+
+                      parentSite:
+                        null
+                    })
+                  )
+                  .filter(
+                    (result) => {
+                      const key =
+                        normaliseAddressComparison(
+                          result.address ||
+                            result.label
+                        );
+
+                      if (
+                        !key ||
+                        sharedAddresses.has(
+                          key
+                        ) ||
+                        seenExternal.has(
+                          key
+                        )
+                      ) {
+                        return false;
+                      }
+
+                      seenExternal.add(
+                        key
+                      );
+
+                      return true;
+                    }
+                  )
+              );
 
             const nextResults = [
               ...sharedMatches,
@@ -12135,6 +12448,471 @@ function BookingPlanningMap({
 }
 
 
+
+function SpecialTransportJourneyMap({
+  pickupAddress,
+  pickupLatitude,
+  pickupLongitude,
+  destinationAddress,
+  destinationLatitude,
+  destinationLongitude
+}) {
+  const pickupLat =
+    Number(pickupLatitude);
+
+  const pickupLng =
+    Number(pickupLongitude);
+
+  const destinationLat =
+    Number(destinationLatitude);
+
+  const destinationLng =
+    Number(destinationLongitude);
+
+  const hasCoordinate =
+    (value) =>
+      value !== null &&
+      value !== undefined &&
+      value !== '' &&
+      Number.isFinite(
+        Number(value)
+      );
+
+  const canRoute =
+    hasCoordinate(
+      pickupLatitude
+    ) &&
+    hasCoordinate(
+      pickupLongitude
+    ) &&
+    hasCoordinate(
+      destinationLatitude
+    ) &&
+    hasCoordinate(
+      destinationLongitude
+    ) &&
+    Number.isFinite(pickupLat) &&
+    Number.isFinite(pickupLng) &&
+    Number.isFinite(destinationLat) &&
+    Number.isFinite(destinationLng);
+
+  const [
+    roadRouteCoordinates,
+    setRoadRouteCoordinates
+  ] = useState([]);
+
+  const [
+    routeState,
+    setRouteState
+  ] = useState('idle');
+
+  const routeRequestCoordinates =
+    canRoute
+      ? [
+          `${pickupLng},${pickupLat}`,
+          `${destinationLng},${destinationLat}`
+        ].join(';')
+      : '';
+
+  useEffect(
+    () => {
+      if (
+        !canRoute ||
+        !routeRequestCoordinates
+      ) {
+        setRoadRouteCoordinates([]);
+        setRouteState('idle');
+
+        return;
+      }
+
+      const controller =
+        new AbortController();
+
+      setRoadRouteCoordinates([]);
+      setRouteState('loading');
+
+      const url =
+        `${API_BASE}/api/routing/route?` +
+        new URLSearchParams({
+          coordinates:
+            routeRequestCoordinates
+        }).toString();
+
+      apiFetch(
+        url,
+        {
+          signal:
+            controller.signal
+        }
+      )
+        .then(
+          (response) => {
+            if (!response.ok) {
+              throw new Error(
+                `Routing service returned ${response.status}`
+              );
+            }
+
+            return response.json();
+          }
+        )
+        .then(
+          (data) => {
+            const coordinates =
+              data?.route
+                ?.geometry
+                ?.coordinates;
+
+            if (
+              data?.code !== 'Ok' ||
+              !Array.isArray(
+                coordinates
+              )
+            ) {
+              throw new Error(
+                'Routing service returned no usable route'
+              );
+            }
+
+            const nextCoordinates =
+              coordinates
+                .map(
+                  (coordinate) => {
+                    const longitude =
+                      Number(
+                        coordinate?.[0]
+                      );
+
+                    const latitude =
+                      Number(
+                        coordinate?.[1]
+                      );
+
+                    return [
+                      latitude,
+                      longitude
+                    ];
+                  }
+                )
+                .filter(
+                  ([latitude, longitude]) =>
+                    Number.isFinite(
+                      latitude
+                    ) &&
+                    Number.isFinite(
+                      longitude
+                    )
+                );
+
+            if (
+              nextCoordinates.length < 2
+            ) {
+              throw new Error(
+                'Routing service returned an empty route'
+              );
+            }
+
+            setRoadRouteCoordinates(
+              nextCoordinates
+            );
+
+            setRouteState(
+              'ready'
+            );
+          }
+        )
+        .catch(
+          (error) => {
+            if (
+              error?.name ===
+                'AbortError'
+            ) {
+              return;
+            }
+
+            setRoadRouteCoordinates(
+              []
+            );
+
+            setRouteState(
+              'fallback'
+            );
+          }
+        );
+
+      return () => {
+        controller.abort();
+      };
+    },
+    [
+      canRoute,
+      routeRequestCoordinates
+    ]
+  );
+
+  if (!canRoute) {
+    return null;
+  }
+
+  const directCoordinates = [
+    [
+      pickupLat,
+      pickupLng
+    ],
+    [
+      destinationLat,
+      destinationLng
+    ]
+  ];
+
+  const displayedCoordinates =
+    roadRouteCoordinates.length > 1
+      ? roadRouteCoordinates
+      : directCoordinates;
+
+  const pickupIcon =
+    L.divIcon({
+      className:
+        'booking-map-div-icon booking-map-pin-wrapper',
+
+      html:
+        '<span class="booking-map-pin pickup">' +
+        '<span class="booking-map-pin-label">P</span>' +
+        '</span>',
+
+      iconSize: [32, 44],
+      iconAnchor: [16, 44],
+      popupAnchor: [0, -39]
+    });
+
+  const destinationIcon =
+    L.divIcon({
+      className:
+        'booking-map-div-icon booking-map-pin-wrapper',
+
+      html:
+        '<span class="booking-map-pin destination">' +
+        '<span class="booking-map-pin-label">D</span>' +
+        '</span>',
+
+      iconSize: [32, 44],
+      iconAnchor: [16, 44],
+      popupAnchor: [0, -39]
+    });
+
+  return (
+    <div className="special-transport-journey-map-card">
+      <div className="special-transport-journey-map-heading">
+        <div>
+          <strong>
+            Journey check
+          </strong>
+
+          <span>
+            Check the requested pickup and destination are correct.
+          </span>
+        </div>
+
+        <small>
+          {routeState === 'loading'
+            ? 'Calculating route…'
+            : routeState === 'ready'
+              ? 'Road route'
+              : routeState === 'fallback'
+                ? 'Approximate route'
+                : ''}
+        </small>
+      </div>
+
+      <div className="special-transport-journey-map-shell">
+        <MapContainer
+          className="special-transport-journey-map"
+          center={[
+            pickupLat,
+            pickupLng
+          ]}
+          zoom={12}
+          scrollWheelZoom={false}
+        >
+          {MAP_TILE_URL && (
+            <TileLayer
+              attribution={
+                MAP_TILE_ATTRIBUTION
+              }
+              url={
+                MAP_TILE_URL
+              }
+            />
+          )}
+
+          <BookingMapBounds
+            coordinates={
+              displayedCoordinates
+            }
+          />
+
+          {displayedCoordinates.length > 1 && (
+            <Polyline
+              positions={
+                displayedCoordinates
+              }
+              pathOptions={{
+                weight: 4,
+                opacity: 0.78
+              }}
+            />
+          )}
+
+          <Marker
+            position={[
+              pickupLat,
+              pickupLng
+            ]}
+            icon={pickupIcon}
+            zIndexOffset={500}
+          >
+            <Popup>
+              <strong>
+                Pickup
+              </strong>
+
+              {pickupAddress && (
+                <div>
+                  {pickupAddress}
+                </div>
+              )}
+            </Popup>
+          </Marker>
+
+          <Marker
+            position={[
+              destinationLat,
+              destinationLng
+            ]}
+            icon={
+              destinationIcon
+            }
+            zIndexOffset={500}
+          >
+            <Popup>
+              <strong>
+                Destination
+              </strong>
+
+              {destinationAddress && (
+                <div>
+                  {destinationAddress}
+                </div>
+              )}
+            </Popup>
+          </Marker>
+        </MapContainer>
+      </div>
+
+      <div className="special-transport-journey-map-note">
+        This shows the requested journey only.
+        Shared-route planning and the final taxi
+        pickup time will be confirmed later.
+      </div>
+    </div>
+  );
+}
+
+
+function specialTransportLocalDateTime(
+  value
+) {
+  if (!value) return '';
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return String(value)
+      .slice(0, 16);
+  }
+
+  const pad =
+    (number) =>
+      String(number)
+        .padStart(2, '0');
+
+  return (
+    `${date.getFullYear()}-` +
+    `${pad(date.getMonth() + 1)}-` +
+    `${pad(date.getDate())}T` +
+    `${pad(date.getHours())}:` +
+    `${pad(date.getMinutes())}`
+  );
+}
+
+
+function specialTransportWindowButtonLabel(
+  option
+) {
+  const name =
+    String(
+      option?.windowName || ''
+    )
+      .replace(
+        /\s+service$/i,
+        ''
+      )
+      .trim();
+
+  if (name) {
+    return name;
+  }
+
+  const date =
+    new Date(
+      option?.startsAt || ''
+    );
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return 'Service';
+  }
+
+  return new Intl.DateTimeFormat(
+    'en-GB',
+    {
+      day: 'numeric',
+      month: 'short'
+    }
+  ).format(date);
+}
+
+
+function SpecialTransportAddressSearch({
+  value,
+  savedLocations,
+  placeholder,
+  onChange,
+  onSelect
+}) {
+  return (
+    <BookingAddressAutocomplete
+      value={value}
+      placeholder={placeholder}
+      required
+      searchEnabled
+      savedLocations={savedLocations}
+      onChange={onChange}
+      onSelect={onSelect}
+    />
+  );
+}
+
+
 function createInitialSpecialTransportForm(
   currentUser
 ) {
@@ -12152,12 +12930,22 @@ function createInitialSpecialTransportForm(
       currentUser?.email || '',
     direction: 'to_work',
     shiftTime: '',
+
     pickupAddress: '',
     pickupPostcode: '',
+    pickupLatitude: null,
+    pickupLongitude: null,
+
     destinationAddress: '',
     destinationPostcode: '',
+    destinationLatitude: null,
+    destinationLongitude: null,
+
     passengerCount: 1,
-    accessibilityNotes: '',
+
+    budgetId: '',
+    reasonCodeId: '',
+
     passengerNotes: ''
   };
 }
@@ -12232,6 +13020,21 @@ function SpecialTransportPage({
   ] = useState([]);
 
   const [
+    budgets,
+    setBudgets
+  ] = useState([]);
+
+  const [
+    reasonCodes,
+    setReasonCodes
+  ] = useState([]);
+
+  const [
+    savedLocations,
+    setSavedLocations
+  ] = useState([]);
+
+  const [
     form,
     setForm
   ] = useState(
@@ -12261,6 +13064,31 @@ function SpecialTransportPage({
     setSuccess
   ] = useState('');
 
+  const [
+    reviewRequest,
+    setReviewRequest
+  ] = useState(null);
+
+  const [
+    reviewNotes,
+    setReviewNotes
+  ] = useState('');
+
+  const [
+    reviewLoading,
+    setReviewLoading
+  ] = useState(false);
+
+  const [
+    reviewSaving,
+    setReviewSaving
+  ] = useState(false);
+
+  const [
+    reviewError,
+    setReviewError
+  ] = useState('');
+
   const isUhpAdmin =
     (currentUser?.roles || [])
       .some(
@@ -12276,7 +13104,8 @@ function SpecialTransportPage({
     try {
       const [
         optionsResponse,
-        requestsResponse
+        requestsResponse,
+        bookingOptionsResponse
       ] =
         await Promise.all([
           apiFetch(
@@ -12284,6 +13113,9 @@ function SpecialTransportPage({
           ),
           apiFetch(
             `${API_BASE}/api/transport-requests`
+          ),
+          apiFetch(
+            `${API_BASE}/api/booking-options`
           )
         ]);
 
@@ -12309,11 +13141,25 @@ function SpecialTransportPage({
         );
       }
 
+      if (!bookingOptionsResponse.ok) {
+        const data =
+          await bookingOptionsResponse.json()
+            .catch(() => ({}));
+
+        throw new Error(
+          data.error ||
+            'Unable to load UHP funding options'
+        );
+      }
+
       const optionsData =
         await optionsResponse.json();
 
       const requestsData =
         await requestsResponse.json();
+
+      const bookingOptionsData =
+        await bookingOptionsResponse.json();
 
       const nextOptions =
         optionsData.options || [];
@@ -12324,6 +13170,22 @@ function SpecialTransportPage({
 
       setRequests(
         requestsData.requests || []
+      );
+
+      setBudgets(
+        bookingOptionsData.budgets || []
+      );
+
+      setReasonCodes(
+        bookingOptionsData.reasonCodes || []
+      );
+
+      setSavedLocations(
+        Array.isArray(
+          bookingOptionsData.savedLocations
+        )
+          ? bookingOptionsData.savedLocations
+          : []
       );
 
       setForm(
@@ -12351,6 +13213,11 @@ function SpecialTransportPage({
             programmeWindowId:
               String(
                 nextOptions[0].windowId
+              ),
+            shiftTime:
+              current.shiftTime ||
+              specialTransportLocalDateTime(
+                nextOptions[0].startsAt
               )
           };
         }
@@ -12390,6 +13257,204 @@ function SpecialTransportPage({
           )
     ) || null;
 
+  const selectedBudget =
+    budgets.find(
+      (budget) =>
+        String(budget.id) ===
+          String(
+            form.budgetId
+          )
+    ) || null;
+
+
+  function selectTransportWindow(
+    option
+  ) {
+    setForm(
+      (current) => ({
+        ...current,
+        programmeWindowId:
+          String(
+            option.windowId
+          ),
+        shiftTime:
+          specialTransportLocalDateTime(
+            option.startsAt
+          )
+      })
+    );
+  }
+
+
+  function updateJourneyAddress(
+    prefix,
+    value
+  ) {
+    setForm(
+      (current) => ({
+        ...current,
+        [`${prefix}Address`]:
+          value,
+        [`${prefix}Postcode`]:
+          '',
+        [`${prefix}Latitude`]:
+          null,
+        [`${prefix}Longitude`]:
+          null
+      })
+    );
+  }
+
+
+  function selectJourneyAddress(
+    prefix,
+    result
+  ) {
+    setForm(
+      (current) => ({
+        ...current,
+        [`${prefix}Address`]:
+          result.address ||
+          result.locationName ||
+          '',
+        [`${prefix}Postcode`]:
+          result.postcode ||
+          '',
+        [`${prefix}Latitude`]:
+          result.latitude ??
+          null,
+        [`${prefix}Longitude`]:
+          result.longitude ??
+          null
+      })
+    );
+  }
+
+  async function openTransportRequestReview(
+    requestId
+  ) {
+    if (!isUhpAdmin) return;
+
+    setReviewLoading(true);
+    setReviewError('');
+    setReviewRequest(null);
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-requests/${requestId}`
+        );
+
+      const data =
+        await response.json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to load transport request'
+        );
+      }
+
+      setReviewRequest(
+        data.request
+      );
+
+      setReviewNotes(
+        data.request?.internalNotes ||
+          ''
+      );
+    } catch (loadError) {
+      setReviewError(
+        loadError.message ||
+          'Unable to load transport request'
+      );
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+
+  function closeTransportRequestReview() {
+    if (reviewSaving) return;
+
+    setReviewRequest(null);
+    setReviewNotes('');
+    setReviewError('');
+  }
+
+
+  async function submitTransportRequestReview(
+    status
+  ) {
+    if (
+      !isUhpAdmin ||
+      !reviewRequest
+    ) {
+      return;
+    }
+
+    setReviewSaving(true);
+    setReviewError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-requests/${reviewRequest.id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({
+                status,
+                internalNotes:
+                  reviewNotes
+              })
+          }
+        );
+
+      const data =
+        await response.json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to update transport request'
+        );
+      }
+
+      setReviewRequest(
+        data.request
+      );
+
+      setReviewNotes(
+        data.request?.internalNotes ||
+          ''
+      );
+
+      await loadSpecialTransport();
+
+      setSuccess(
+        status ===
+          'needs_information'
+          ? 'Transport request marked as needing more information.'
+          : 'Transport request details checked and ready for planning.'
+      );
+    } catch (saveError) {
+      setReviewError(
+        saveError.message ||
+          'Unable to update transport request'
+      );
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
+
   async function submitRequest(
     event
   ) {
@@ -12401,6 +13466,16 @@ function SpecialTransportPage({
     if (!form.programmeWindowId) {
       setError(
         'Please select a transport service.'
+      );
+      return;
+    }
+
+    if (
+      !form.budgetId ||
+      !form.reasonCodeId
+    ) {
+      setError(
+        'Please select a budget and reason code.'
       );
       return;
     }
@@ -12437,16 +13512,34 @@ function SpecialTransportPage({
                   form.pickupAddress,
                 pickupPostcode:
                   form.pickupPostcode,
+                pickupLatitude:
+                  form.pickupLatitude,
+                pickupLongitude:
+                  form.pickupLongitude,
+
                 destinationAddress:
                   form.destinationAddress,
                 destinationPostcode:
                   form.destinationPostcode,
+                destinationLatitude:
+                  form.destinationLatitude,
+                destinationLongitude:
+                  form.destinationLongitude,
+
                 passengerCount:
                   Number(
                     form.passengerCount
                   ),
-                accessibilityNotes:
-                  form.accessibilityNotes,
+
+                budgetId:
+                  Number(
+                    form.budgetId
+                  ),
+                reasonCodeId:
+                  Number(
+                    form.reasonCodeId
+                  ),
+
                 passengerNotes:
                   form.passengerNotes
               })
@@ -12475,6 +13568,12 @@ function SpecialTransportPage({
           ),
           programmeWindowId:
             current.programmeWindowId,
+          shiftTime:
+            selectedOption
+              ? specialTransportLocalDateTime(
+                  selectedOption.startsAt
+                )
+              : '',
           passengerMobile:
             current.passengerMobile
         })
@@ -12564,45 +13663,48 @@ function SpecialTransportPage({
               create or guarantee a taxi booking.
             </div>
 
-            <div className="form-grid two">
-              <label>
-                Transport service
+            <div className="special-transport-service-picker">
+              <span className="special-transport-field-label">
+                Select service day
+              </span>
 
-                <select
-                  value={
-                    form.programmeWindowId
-                  }
-                  onChange={(event) =>
-                    updateField(
-                      'programmeWindowId',
-                      event.target.value
-                    )
-                  }
-                  required
-                >
-                  <option value="">
-                    Select service
-                  </option>
+              <div className="special-transport-window-buttons">
+                {options.map(
+                  (option) => {
+                    const selected =
+                      String(
+                        option.windowId
+                      ) ===
+                        String(
+                          form.programmeWindowId
+                        );
 
-                  {options.map(
-                    (option) => (
-                      <option
-                        key={
-                          option.windowId
+                    return (
+                      <button
+                        key={option.windowId}
+                        type="button"
+                        className={
+                          selected
+                            ? 'active'
+                            : ''
                         }
-                        value={
-                          option.windowId
+                        onClick={() =>
+                          selectTransportWindow(
+                            option
+                          )
                         }
                       >
-                        {option.programmeName}
-                        {' — '}
-                        {option.windowName}
-                      </option>
-                    )
-                  )}
-                </select>
-              </label>
+                        {specialTransportWindowButtonLabel(
+                          option
+                        )}
+                      </button>
+                    );
+                  }
+                )}
+              </div>
+            </div>
 
+            <div className="form-grid two special-transport-compact-row">
               <label>
                 Journey
 
@@ -12623,6 +13725,25 @@ function SpecialTransportPage({
                     Travelling home from work
                   </option>
                 </select>
+              </label>
+
+              <label>
+                {form.direction ===
+                'to_work'
+                  ? 'Shift start date and time'
+                  : 'Shift finish date and time'}
+
+                <input
+                  type="datetime-local"
+                  value={form.shiftTime}
+                  onChange={(event) =>
+                    updateField(
+                      'shiftTime',
+                      event.target.value
+                    )
+                  }
+                  required
+                />
               </label>
             </div>
 
@@ -12660,44 +13781,6 @@ function SpecialTransportPage({
               </div>
             )}
 
-            <div className="form-grid two">
-              <label>
-                {form.direction ===
-                'to_work'
-                  ? 'Shift start date and time'
-                  : 'Shift finish date and time'}
-
-                <input
-                  type="datetime-local"
-                  value={form.shiftTime}
-                  onChange={(event) =>
-                    updateField(
-                      'shiftTime',
-                      event.target.value
-                    )
-                  }
-                  required
-                />
-              </label>
-
-              <label>
-                Number of passengers
-
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={form.passengerCount}
-                  onChange={(event) =>
-                    updateField(
-                      'passengerCount',
-                      event.target.value
-                    )
-                  }
-                  required
-                />
-              </label>
-            </div>
 
             <div className="special-transport-subheading">
               Passenger
@@ -12749,122 +13832,228 @@ function SpecialTransportPage({
                   }
                 />
               </label>
+
+              <label>
+                Passengers
+
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.passengerCount}
+                  onChange={(event) =>
+                    updateField(
+                      'passengerCount',
+                      event.target.value
+                    )
+                  }
+                  required
+                />
+              </label>
             </div>
 
             <div className="special-transport-subheading">
               Journey
             </div>
 
-            <div className="form-grid two">
+            <div className="form-grid two special-transport-journey-grid">
               <label>
                 {form.direction ===
                 'to_work'
-                  ? 'Home / pickup address'
-                  : 'Work pickup address'}
+                  ? 'Home / pickup'
+                  : 'Work pickup'}
 
-                <input
+                <SpecialTransportAddressSearch
                   value={form.pickupAddress}
-                  onChange={(event) =>
-                    updateField(
-                      'pickupAddress',
-                      event.target.value
+                  savedLocations={savedLocations}
+                  placeholder="Start typing an address or UHP location…"
+                  onChange={(value) =>
+                    updateJourneyAddress(
+                      'pickup',
+                      value
                     )
                   }
-                  required
-                />
-              </label>
-
-              <label>
-                {form.direction ===
-                'to_work'
-                  ? 'Pickup postcode'
-                  : 'Work postcode'}
-
-                <input
-                  value={form.pickupPostcode}
-                  onChange={(event) =>
-                    updateField(
-                      'pickupPostcode',
-                      event.target.value
+                  onSelect={(result) =>
+                    selectJourneyAddress(
+                      'pickup',
+                      result
                     )
                   }
                 />
+
+                {form.pickupPostcode && (
+                  <small className="special-transport-address-meta">
+                    {form.pickupPostcode}
+                  </small>
+                )}
               </label>
 
               <label>
                 {form.direction ===
                 'to_work'
                   ? 'Work destination'
-                  : 'Home / destination address'}
+                  : 'Home / destination'}
 
-                <input
+                <SpecialTransportAddressSearch
                   value={
                     form.destinationAddress
                   }
-                  onChange={(event) =>
-                    updateField(
-                      'destinationAddress',
-                      event.target.value
+                  savedLocations={savedLocations}
+                  placeholder="Start typing an address or UHP location…"
+                  onChange={(value) =>
+                    updateJourneyAddress(
+                      'destination',
+                      value
                     )
                   }
-                  required
-                />
-              </label>
-
-              <label>
-                {form.direction ===
-                'to_work'
-                  ? 'Work postcode'
-                  : 'Home postcode'}
-
-                <input
-                  value={
-                    form.destinationPostcode
-                  }
-                  onChange={(event) =>
-                    updateField(
-                      'destinationPostcode',
-                      event.target.value
+                  onSelect={(result) =>
+                    selectJourneyAddress(
+                      'destination',
+                      result
                     )
                   }
                 />
+
+                {form.destinationPostcode && (
+                  <small className="special-transport-address-meta">
+                    {form.destinationPostcode}
+                  </small>
+                )}
               </label>
+            </div>
+
+            <SpecialTransportJourneyMap
+              pickupAddress={
+                form.pickupAddress
+              }
+              pickupLatitude={
+                form.pickupLatitude
+              }
+              pickupLongitude={
+                form.pickupLongitude
+              }
+              destinationAddress={
+                form.destinationAddress
+              }
+              destinationLatitude={
+                form.destinationLatitude
+              }
+              destinationLongitude={
+                form.destinationLongitude
+              }
+            />
+
+            <div className="special-transport-subheading">
+              UHP authorisation
             </div>
 
             <div className="form-grid two">
               <label>
-                Accessibility requirements
+                Budget Number
 
-                <textarea
-                  rows="3"
-                  value={
-                    form.accessibilityNotes
-                  }
+                <select
+                  required
+                  value={form.budgetId}
                   onChange={(event) =>
                     updateField(
-                      'accessibilityNotes',
+                      'budgetId',
                       event.target.value
                     )
                   }
-                  placeholder="Wheelchair, mobility or other requirements"
-                />
+                >
+                  <option value="">
+                    Select budget…
+                  </option>
+
+                  {budgets.map(
+                    (budget) => (
+                      <option
+                        key={budget.id}
+                        value={budget.id}
+                      >
+                        {budget.budgetNumber}
+                        {' — '}
+                        {budget.name}
+                      </option>
+                    )
+                  )}
+                </select>
               </label>
 
               <label>
-                Anything else we should know?
+                Reason Code
 
-                <textarea
-                  rows="3"
-                  value={form.passengerNotes}
+                <select
+                  required
+                  value={form.reasonCodeId}
                   onChange={(event) =>
                     updateField(
-                      'passengerNotes',
+                      'reasonCodeId',
                       event.target.value
                     )
                   }
-                />
+                >
+                  <option value="">
+                    Select reason…
+                  </option>
+
+                  {reasonCodes.map(
+                    (reason) => (
+                      <option
+                        key={reason.id}
+                        value={reason.id}
+                      >
+                        {reason.code}
+                        {' — '}
+                        {reason.description}
+                      </option>
+                    )
+                  )}
+                </select>
               </label>
             </div>
+
+            {selectedBudget && (
+              <div className="special-transport-funding-summary">
+                <div>
+                  <span>
+                    Department / Ward
+                  </span>
+
+                  <strong>
+                    {selectedBudget.department ||
+                      '—'}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>
+                    Budget Holder
+                  </span>
+
+                  <strong>
+                    {selectedBudget.budgetHolder ||
+                      '—'}
+                  </strong>
+                </div>
+              </div>
+            )}
+
+            <label className="special-transport-notes-field">
+              Passenger notes
+
+              <textarea
+                rows="2"
+                value={form.passengerNotes}
+                onChange={(event) =>
+                  updateField(
+                    'passengerNotes',
+                    event.target.value
+                  )
+                }
+                placeholder="Optional — include any important mobility, access or collection information we should be aware of."
+              />
+            </label>
 
             <div className="special-transport-actions">
               <button
@@ -12928,7 +14117,48 @@ function SpecialTransportPage({
               <tbody>
                 {requests.map(
                   (request) => (
-                    <tr key={request.id}>
+                    <tr
+                      key={request.id}
+                      className={
+                        isUhpAdmin
+                          ? 'special-transport-review-row'
+                          : undefined
+                      }
+                      role={
+                        isUhpAdmin
+                          ? 'button'
+                          : undefined
+                      }
+                      tabIndex={
+                        isUhpAdmin
+                          ? 0
+                          : undefined
+                      }
+                      onClick={
+                        isUhpAdmin
+                          ? () =>
+                              openTransportRequestReview(
+                                request.id
+                              )
+                          : undefined
+                      }
+                      onKeyDown={
+                        isUhpAdmin
+                          ? (event) => {
+                              if (
+                                event.key === 'Enter' ||
+                                event.key === ' '
+                              ) {
+                                event.preventDefault();
+
+                                openTransportRequestReview(
+                                  request.id
+                                );
+                              }
+                            }
+                          : undefined
+                      }
+                    >
                       <td>
                         <strong>
                           {
@@ -13008,6 +14238,316 @@ function SpecialTransportPage({
           </div>
         )}
       </section>
+
+      {isUhpAdmin &&
+        (
+          reviewLoading ||
+          reviewRequest ||
+          reviewError
+        ) && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (
+              event.target ===
+                event.currentTarget
+            ) {
+              closeTransportRequestReview();
+            }
+          }}
+        >
+          <div className="modal-card special-transport-review-modal">
+            <div className="special-transport-review-header">
+              <div>
+                <small>
+                  UHP review
+                </small>
+
+                <h2>
+                  Transport request
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                className="secondary"
+                onClick={
+                  closeTransportRequestReview
+                }
+                disabled={reviewSaving}
+              >
+                Close
+              </button>
+            </div>
+
+            {reviewLoading ? (
+              <div className="card state-panel">
+                Loading request…
+              </div>
+            ) : reviewError &&
+              !reviewRequest ? (
+              <div className="notice error">
+                {reviewError}
+              </div>
+            ) : reviewRequest ? (
+              <>
+                {reviewError && (
+                  <div className="notice error">
+                    {reviewError}
+                  </div>
+                )}
+
+                <div className="special-transport-review-status">
+                  <span>
+                    Current status
+                  </span>
+
+                  <strong>
+                    {specialTransportStatusLabel(
+                      reviewRequest.status
+                    )}
+                  </strong>
+                </div>
+
+                <div className="special-transport-review-grid">
+                  <div>
+                    <span>Requested by</span>
+                    <strong>
+                      {reviewRequest.requestedByName ||
+                        '—'}
+                    </strong>
+                    <small>
+                      {reviewRequest.requestedByEmail ||
+                        ''}
+                    </small>
+                  </div>
+
+                  <div>
+                    <span>Passenger</span>
+                    <strong>
+                      {reviewRequest.passengerName ||
+                        '—'}
+                    </strong>
+                    <small>
+                      {reviewRequest.passengerMobile ||
+                        ''}
+                    </small>
+                    <small>
+                      {reviewRequest.passengerEmail ||
+                        ''}
+                    </small>
+                  </div>
+
+                  <div>
+                    <span>Service</span>
+                    <strong>
+                      {reviewRequest.programmeWindowName ||
+                        '—'}
+                    </strong>
+                    <small>
+                      {reviewRequest.programmeName ||
+                        ''}
+                    </small>
+                  </div>
+
+                  <div>
+                    <span>
+                      {reviewRequest.direction ===
+                      'to_work'
+                        ? 'Shift starts'
+                        : 'Shift finishes'}
+                    </span>
+                    <strong>
+                      {formatSpecialTransportWindow(
+                        reviewRequest.shiftTime
+                      )}
+                    </strong>
+                    <small>
+                      {reviewRequest.direction ===
+                      'to_work'
+                        ? 'Travelling to work'
+                        : 'Travelling home from work'}
+                    </small>
+                  </div>
+
+                  <div>
+                    <span>Pickup</span>
+                    <strong>
+                      {reviewRequest.pickupAddress ||
+                        '—'}
+                    </strong>
+                    <small>
+                      {reviewRequest.pickupPostcode ||
+                        ''}
+                    </small>
+                  </div>
+
+                  <div>
+                    <span>Destination</span>
+                    <strong>
+                      {reviewRequest.destinationAddress ||
+                        '—'}
+                    </strong>
+                    <small>
+                      {reviewRequest.destinationPostcode ||
+                        ''}
+                    </small>
+                  </div>
+
+                  <div>
+                    <span>Passengers</span>
+                    <strong>
+                      {reviewRequest.passengerCount ||
+                        1}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>Budget Number</span>
+                    <strong>
+                      {reviewRequest.budgetNumber ||
+                        '—'}
+                    </strong>
+                    <small>
+                      {reviewRequest.budgetName ||
+                        ''}
+                    </small>
+                  </div>
+
+                  <div>
+                    <span>Reason Code</span>
+                    <strong>
+                      {reviewRequest.reasonCode ||
+                        '—'}
+                    </strong>
+                    <small>
+                      {reviewRequest.reasonDescription ||
+                        ''}
+                    </small>
+                  </div>
+
+                  <div>
+                    <span>
+                      Department / Ward
+                    </span>
+                    <strong>
+                      {reviewRequest.department ||
+                        '—'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>
+                      Budget Holder
+                    </span>
+                    <strong>
+                      {reviewRequest.budgetHolder ||
+                        '—'}
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="special-transport-review-notes">
+                  <div>
+                    <span>
+                      Passenger notes
+                    </span>
+
+                    <p>
+                      {reviewRequest.passengerNotes ||
+                        reviewRequest.accessibilityNotes ||
+                        'None provided'}
+                    </p>
+                  </div>
+                </div>
+
+                <label className="special-transport-internal-note">
+                  UHP internal note
+
+                  <textarea
+                    rows="4"
+                    value={reviewNotes}
+                    onChange={(event) =>
+                      setReviewNotes(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Optional internal note for UHP review. This is not shown to the requester."
+                  />
+                </label>
+
+                <div className="special-transport-review-history">
+                  <h3>
+                    Request history
+                  </h3>
+
+                  {(reviewRequest.events || [])
+                    .map(
+                      (event) => (
+                        <div
+                          className="special-transport-history-item"
+                          key={event.id}
+                        >
+                          <div>
+                            <strong>
+                              {specialTransportStatusLabel(
+                                event.newStatus
+                              )}
+                            </strong>
+
+                            <span>
+                              {event.notes}
+                            </span>
+                          </div>
+
+                          <small>
+                            {event.actorName
+                              ? `${event.actorName} · `
+                              : ''}
+                            {formatSpecialTransportWindow(
+                              event.createdAt
+                            )}
+                          </small>
+                        </div>
+                      )
+                    )}
+                </div>
+
+                <div className="special-transport-review-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={reviewSaving}
+                    onClick={() =>
+                      submitTransportRequestReview(
+                        'needs_information'
+                      )
+                    }
+                  >
+                    {reviewSaving
+                      ? 'Saving…'
+                      : 'More information needed'}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={reviewSaving}
+                    onClick={() =>
+                      submitTransportRequestReview(
+                        'ready_for_planning'
+                      )
+                    }
+                  >
+                    {reviewSaving
+                      ? 'Saving…'
+                      : 'Details checked'}
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
     </>
   );
 }

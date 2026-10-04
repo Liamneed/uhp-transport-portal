@@ -4799,6 +4799,42 @@ function getTransportRequestById(
       tr.passenger_count
         AS passengerCount,
 
+      tr.department_id
+        AS departmentId,
+
+      department.name
+        AS department,
+
+      tr.budget_id
+        AS budgetId,
+
+      budget.budget_number
+        AS budgetNumber,
+
+      budget.name
+        AS budgetName,
+
+      tr.reason_code_id
+        AS reasonCodeId,
+
+      reason.code
+        AS reasonCode,
+
+      reason.description
+        AS reasonDescription,
+
+      tr.budget_holder_user_id
+        AS budgetHolderUserId,
+
+      CASE
+        WHEN budget_holder.id IS NOT NULL
+        THEN
+          budget_holder.first_name || ' ' ||
+          budget_holder.last_name
+        ELSE NULL
+      END
+        AS budgetHolder,
+
       tr.accessibility_notes
         AS accessibilityNotes,
 
@@ -4838,6 +4874,22 @@ function getTransportRequestById(
     JOIN users u
       ON u.id =
         tr.requested_by_user_id
+
+    LEFT JOIN departments department
+      ON department.id =
+        tr.department_id
+
+    LEFT JOIN budgets budget
+      ON budget.id =
+        tr.budget_id
+
+    LEFT JOIN reason_codes reason
+      ON reason.id =
+        tr.reason_code_id
+
+    LEFT JOIN users budget_holder
+      ON budget_holder.id =
+        tr.budget_holder_user_id
 
     WHERE tr.id = ?
   `).get(requestId);
