@@ -4633,6 +4633,93 @@ function normaliseOptionalTransportCoordinate(
 }
 
 
+
+function listTransportRequestOptions(
+  authUser
+) {
+  if (
+    !userCanSubmitTransportRequest(
+      authUser
+    )
+  ) {
+    const error =
+      new Error(
+        'You do not have permission to submit transport requests'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const now =
+    new Date().toISOString();
+
+  return db.prepare(`
+    SELECT
+      tp.id
+        AS programmeId,
+
+      tp.code
+        AS programmeCode,
+
+      tp.name
+        AS programmeName,
+
+      tp.programme_type
+        AS programmeType,
+
+      tp.request_closes_at
+        AS requestClosesAt,
+
+      tp.public_notes
+        AS programmePublicNotes,
+
+      tpw.id
+        AS windowId,
+
+      tpw.name
+        AS windowName,
+
+      tpw.starts_at
+        AS startsAt,
+
+      tpw.ends_at
+        AS endsAt,
+
+      tpw.public_notes
+        AS windowPublicNotes
+
+    FROM transport_programmes tp
+
+    JOIN transport_programme_windows tpw
+      ON tpw.programme_id =
+        tp.id
+
+    WHERE tp.status = 'open'
+
+      AND tpw.is_active = 1
+
+      AND (
+        tp.request_opens_at IS NULL
+        OR tp.request_opens_at <= ?
+      )
+
+      AND (
+        tp.request_closes_at IS NULL
+        OR tp.request_closes_at >= ?
+      )
+
+    ORDER BY
+      tpw.starts_at,
+      tpw.display_order,
+      tpw.id
+  `).all(
+    now,
+    now
+  );
+}
+
+
 function getTransportRequestById(
   requestId
 ) {
@@ -18657,6 +18744,27 @@ const server = http.createServer(async (req, res) => {
       );
     }
 
+
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/transport-request-options'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      return sendJson(
+        res,
+        200,
+        {
+          options:
+            listTransportRequestOptions(
+              auth.user
+            )
+        }
+      );
+    }
 
 
     if (
