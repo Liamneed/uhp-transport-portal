@@ -920,6 +920,9 @@ function enforceApiAccess(
     ) ||
     pathname.startsWith(
       '/api/transport-programme-windows/'
+    ) ||
+    pathname.startsWith(
+      '/api/transport-programme-capacity/'
     )
   ) {
     if (req.method === 'GET') {
@@ -4052,6 +4055,511 @@ function updateTransportProgrammeWindow(
     return updated;
   } catch (error) {
     db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+
+function getTransportProgrammeCapacityById(
+  capacityId
+) {
+  return db.prepare(`
+    SELECT
+      id,
+      programme_window_id AS programmeWindowId,
+      vehicle_type AS vehicleType,
+      seat_capacity AS seatCapacity,
+      quantity,
+      is_unlimited AS isUnlimited,
+      display_order AS displayOrder,
+      notes,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM transport_programme_vehicle_capacity
+    WHERE id = ?
+  `).get(
+    capacityId
+  );
+}
+
+
+function listTransportProgrammeCapacity(
+  windowId
+) {
+  return db.prepare(`
+    SELECT
+      id,
+      programme_window_id AS programmeWindowId,
+      vehicle_type AS vehicleType,
+      seat_capacity AS seatCapacity,
+      quantity,
+      is_unlimited AS isUnlimited,
+      display_order AS displayOrder,
+      notes,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM transport_programme_vehicle_capacity
+    WHERE programme_window_id = ?
+    ORDER BY
+      display_order,
+      seat_capacity,
+      id
+  `).all(
+    windowId
+  );
+}
+
+
+function parseCapacityPositiveInteger(
+  value,
+  fieldName
+) {
+  const number =
+    Number(value);
+
+  if (
+    !Number.isInteger(number) ||
+    number < 1
+  ) {
+    const error =
+      new Error(
+        `${fieldName} must be a positive integer`
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return number;
+}
+
+
+function parseCapacityNonNegativeInteger(
+  value,
+  fieldName
+) {
+  const number =
+    Number(value);
+
+  if (
+    !Number.isInteger(number) ||
+    number < 0
+  ) {
+    const error =
+      new Error(
+        `${fieldName} must be zero or a positive integer`
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return number;
+}
+
+
+function createTransportProgrammeCapacity(
+  windowId,
+  payload,
+  actorUserId
+) {
+  const window =
+    getTransportProgrammeWindowById(
+      windowId
+    );
+
+  if (!window) {
+    const error =
+      new Error(
+        'Service window not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const vehicleType =
+    String(
+      payload.vehicleType || ''
+    ).trim();
+
+  if (!vehicleType) {
+    const error =
+      new Error(
+        'Vehicle type is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const seatCapacity =
+    parseCapacityPositiveInteger(
+      payload.seatCapacity,
+      'Seat capacity'
+    );
+
+  const isUnlimited =
+    payload.isUnlimited
+      ? 1
+      : 0;
+
+  let quantity = null;
+
+  if (!isUnlimited) {
+    if (
+      payload.quantity === undefined ||
+      payload.quantity === null ||
+      String(payload.quantity).trim() === ''
+    ) {
+      const error =
+        new Error(
+          'Quantity is required when capacity is not unlimited'
+        );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    quantity =
+      parseCapacityNonNegativeInteger(
+        payload.quantity,
+        'Quantity'
+      );
+  }
+
+  const displayOrder =
+    payload.displayOrder === undefined
+      ? 0
+      : Number(
+          payload.displayOrder
+        );
+
+  if (
+    !Number.isInteger(
+      displayOrder
+    )
+  ) {
+    const error =
+      new Error(
+        'Display order must be an integer'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const notes =
+    String(
+      payload.notes || ''
+    ).trim() || null;
+
+  const duplicate =
+    db.prepare(`
+      SELECT id
+      FROM transport_programme_vehicle_capacity
+      WHERE programme_window_id = ?
+        AND vehicle_type = ?
+    `).get(
+      windowId,
+      vehicleType
+    );
+
+  if (duplicate) {
+    const error =
+      new Error(
+        'This vehicle type is already configured for the service window'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    const result =
+      db.prepare(`
+        INSERT INTO transport_programme_vehicle_capacity
+        (
+          programme_window_id,
+          vehicle_type,
+          seat_capacity,
+          quantity,
+          is_unlimited,
+          display_order,
+          notes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        windowId,
+        vehicleType,
+        seatCapacity,
+        quantity,
+        isUnlimited,
+        displayOrder,
+        notes
+      );
+
+    const capacityId =
+      Number(
+        result.lastInsertRowid
+      );
+
+    const capacity =
+      getTransportProgrammeCapacityById(
+        capacityId
+      );
+
+    writeAudit({
+      action: 'CREATE',
+      entityType:
+        'transport_programme_capacity',
+      entityId:
+        capacityId,
+      newValue:
+        JSON.stringify(
+          capacity
+        ),
+      source:
+        'nac_admin',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return capacity;
+  } catch (error) {
+    db.exec('ROLLBACK');
+
+    if (
+      String(
+        error.message || ''
+      ).includes(
+        'UNIQUE constraint failed'
+      )
+    ) {
+      const conflict =
+        new Error(
+          'This vehicle type is already configured for the service window'
+        );
+
+      conflict.statusCode = 409;
+      throw conflict;
+    }
+
+    throw error;
+  }
+}
+
+
+function updateTransportProgrammeCapacity(
+  capacityId,
+  payload,
+  actorUserId
+) {
+  const existing =
+    getTransportProgrammeCapacityById(
+      capacityId
+    );
+
+  if (!existing) {
+    const error =
+      new Error(
+        'Vehicle capacity configuration not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const vehicleType =
+    payload.vehicleType === undefined
+      ? existing.vehicleType
+      : String(
+          payload.vehicleType || ''
+        ).trim();
+
+  if (!vehicleType) {
+    const error =
+      new Error(
+        'Vehicle type is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const seatCapacity =
+    payload.seatCapacity === undefined
+      ? existing.seatCapacity
+      : parseCapacityPositiveInteger(
+          payload.seatCapacity,
+          'Seat capacity'
+        );
+
+  const isUnlimited =
+    payload.isUnlimited === undefined
+      ? Number(
+          existing.isUnlimited
+        )
+      : payload.isUnlimited
+        ? 1
+        : 0;
+
+  let quantity;
+
+  if (isUnlimited) {
+    quantity = null;
+  } else {
+    const sourceQuantity =
+      payload.quantity === undefined
+        ? existing.quantity
+        : payload.quantity;
+
+    if (
+      sourceQuantity === null ||
+      sourceQuantity === undefined ||
+      String(sourceQuantity).trim() === ''
+    ) {
+      const error =
+        new Error(
+          'Quantity is required when capacity is not unlimited'
+        );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    quantity =
+      parseCapacityNonNegativeInteger(
+        sourceQuantity,
+        'Quantity'
+      );
+  }
+
+  const displayOrder =
+    payload.displayOrder === undefined
+      ? existing.displayOrder
+      : Number(
+          payload.displayOrder
+        );
+
+  if (
+    !Number.isInteger(
+      displayOrder
+    )
+  ) {
+    const error =
+      new Error(
+        'Display order must be an integer'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const notes =
+    payload.notes === undefined
+      ? existing.notes
+      : String(
+          payload.notes || ''
+        ).trim() || null;
+
+  const duplicate =
+    db.prepare(`
+      SELECT id
+      FROM transport_programme_vehicle_capacity
+      WHERE programme_window_id = ?
+        AND vehicle_type = ?
+        AND id <> ?
+    `).get(
+      existing.programmeWindowId,
+      vehicleType,
+      capacityId
+    );
+
+  if (duplicate) {
+    const error =
+      new Error(
+        'This vehicle type is already configured for the service window'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_programme_vehicle_capacity
+      SET
+        vehicle_type = ?,
+        seat_capacity = ?,
+        quantity = ?,
+        is_unlimited = ?,
+        display_order = ?,
+        notes = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      vehicleType,
+      seatCapacity,
+      quantity,
+      isUnlimited,
+      displayOrder,
+      notes,
+      capacityId
+    );
+
+    const updated =
+      getTransportProgrammeCapacityById(
+        capacityId
+      );
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType:
+        'transport_programme_capacity',
+      entityId:
+        capacityId,
+      oldValue:
+        JSON.stringify(
+          existing
+        ),
+      newValue:
+        JSON.stringify(
+          updated
+        ),
+      source:
+        'nac_admin',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return updated;
+  } catch (error) {
+    db.exec('ROLLBACK');
+
+    if (
+      String(
+        error.message || ''
+      ).includes(
+        'UNIQUE constraint failed'
+      )
+    ) {
+      const conflict =
+        new Error(
+          'This vehicle type is already configured for the service window'
+        );
+
+      conflict.statusCode = 409;
+      throw conflict;
+    }
+
     throw error;
   }
 }
@@ -17110,6 +17618,151 @@ const server = http.createServer(async (req, res) => {
         200,
         {
           window
+        }
+      );
+    }
+
+
+
+    const transportProgrammeWindowCapacityMatch =
+      url.pathname.match(
+        /^\/api\/transport-programme-windows\/(\d+)\/capacity$/
+      );
+
+
+    if (
+      req.method === 'GET' &&
+      transportProgrammeWindowCapacityMatch
+    ) {
+      const windowId =
+        Number(
+          transportProgrammeWindowCapacityMatch[1]
+        );
+
+      const window =
+        getTransportProgrammeWindowById(
+          windowId
+        );
+
+      if (!window) {
+        const error =
+          new Error(
+            'Service window not found'
+          );
+
+        error.statusCode = 404;
+        throw error;
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          capacity:
+            listTransportProgrammeCapacity(
+              windowId
+            )
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      transportProgrammeWindowCapacityMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['nac_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const capacity =
+        createTransportProgrammeCapacity(
+          Number(
+            transportProgrammeWindowCapacityMatch[1]
+          ),
+          payload,
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        201,
+        {
+          capacity
+        }
+      );
+    }
+
+
+    const transportProgrammeCapacityMatch =
+      url.pathname.match(
+        /^\/api\/transport-programme-capacity\/(\d+)$/
+      );
+
+
+    if (
+      req.method === 'GET' &&
+      transportProgrammeCapacityMatch
+    ) {
+      const capacity =
+        getTransportProgrammeCapacityById(
+          Number(
+            transportProgrammeCapacityMatch[1]
+          )
+        );
+
+      if (!capacity) {
+        const error =
+          new Error(
+            'Vehicle capacity configuration not found'
+          );
+
+        error.statusCode = 404;
+        throw error;
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          capacity
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'PATCH' &&
+      transportProgrammeCapacityMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['nac_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const capacity =
+        updateTransportProgrammeCapacity(
+          Number(
+            transportProgrammeCapacityMatch[1]
+          ),
+          payload,
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          capacity
         }
       );
     }
