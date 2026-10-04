@@ -917,6 +917,9 @@ function enforceApiAccess(
     pathname === '/api/transport-programmes' ||
     pathname.startsWith(
       '/api/transport-programmes/'
+    ) ||
+    pathname.startsWith(
+      '/api/transport-programme-windows/'
     )
   ) {
     if (req.method === 'GET') {
@@ -3645,6 +3648,392 @@ function updateTransportProgramme(
         'transport_programme',
       entityId:
         programmeId,
+      oldValue:
+        JSON.stringify(
+          existing
+        ),
+      newValue:
+        JSON.stringify(
+          updated
+        ),
+      source:
+        'nac_admin',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return updated;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+
+function getTransportProgrammeWindowById(
+  windowId
+) {
+  return db.prepare(`
+    SELECT
+      id,
+      programme_id AS programmeId,
+      name,
+      starts_at AS startsAt,
+      ends_at AS endsAt,
+      display_order AS displayOrder,
+      is_active AS isActive,
+      public_notes AS publicNotes,
+      internal_notes AS internalNotes,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM transport_programme_windows
+    WHERE id = ?
+  `).get(
+    windowId
+  );
+}
+
+
+function listTransportProgrammeWindows(
+  programmeId
+) {
+  return db.prepare(`
+    SELECT
+      id,
+      programme_id AS programmeId,
+      name,
+      starts_at AS startsAt,
+      ends_at AS endsAt,
+      display_order AS displayOrder,
+      is_active AS isActive,
+      public_notes AS publicNotes,
+      internal_notes AS internalNotes,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM transport_programme_windows
+    WHERE programme_id = ?
+    ORDER BY
+      display_order,
+      starts_at,
+      id
+  `).all(
+    programmeId
+  );
+}
+
+
+function createTransportProgrammeWindow(
+  programmeId,
+  payload,
+  actorUserId
+) {
+  const programme =
+    getTransportProgrammeById(
+      programmeId
+    );
+
+  if (!programme) {
+    const error =
+      new Error(
+        'Transport programme not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const name =
+    String(
+      payload.name || ''
+    ).trim();
+
+  if (!name) {
+    const error =
+      new Error(
+        'Service window name is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const startsAt =
+    normaliseOptionalDateTime(
+      payload.startsAt,
+      'Service window start'
+    );
+
+  const endsAt =
+    normaliseOptionalDateTime(
+      payload.endsAt,
+      'Service window end'
+    );
+
+  if (!startsAt || !endsAt) {
+    const error =
+      new Error(
+        'Service window start and end are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    new Date(endsAt) <=
+      new Date(startsAt)
+  ) {
+    const error =
+      new Error(
+        'Service window end must be after the start'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const displayOrder =
+    Number.isInteger(
+      Number(payload.displayOrder)
+    )
+      ? Number(payload.displayOrder)
+      : 0;
+
+  const isActive =
+    payload.isActive === undefined
+      ? 1
+      : payload.isActive
+        ? 1
+        : 0;
+
+  const publicNotes =
+    String(
+      payload.publicNotes || ''
+    ).trim() || null;
+
+  const internalNotes =
+    String(
+      payload.internalNotes || ''
+    ).trim() || null;
+
+  db.exec('BEGIN');
+
+  try {
+    const result =
+      db.prepare(`
+        INSERT INTO transport_programme_windows
+        (
+          programme_id,
+          name,
+          starts_at,
+          ends_at,
+          display_order,
+          is_active,
+          public_notes,
+          internal_notes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        programmeId,
+        name,
+        startsAt,
+        endsAt,
+        displayOrder,
+        isActive,
+        publicNotes,
+        internalNotes
+      );
+
+    const windowId =
+      Number(
+        result.lastInsertRowid
+      );
+
+    const window =
+      getTransportProgrammeWindowById(
+        windowId
+      );
+
+    writeAudit({
+      action: 'CREATE',
+      entityType:
+        'transport_programme_window',
+      entityId:
+        windowId,
+      newValue:
+        JSON.stringify(
+          window
+        ),
+      source:
+        'nac_admin',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return window;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function updateTransportProgrammeWindow(
+  windowId,
+  payload,
+  actorUserId
+) {
+  const existing =
+    getTransportProgrammeWindowById(
+      windowId
+    );
+
+  if (!existing) {
+    const error =
+      new Error(
+        'Service window not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const name =
+    payload.name === undefined
+      ? existing.name
+      : String(
+          payload.name || ''
+        ).trim();
+
+  if (!name) {
+    const error =
+      new Error(
+        'Service window name is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const startsAt =
+    payload.startsAt === undefined
+      ? existing.startsAt
+      : normaliseOptionalDateTime(
+          payload.startsAt,
+          'Service window start'
+        );
+
+  const endsAt =
+    payload.endsAt === undefined
+      ? existing.endsAt
+      : normaliseOptionalDateTime(
+          payload.endsAt,
+          'Service window end'
+        );
+
+  if (!startsAt || !endsAt) {
+    const error =
+      new Error(
+        'Service window start and end are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    new Date(endsAt) <=
+      new Date(startsAt)
+  ) {
+    const error =
+      new Error(
+        'Service window end must be after the start'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const displayOrder =
+    payload.displayOrder === undefined
+      ? existing.displayOrder
+      : Number(payload.displayOrder);
+
+  if (
+    !Number.isInteger(
+      displayOrder
+    )
+  ) {
+    const error =
+      new Error(
+        'Display order must be an integer'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const isActive =
+    payload.isActive === undefined
+      ? Number(existing.isActive)
+      : payload.isActive
+        ? 1
+        : 0;
+
+  const publicNotes =
+    payload.publicNotes === undefined
+      ? existing.publicNotes
+      : String(
+          payload.publicNotes || ''
+        ).trim() || null;
+
+  const internalNotes =
+    payload.internalNotes === undefined
+      ? existing.internalNotes
+      : String(
+          payload.internalNotes || ''
+        ).trim() || null;
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_programme_windows
+      SET
+        name = ?,
+        starts_at = ?,
+        ends_at = ?,
+        display_order = ?,
+        is_active = ?,
+        public_notes = ?,
+        internal_notes = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      name,
+      startsAt,
+      endsAt,
+      displayOrder,
+      isActive,
+      publicNotes,
+      internalNotes,
+      windowId
+    );
+
+    const updated =
+      getTransportProgrammeWindowById(
+        windowId
+      );
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType:
+        'transport_programme_window',
+      entityId:
+        windowId,
       oldValue:
         JSON.stringify(
           existing
@@ -16576,6 +16965,151 @@ const server = http.createServer(async (req, res) => {
         200,
         {
           programme
+        }
+      );
+    }
+
+
+
+    const transportProgrammeWindowsMatch =
+      url.pathname.match(
+        /^\/api\/transport-programmes\/(\d+)\/windows$/
+      );
+
+
+    if (
+      req.method === 'GET' &&
+      transportProgrammeWindowsMatch
+    ) {
+      const programmeId =
+        Number(
+          transportProgrammeWindowsMatch[1]
+        );
+
+      const programme =
+        getTransportProgrammeById(
+          programmeId
+        );
+
+      if (!programme) {
+        const error =
+          new Error(
+            'Transport programme not found'
+          );
+
+        error.statusCode = 404;
+        throw error;
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          windows:
+            listTransportProgrammeWindows(
+              programmeId
+            )
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      transportProgrammeWindowsMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['nac_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const window =
+        createTransportProgrammeWindow(
+          Number(
+            transportProgrammeWindowsMatch[1]
+          ),
+          payload,
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        201,
+        {
+          window
+        }
+      );
+    }
+
+
+    const transportProgrammeWindowMatch =
+      url.pathname.match(
+        /^\/api\/transport-programme-windows\/(\d+)$/
+      );
+
+
+    if (
+      req.method === 'GET' &&
+      transportProgrammeWindowMatch
+    ) {
+      const window =
+        getTransportProgrammeWindowById(
+          Number(
+            transportProgrammeWindowMatch[1]
+          )
+        );
+
+      if (!window) {
+        const error =
+          new Error(
+            'Service window not found'
+          );
+
+        error.statusCode = 404;
+        throw error;
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          window
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'PATCH' &&
+      transportProgrammeWindowMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['nac_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const window =
+        updateTransportProgrammeWindow(
+          Number(
+            transportProgrammeWindowMatch[1]
+          ),
+          payload,
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          window
         }
       );
     }
