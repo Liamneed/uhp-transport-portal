@@ -7096,3 +7096,246 @@ button:disabled {
     min-height: 145px;
   }
 }
+
+
+/* UHP Admin special transport CSV import */
+
+.special-transport-csv-card {
+  margin-bottom: 22px;
+}
+
+.special-transport-csv-template {
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid #005eb8;
+  border-radius: 8px;
+  background: #fff;
+  color: #005eb8;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.special-transport-csv-template:hover {
+  background: #f1f7fc;
+}
+
+.special-transport-csv-upload {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.special-transport-csv-upload label {
+  display: flex;
+  flex: 1 1 360px;
+  flex-direction: column;
+  gap: 7px;
+  font-weight: 700;
+}
+
+.special-transport-csv-upload input[type="file"] {
+  min-height: 40px;
+  padding: 7px 9px;
+  border: 1px solid #cbd5df;
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+  font-weight: 400;
+}
+
+.special-transport-csv-upload button,
+.special-transport-csv-confirm button {
+  min-height: 40px;
+  padding: 9px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #005eb8;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.special-transport-csv-upload button:disabled,
+.special-transport-csv-confirm button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.special-transport-csv-file {
+  margin-top: 12px;
+  color: #526274;
+}
+
+.special-transport-csv-notice {
+  margin-top: 16px;
+}
+
+.special-transport-csv-warning-notice {
+  margin-top: 16px;
+  border-color: #f0cf73;
+  background: #fff8e5;
+  color: #684f00;
+}
+
+.special-transport-csv-preview {
+  margin-top: 18px;
+}
+
+.special-transport-csv-summary {
+  display: grid;
+  grid-template-columns:
+    repeat(4, minmax(110px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.special-transport-csv-summary > div {
+  padding: 12px 14px;
+  border: 1px solid #dce4ec;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.special-transport-csv-summary span,
+.special-transport-csv-summary strong {
+  display: block;
+}
+
+.special-transport-csv-summary span {
+  color: #607286;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.special-transport-csv-summary strong {
+  margin-top: 3px;
+  font-size: 1.25rem;
+}
+
+.special-transport-csv-summary .csv-ready {
+  border-color: #a8d7b4;
+  background: #f2faf4;
+}
+
+.special-transport-csv-summary .csv-warning {
+  border-color: #f0cf73;
+  background: #fff9e9;
+}
+
+.special-transport-csv-summary .csv-error {
+  border-color: #e5aaaa;
+  background: #fff5f5;
+}
+
+.special-transport-csv-table-wrap {
+  margin-top: 16px;
+}
+
+.special-transport-csv-table {
+  min-width: 900px;
+}
+
+.special-transport-csv-table td {
+  vertical-align: top;
+}
+
+.special-transport-csv-table td small {
+  display: block;
+  margin-top: 4px;
+  color: #6f7e91;
+}
+
+.special-transport-csv-status {
+  display: inline-flex;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #eef3f8;
+  color: #40546a;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.special-transport-csv-status.ready,
+.special-transport-csv-status.imported {
+  background: #e8f5eb;
+  color: #246b35;
+}
+
+.special-transport-csv-status.warning {
+  background: #fff2cb;
+  color: #765a00;
+}
+
+.special-transport-csv-status.error {
+  background: #fde9e9;
+  color: #9a2525;
+}
+
+.special-transport-csv-ok {
+  color: #347346;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.special-transport-csv-issues {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.special-transport-csv-issues li + li {
+  margin-top: 4px;
+}
+
+.special-transport-csv-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.special-transport-csv-warning-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-right: auto;
+  max-width: 560px;
+  color: #526274;
+  font-weight: 600;
+}
+
+.special-transport-csv-warning-confirm input {
+  margin-top: 3px;
+}
+
+@media (max-width: 760px) {
+  .special-transport-csv-template {
+    width: 100%;
+  }
+
+  .special-transport-csv-upload {
+    align-items: stretch;
+  }
+
+  .special-transport-csv-upload button {
+    width: 100%;
+  }
+
+  .special-transport-csv-summary {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .special-transport-csv-confirm {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .special-transport-csv-confirm button {
+    width: 100%;
+  }
+}

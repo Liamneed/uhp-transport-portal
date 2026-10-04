@@ -938,10 +938,7 @@ function enforceApiAccess(
       '/api/transport-request-imports/'
     )
   ) {
-    return requireAnyRole(
-      req,
-      ['uhp_admin']
-    );
+    return requireAuth(req);
   }
 
 
@@ -6251,6 +6248,15 @@ function normaliseTransportCsvMobile(
     );
 
   if (
+    /^7\d{9}$/.test(
+      compact
+    )
+  ) {
+    compact =
+      `0${compact}`;
+  }
+
+  if (
     compact.startsWith(
       '0044'
     )
@@ -7060,9 +7066,8 @@ function createTransportRequestImportPreview(
   authUser
 ) {
   if (
-    !userHasAnyRole(
-      authUser,
-      ['uhp_admin']
+    !userCanSubmitTransportRequest(
+      authUser
     )
   ) {
     const error =
@@ -7174,7 +7179,24 @@ function createTransportRequestImportPreview(
   }
 
   const dataRows =
-    parsed.slice(1);
+    parsed
+      .slice(1)
+      .map(
+        (cells, index) => ({
+          cells,
+          rowNumber:
+            index + 2
+        })
+      )
+      .filter(
+        ({ cells }) =>
+          String(
+            cells?.[0] || ''
+          )
+            .trim()
+            .toUpperCase() !==
+          'EXAMPLE ROW'
+      );
 
   if (
     dataRows.length > 250
@@ -7198,8 +7220,14 @@ function createTransportRequestImportPreview(
     index < dataRows.length;
     index += 1
   ) {
+    const {
+      cells: sourceCells,
+      rowNumber
+    } =
+      dataRows[index];
+
     const cells = [
-      ...dataRows[index]
+      ...sourceCells
     ];
 
     while (
@@ -7602,7 +7630,7 @@ function createTransportRequestImportPreview(
 
     stagedRows.push({
       rowNumber:
-        index + 2,
+        rowNumber,
 
       raw,
 
@@ -7869,9 +7897,8 @@ function confirmTransportRequestImport(
   authUser
 ) {
   if (
-    !userHasAnyRole(
-      authUser,
-      ['uhp_admin']
+    !userCanSubmitTransportRequest(
+      authUser
     )
   ) {
     const error =
@@ -7889,6 +7916,26 @@ function confirmTransportRequestImport(
     );
 
   if (!batch) {
+    const error =
+      new Error(
+        'Transport request import batch not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    Number(
+      batch.createdByUserId
+    ) !== Number(
+      authUser.id
+    ) &&
+    !userHasAnyRole(
+      authUser,
+      ['uhp_admin']
+    )
+  ) {
     const error =
       new Error(
         'Transport request import batch not found'
@@ -9154,12 +9201,17 @@ function listTransportRequestsForUser(
       tr.pickup_address
         AS pickupAddress,
 
+      tr.pickup_postcode
+        AS pickupPostcode,
+
       tr.destination_address
         AS destinationAddress,
 
+      tr.destination_postcode
+        AS destinationPostcode,
+
       tr.passenger_count
         AS passengerCount,
-
       tr.status,
 
       tr.submitted_at
@@ -9178,12 +9230,17 @@ function listTransportRequestsForUser(
       ON tp.id =
         tpw.programme_id
 
-    WHERE tr.requested_by_user_id = ?
+    WHERE
+      tr.requested_by_user_id = ?
+      OR tr.entered_by_user_id = ?
 
     ORDER BY
       datetime(tr.submitted_at) DESC,
       tr.id DESC
-  `).all(userId);
+  `).all(
+    userId,
+    userId
+  );
 }
 
 
@@ -9229,15 +9286,28 @@ function listAllTransportRequests() {
           staff_identity.first_name || ' ' ||
           staff_identity.last_name
 
-        ELSE tr.passenger_name
+        ELSE NULL
       END
         AS requestedByName,
+
+      CASE
+        WHEN entered_by.id IS NOT NULL
+        THEN
+          entered_by.first_name || ' ' ||
+          entered_by.last_name
+
+        ELSE NULL
+      END
+        AS enteredByName,
 
       tr.passenger_name
         AS passengerName,
 
       tr.passenger_mobile
         AS passengerMobile,
+
+      tr.passenger_email
+        AS passengerEmail,
 
       tr.direction,
 
@@ -9247,11 +9317,23 @@ function listAllTransportRequests() {
       tr.pickup_address
         AS pickupAddress,
 
+      tr.pickup_postcode
+        AS pickupPostcode,
+
       tr.destination_address
         AS destinationAddress,
 
+      tr.destination_postcode
+        AS destinationPostcode,
+
       tr.passenger_count
         AS passengerCount,
+
+      budget.budget_number
+        AS budgetNumber,
+
+      department.name
+        AS department,
 
       tr.status,
 
@@ -9275,10 +9357,22 @@ function listAllTransportRequests() {
       ON u.id =
         tr.requested_by_user_id
 
+    LEFT JOIN users entered_by
+      ON entered_by.id =
+        tr.entered_by_user_id
+
     LEFT JOIN transport_staff_identities
       staff_identity
       ON staff_identity.id =
         tr.requested_by_staff_identity_id
+
+    LEFT JOIN budgets budget
+      ON budget.id =
+        tr.budget_id
+
+    LEFT JOIN departments department
+      ON department.id =
+        tr.department_id
 
     ORDER BY
       datetime(tr.submitted_at) DESC,
@@ -9377,6 +9471,11 @@ function getTransportRequestForUser(
     ) &&
     Number(
       request.requestedByUserId
+    ) !== Number(
+      authUser.id
+    ) &&
+    Number(
+      request.enteredByUserId
     ) !== Number(
       authUser.id
     )
@@ -9639,6 +9738,505 @@ function reviewTransportRequest(
           requestId
         )
     };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+
+function userCanManageTransportRequest(
+  request,
+  authUser
+) {
+  if (
+    userHasAnyRole(
+      authUser,
+      ['uhp_admin']
+    )
+  ) {
+    return true;
+  }
+
+  return (
+    Number(
+      request.requestedByUserId
+    ) === Number(
+      authUser.id
+    ) ||
+    Number(
+      request.enteredByUserId
+    ) === Number(
+      authUser.id
+    )
+  );
+}
+
+
+function assertTransportRequestCanBeChanged(
+  request,
+  authUser
+) {
+  if (
+    !userCanManageTransportRequest(
+      request,
+      authUser
+    )
+  ) {
+    const error =
+      new Error(
+        'Transport request not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const changeableStatuses = [
+    'submitted',
+    'needs_information',
+    'ready_for_planning'
+  ];
+
+  if (
+    !changeableStatuses.includes(
+      request.status
+    )
+  ) {
+    const error =
+      new Error(
+        'This transport request can no longer be changed'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+}
+
+
+function amendTransportRequest(
+  requestId,
+  payload,
+  authUser
+) {
+  const request =
+    getTransportRequestById(
+      requestId
+    );
+
+  if (!request) {
+    const error =
+      new Error(
+        'Transport request not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  assertTransportRequestCanBeChanged(
+    request,
+    authUser
+  );
+
+  const passengerName =
+    String(
+      payload.passengerName ?? ''
+    ).trim();
+
+  const passengerMobile =
+    String(
+      payload.passengerMobile ?? ''
+    ).trim();
+
+  const passengerEmail =
+    String(
+      payload.passengerEmail ?? ''
+    ).trim() || null;
+
+  const direction =
+    String(
+      payload.direction ?? ''
+    ).trim();
+
+  const shiftTime =
+    normaliseOptionalDateTime(
+      payload.shiftTime,
+      'Shift time'
+    );
+
+  const pickupAddress =
+    String(
+      payload.pickupAddress ?? ''
+    ).trim();
+
+  const pickupPostcode =
+    String(
+      payload.pickupPostcode ?? ''
+    ).trim() || null;
+
+  const destinationAddress =
+    String(
+      payload.destinationAddress ?? ''
+    ).trim();
+
+  const destinationPostcode =
+    String(
+      payload.destinationPostcode ?? ''
+    ).trim() || null;
+
+  const passengerNotes =
+    String(
+      payload.passengerNotes ?? ''
+    ).trim() || null;
+
+  if (
+    !passengerName ||
+    !passengerMobile ||
+    !shiftTime ||
+    !pickupAddress ||
+    !destinationAddress
+  ) {
+    const error =
+      new Error(
+        'Passenger name, mobile, shift time, pickup and destination are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    ![
+      'to_work',
+      'from_work'
+    ].includes(
+      direction
+    )
+  ) {
+    const error =
+      new Error(
+        'Invalid transport direction'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const pickupChanged =
+    pickupAddress !==
+      request.pickupAddress ||
+    pickupPostcode !==
+      request.pickupPostcode;
+
+  const destinationChanged =
+    destinationAddress !==
+      request.destinationAddress ||
+    destinationPostcode !==
+      request.destinationPostcode;
+
+  const pickupLatitude =
+    pickupChanged
+      ? null
+      : request.pickupLatitude;
+
+  const pickupLongitude =
+    pickupChanged
+      ? null
+      : request.pickupLongitude;
+
+  const destinationLatitude =
+    destinationChanged
+      ? null
+      : request.destinationLatitude;
+
+  const destinationLongitude =
+    destinationChanged
+      ? null
+      : request.destinationLongitude;
+
+  const oldValue = {
+    passengerName:
+      request.passengerName,
+    passengerMobile:
+      request.passengerMobile,
+    passengerEmail:
+      request.passengerEmail,
+    direction:
+      request.direction,
+    shiftTime:
+      request.shiftTime,
+    pickupAddress:
+      request.pickupAddress,
+    pickupPostcode:
+      request.pickupPostcode,
+    destinationAddress:
+      request.destinationAddress,
+    destinationPostcode:
+      request.destinationPostcode,
+    passengerNotes:
+      request.passengerNotes
+  };
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_requests
+
+      SET
+        passenger_name = ?,
+        passenger_mobile = ?,
+        passenger_email = ?,
+
+        direction = ?,
+        shift_time = ?,
+
+        pickup_address = ?,
+        pickup_postcode = ?,
+        pickup_latitude = ?,
+        pickup_longitude = ?,
+
+        destination_address = ?,
+        destination_postcode = ?,
+        destination_latitude = ?,
+        destination_longitude = ?,
+
+        passenger_notes = ?,
+
+        updated_at =
+          CURRENT_TIMESTAMP
+
+      WHERE id = ?
+    `).run(
+      passengerName,
+      passengerMobile,
+      passengerEmail,
+
+      direction,
+      shiftTime,
+
+      pickupAddress,
+      pickupPostcode,
+      pickupLatitude,
+      pickupLongitude,
+
+      destinationAddress,
+      destinationPostcode,
+      destinationLatitude,
+      destinationLongitude,
+
+      passengerNotes,
+
+      requestId
+    );
+
+    db.prepare(`
+      INSERT INTO transport_request_events
+      (
+        transport_request_id,
+        event_type,
+        actor_user_id,
+        old_status,
+        new_status,
+        notes
+      )
+      VALUES (
+        ?,
+        'amended',
+        ?,
+        ?,
+        ?,
+        'Transport request amended'
+      )
+    `).run(
+      requestId,
+      authUser.id,
+      request.status,
+      request.status
+    );
+
+    const updated =
+      getTransportRequestById(
+        requestId
+      );
+
+    writeAudit({
+      action:
+        'UPDATE',
+
+      entityType:
+        'transport_request',
+
+      entityId:
+        requestId,
+
+      fieldName:
+        'request_details',
+
+      oldValue:
+        JSON.stringify(
+          oldValue
+        ),
+
+      newValue:
+        JSON.stringify({
+          passengerName:
+            updated.passengerName,
+          passengerMobile:
+            updated.passengerMobile,
+          passengerEmail:
+            updated.passengerEmail,
+          direction:
+            updated.direction,
+          shiftTime:
+            updated.shiftTime,
+          pickupAddress:
+            updated.pickupAddress,
+          pickupPostcode:
+            updated.pickupPostcode,
+          destinationAddress:
+            updated.destinationAddress,
+          destinationPostcode:
+            updated.destinationPostcode,
+          passengerNotes:
+            updated.passengerNotes
+        }),
+
+      source:
+        'transport_portal',
+
+      actorUserId:
+        authUser.id
+    });
+
+    db.exec('COMMIT');
+
+    return getTransportRequestForUser(
+      requestId,
+      authUser
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function cancelTransportRequest(
+  requestId,
+  authUser
+) {
+  const request =
+    getTransportRequestById(
+      requestId
+    );
+
+  if (!request) {
+    const error =
+      new Error(
+        'Transport request not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  assertTransportRequestCanBeChanged(
+    request,
+    authUser
+  );
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_requests
+
+      SET
+        status = 'cancelled',
+        cancelled_at =
+          CURRENT_TIMESTAMP,
+        updated_at =
+          CURRENT_TIMESTAMP
+
+      WHERE id = ?
+    `).run(
+      requestId
+    );
+
+    db.prepare(`
+      INSERT INTO transport_request_events
+      (
+        transport_request_id,
+        event_type,
+        actor_user_id,
+        old_status,
+        new_status,
+        notes
+      )
+      VALUES (
+        ?,
+        'cancelled',
+        ?,
+        ?,
+        'cancelled',
+        'Transport request cancelled'
+      )
+    `).run(
+      requestId,
+      authUser.id,
+      request.status
+    );
+
+    const updated =
+      getTransportRequestById(
+        requestId
+      );
+
+    writeAudit({
+      action:
+        'UPDATE',
+
+      entityType:
+        'transport_request',
+
+      entityId:
+        requestId,
+
+      fieldName:
+        'status',
+
+      oldValue:
+        JSON.stringify({
+          status:
+            request.status,
+          cancelledAt:
+            request.cancelledAt
+        }),
+
+      newValue:
+        JSON.stringify({
+          status:
+            updated.status,
+          cancelledAt:
+            updated.cancelledAt
+        }),
+
+      source:
+        'transport_portal',
+
+      actorUserId:
+        authUser.id
+    });
+
+    db.exec('COMMIT');
+
+    return getTransportRequestForUser(
+      requestId,
+      authUser
+    );
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
@@ -25549,9 +26147,8 @@ const server = http.createServer(async (req, res) => {
         '/api/transport-request-imports/preview'
     ) {
       const auth =
-        requireAnyRole(
-          req,
-          ['uhp_admin']
+        requireAuth(
+          req
         );
 
       const payload =
@@ -25584,9 +26181,8 @@ const server = http.createServer(async (req, res) => {
       transportRequestImportConfirmMatch
     ) {
       const auth =
-        requireAnyRole(
-          req,
-          ['uhp_admin']
+        requireAuth(
+          req
         );
 
       const payload =
@@ -25667,6 +26263,76 @@ const server = http.createServer(async (req, res) => {
       url.pathname.match(
         /^\/api\/transport-requests\/(\d+)$/
       );
+
+
+    const transportRequestAmendMatch =
+      url.pathname.match(
+        /^\/api\/transport-requests\/(\d+)\/amend$/
+      );
+
+
+    if (
+      req.method === 'PATCH' &&
+      transportRequestAmendMatch
+    ) {
+      const auth =
+        requireAuth(
+          req
+        );
+
+      const payload =
+        await readJson(req);
+
+      const request =
+        amendTransportRequest(
+          Number(
+            transportRequestAmendMatch[1]
+          ),
+          payload,
+          auth.user
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          request
+        }
+      );
+    }
+
+
+    const transportRequestCancelMatch =
+      url.pathname.match(
+        /^\/api\/transport-requests\/(\d+)\/cancel$/
+      );
+
+
+    if (
+      req.method === 'POST' &&
+      transportRequestCancelMatch
+    ) {
+      const auth =
+        requireAuth(
+          req
+        );
+
+      const request =
+        cancelTransportRequest(
+          Number(
+            transportRequestCancelMatch[1]
+          ),
+          auth.user
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          request
+        }
+      );
+    }
 
 
     if (

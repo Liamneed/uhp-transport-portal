@@ -9588,6 +9588,16 @@ function MyBookingsPage({
                   : 'New UHP transport requests will appear here.'}
             </span>
           </div>
+        ) : filteredTransportRequests.length === 0 ? (
+          <div className="empty-bookings">
+            <strong>
+              No matching transport requests
+            </strong>
+
+            <span>
+              Try changing or clearing the filters.
+            </span>
+          </div>
         ) : (
           <div className="table-wrap">
             <table className="bookings-table booking-list-compact">
@@ -16941,13 +16951,162 @@ function SpecialTransportPage({
     setReviewError
   ] = useState('');
 
+  const [
+    requestEditMode,
+    setRequestEditMode
+  ] = useState(false);
+
+  const [
+    requestEditForm,
+    setRequestEditForm
+  ] = useState(null);
+
+  const [
+    csvFile,
+    setCsvFile
+  ] = useState(null);
+
+  const [
+    csvBatch,
+    setCsvBatch
+  ] = useState(null);
+
+  const [
+    csvChecking,
+    setCsvChecking
+  ] = useState(false);
+
+  const [
+    csvImporting,
+    setCsvImporting
+  ] = useState(false);
+
+  const [
+    csvError,
+    setCsvError
+  ] = useState('');
+
+  const [
+    csvWarningsConfirmed,
+    setCsvWarningsConfirmed
+  ] = useState(false);
+
+  const [
+    transportRequestSearch,
+    setTransportRequestSearch
+  ] = useState('');
+
+  const [
+    transportRequestStatusFilter,
+    setTransportRequestStatusFilter
+  ] = useState('');
+
+  const [
+    transportRequestServiceFilter,
+    setTransportRequestServiceFilter
+  ] = useState('');
+
+  const userRoles =
+    currentUser?.roles || [];
+
   const isUhpAdmin =
-    (currentUser?.roles || [])
-      .some(
-        (role) =>
-          role.code ===
-            'uhp_admin'
-      );
+    userRoles.some(
+      (role) =>
+        role.code ===
+          'uhp_admin'
+    );
+
+  const canImportTransportCsv =
+    userRoles.some(
+      (role) =>
+        [
+          'booker',
+          'budget_holder',
+          'department_manager',
+          'uhp_admin'
+        ].includes(
+          role.code
+        )
+    );
+
+  const transportRequestStatusOptions =
+    Array.from(
+      new Set(
+        requests
+          .map(
+            (request) =>
+              request.status
+          )
+          .filter(Boolean)
+      )
+    ).sort();
+
+  const transportRequestServiceOptions =
+    Array.from(
+      new Set(
+        requests
+          .map(
+            (request) =>
+              request.programmeWindowName
+          )
+          .filter(Boolean)
+      )
+    ).sort();
+
+  const filteredTransportRequests =
+    isUhpAdmin
+      ? requests.filter(
+          (request) => {
+            if (
+              transportRequestStatusFilter &&
+              request.status !==
+                transportRequestStatusFilter
+            ) {
+              return false;
+            }
+
+            if (
+              transportRequestServiceFilter &&
+              request.programmeWindowName !==
+                transportRequestServiceFilter
+            ) {
+              return false;
+            }
+
+            const search =
+              transportRequestSearch
+                .trim()
+                .toLowerCase();
+
+            if (!search) {
+              return true;
+            }
+
+            const searchable =
+              [
+                request.passengerName,
+                request.passengerMobile,
+                request.passengerEmail,
+                request.requestedByName,
+                request.enteredByName,
+                request.pickupAddress,
+                request.pickupPostcode,
+                request.destinationAddress,
+                request.destinationPostcode,
+                request.budgetNumber,
+                request.department
+              ]
+                .filter(Boolean)
+                .join(' ')
+                .toLowerCase();
+
+            return searchable.includes(
+              search
+            );
+          }
+        )
+      : requests;
+
 
   async function loadSpecialTransport() {
     setLoading(true);
@@ -17182,14 +17341,56 @@ function SpecialTransportPage({
     );
   }
 
+  function createTransportRequestEditForm(
+    request
+  ) {
+    return {
+      passengerName:
+        request?.passengerName || '',
+
+      passengerMobile:
+        request?.passengerMobile || '',
+
+      passengerEmail:
+        request?.passengerEmail || '',
+
+      direction:
+        request?.direction ||
+        'to_work',
+
+      shiftTime:
+        request?.shiftTime
+          ? specialTransportLocalDateTime(
+              request.shiftTime
+            )
+          : '',
+
+      pickupAddress:
+        request?.pickupAddress || '',
+
+      pickupPostcode:
+        request?.pickupPostcode || '',
+
+      destinationAddress:
+        request?.destinationAddress || '',
+
+      destinationPostcode:
+        request?.destinationPostcode || '',
+
+      passengerNotes:
+        request?.passengerNotes || ''
+    };
+  }
+
+
   async function openTransportRequestReview(
     requestId
   ) {
-    if (!isUhpAdmin) return;
-
     setReviewLoading(true);
     setReviewError('');
     setReviewRequest(null);
+    setRequestEditMode(false);
+    setRequestEditForm(null);
 
     try {
       const response =
@@ -17216,6 +17417,12 @@ function SpecialTransportPage({
         data.request?.internalNotes ||
           ''
       );
+
+      setRequestEditForm(
+        createTransportRequestEditForm(
+          data.request
+        )
+      );
     } catch (loadError) {
       setReviewError(
         loadError.message ||
@@ -17233,6 +17440,166 @@ function SpecialTransportPage({
     setReviewRequest(null);
     setReviewNotes('');
     setReviewError('');
+    setRequestEditMode(false);
+    setRequestEditForm(null);
+  }
+
+
+  function updateTransportRequestEditField(
+    field,
+    value
+  ) {
+    setRequestEditForm(
+      (current) => ({
+        ...current,
+        [field]: value
+      })
+    );
+  }
+
+
+  function transportRequestCanBeChanged(
+    request
+  ) {
+    return [
+      'submitted',
+      'needs_information',
+      'ready_for_planning'
+    ].includes(
+      request?.status
+    );
+  }
+
+
+  async function submitTransportRequestAmend() {
+    if (
+      !reviewRequest ||
+      !requestEditForm
+    ) {
+      return;
+    }
+
+    setReviewSaving(true);
+    setReviewError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-requests/${reviewRequest.id}/amend`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify(
+                requestEditForm
+              )
+          }
+        );
+
+      const data =
+        await response.json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to amend transport request'
+        );
+      }
+
+      setReviewRequest(
+        data.request
+      );
+
+      setRequestEditForm(
+        createTransportRequestEditForm(
+          data.request
+        )
+      );
+
+      setRequestEditMode(false);
+
+      await loadSpecialTransport();
+
+      setSuccess(
+        'Transport request amended.'
+      );
+    } catch (saveError) {
+      setReviewError(
+        saveError.message ||
+          'Unable to amend transport request'
+      );
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
+
+  async function cancelTransportRequestFromPortal() {
+    if (!reviewRequest) {
+      return;
+    }
+
+    const confirmed =
+      window.confirm(
+        'Cancel this transport request? This will not cancel any normal taxi booking because Special Transport has not yet been booked in Autocab.'
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setReviewSaving(true);
+    setReviewError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-requests/${reviewRequest.id}/cancel`,
+          {
+            method: 'POST'
+          }
+        );
+
+      const data =
+        await response.json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to cancel transport request'
+        );
+      }
+
+      setReviewRequest(
+        data.request
+      );
+
+      setRequestEditForm(
+        createTransportRequestEditForm(
+          data.request
+        )
+      );
+
+      setRequestEditMode(false);
+
+      await loadSpecialTransport();
+
+      setSuccess(
+        'Transport request cancelled.'
+      );
+    } catch (saveError) {
+      setReviewError(
+        saveError.message ||
+          'Unable to cancel transport request'
+      );
+    } finally {
+      setReviewSaving(false);
+    }
   }
 
 
@@ -17303,6 +17670,344 @@ function SpecialTransportPage({
       );
     } finally {
       setReviewSaving(false);
+    }
+  }
+
+
+  function downloadTransportRequestCsvTemplate() {
+    const headers = [
+      'First Name',
+      'Last Name',
+      'Mobile',
+      'Email',
+      'Service',
+      'Direction',
+      'Shift Date',
+      'Shift Time',
+      'Pickup Address',
+      'Pickup Postcode',
+      'Work Destination',
+      'Work Postcode',
+      'Budget Number',
+      'Reason Code',
+      'Important Information'
+    ];
+
+    const example = [
+      'EXAMPLE ROW',
+      'Example',
+      '07123456789',
+      'jane.example@nhs.net',
+      options[0]?.windowName ||
+        'No service currently open',
+      'To work',
+      '25/12/2026',
+      '08:00',
+      '11 Example Road, Plymouth',
+      'PL5 3HY',
+      'Derriford Hospital, Plymouth',
+      'PL6 8DH',
+      '410023',
+      'RC01',
+      'Example only - leave this row in place. Enter real requests from row 3 onwards.'
+    ];
+
+    const csvCell = (
+      value
+    ) => {
+      const text =
+        String(
+          value ?? ''
+        );
+
+      return /[",\r\n]/.test(
+        text
+      )
+        ? `"${text.replaceAll(
+            '"',
+            '""'
+          )}"`
+        : text;
+    };
+
+    const csvText = [
+      headers,
+      example
+    ]
+      .map(
+        (row) =>
+          row
+            .map(csvCell)
+            .join(',')
+      )
+      .join('\r\n') +
+      '\r\n';
+
+    const blob =
+      new Blob(
+        [
+          csvText
+        ],
+        {
+          type:
+            'text/csv;charset=utf-8'
+        }
+      );
+
+    const url =
+      URL.createObjectURL(
+        blob
+      );
+
+    const link =
+      document.createElement(
+        'a'
+      );
+
+    link.href = url;
+    link.download =
+      'staff-transport-request-template.csv';
+
+    document.body.appendChild(
+      link
+    );
+
+    link.click();
+    link.remove();
+
+    URL.revokeObjectURL(
+      url
+    );
+  }
+
+
+  function selectTransportCsvFile(
+    event
+  ) {
+    const file =
+      event.target.files?.[0] ||
+      null;
+
+    setCsvFile(
+      file
+    );
+
+    setCsvBatch(null);
+    setCsvError('');
+    setCsvWarningsConfirmed(false);
+  }
+
+
+  async function previewTransportCsv() {
+    if (
+      !canImportTransportCsv
+    ) {
+      setCsvError(
+        'You do not have permission to import transport requests.'
+      );
+      return;
+    }
+
+    if (!csvFile) {
+      setCsvError(
+        'Choose a CSV file first.'
+      );
+      return;
+    }
+
+    if (
+      csvFile.size >
+      512 * 1024
+    ) {
+      setCsvError(
+        'The CSV file is too large. Maximum size is 512 KB.'
+      );
+      return;
+    }
+
+    setCsvChecking(true);
+    setCsvError('');
+    setCsvBatch(null);
+    setCsvWarningsConfirmed(false);
+    setSuccess('');
+
+    try {
+      const csvText =
+        await csvFile.text();
+
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-request-imports/preview`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({
+                filename:
+                  csvFile.name,
+                csvText
+              })
+          }
+        );
+
+      const data =
+        await response.json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to check CSV file'
+        );
+      }
+
+      setCsvBatch(
+        data.batch ||
+        null
+      );
+    } catch (previewError) {
+      setCsvError(
+        previewError.message ||
+          'Unable to check CSV file'
+      );
+    } finally {
+      setCsvChecking(false);
+    }
+  }
+
+
+  function transportCsvIssueText(
+    issue
+  ) {
+    if (
+      typeof issue ===
+      'string'
+    ) {
+      return issue;
+    }
+
+    if (
+      issue &&
+      typeof issue ===
+        'object'
+    ) {
+      return (
+        issue.message ||
+        issue.error ||
+        issue.reason ||
+        JSON.stringify(issue)
+      );
+    }
+
+    return String(
+      issue || ''
+    );
+  }
+
+
+  async function confirmTransportCsvImport() {
+    if (
+      !canImportTransportCsv
+    ) {
+      setCsvError(
+        'You do not have permission to import transport requests.'
+      );
+      return;
+    }
+
+    if (!csvBatch) {
+      return;
+    }
+
+    if (
+      Number(
+        csvBatch.errorCount
+      ) > 0
+    ) {
+      setCsvError(
+        'Fix the CSV errors and check the file again before importing.'
+      );
+      return;
+    }
+
+    if (
+      Number(
+        csvBatch.warningCount
+      ) > 0 &&
+      !csvWarningsConfirmed
+    ) {
+      setCsvError(
+        'Please confirm that you have reviewed the warnings before importing.'
+      );
+      return;
+    }
+
+    setCsvImporting(true);
+    setCsvError('');
+    setSuccess('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-request-imports/${csvBatch.id}/confirm`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({
+                confirmWarnings:
+                  csvWarningsConfirmed
+              })
+          }
+        );
+
+      const data =
+        await response.json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to import transport requests'
+        );
+      }
+
+      const importedCount =
+        Number(
+          data.batch?.importedCount ||
+          0
+        );
+
+      setCsvBatch(
+        data.batch ||
+        null
+      );
+
+      setCsvFile(null);
+      setCsvWarningsConfirmed(false);
+
+      setSuccess(
+        `${importedCount} transport ${
+          importedCount === 1
+            ? 'request'
+            : 'requests'
+        } imported successfully.`
+      );
+
+      await loadSpecialTransport();
+    } catch (importError) {
+      setCsvError(
+        importError.message ||
+          'Unable to import transport requests'
+      );
+    } finally {
+      setCsvImporting(false);
     }
   }
 
@@ -17921,6 +18626,367 @@ function SpecialTransportPage({
         </form>
       )}
 
+      {canImportTransportCsv && (
+        <section className="card special-transport-csv-card">
+          <div className="special-transport-section-heading">
+            <div>
+              <h2>
+                Import staff requests from CSV
+              </h2>
+
+              <p>
+                Upload multiple staff transport requests
+                and check them before anything is imported.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className="special-transport-csv-template"
+              onClick={
+                downloadTransportRequestCsvTemplate
+              }
+            >
+              Download CSV template
+            </button>
+          </div>
+
+          <div className="notice special-transport-info">
+            CSV imports create transport requests only.
+            They do not create taxi bookings or send
+            anything to Autocab.
+          </div>
+
+          <div className="special-transport-csv-upload">
+            <label>
+              CSV file
+
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={
+                  selectTransportCsvFile
+                }
+                disabled={
+                  csvChecking ||
+                  csvImporting
+                }
+              />
+            </label>
+
+            <button
+              type="button"
+              onClick={
+                previewTransportCsv
+              }
+              disabled={
+                !csvFile ||
+                csvChecking ||
+                csvImporting
+              }
+            >
+              {csvChecking
+                ? 'Checking file…'
+                : 'Check file'}
+            </button>
+          </div>
+
+          {csvFile && !csvBatch && (
+            <div className="special-transport-csv-file">
+              Selected:{' '}
+              <strong>
+                {csvFile.name}
+              </strong>
+            </div>
+          )}
+
+          {csvError && (
+            <div className="notice error special-transport-csv-notice">
+              {csvError}
+            </div>
+          )}
+
+          {csvBatch && (
+            <div className="special-transport-csv-preview">
+              <div className="special-transport-csv-summary">
+                <div>
+                  <span>Total rows</span>
+                  <strong>
+                    {csvBatch.rowCount}
+                  </strong>
+                </div>
+
+                <div className="csv-ready">
+                  <span>Ready</span>
+                  <strong>
+                    {csvBatch.readyCount}
+                  </strong>
+                </div>
+
+                <div className="csv-warning">
+                  <span>Warnings</span>
+                  <strong>
+                    {csvBatch.warningCount}
+                  </strong>
+                </div>
+
+                <div className="csv-error">
+                  <span>Errors</span>
+                  <strong>
+                    {csvBatch.errorCount}
+                  </strong>
+                </div>
+              </div>
+
+              {Number(
+                csvBatch.errorCount
+              ) > 0 && (
+                <div className="notice error special-transport-csv-notice">
+                  This file cannot be imported yet.
+                  Correct the rows marked as errors,
+                  then upload and check the file again.
+                </div>
+              )}
+
+              {Number(
+                csvBatch.warningCount
+              ) > 0 && (
+                <div className="notice special-transport-csv-warning-notice">
+                  Warnings may indicate possible
+                  duplicate requests. Review them
+                  carefully before continuing.
+                </div>
+              )}
+
+              <div className="table-wrap special-transport-csv-table-wrap">
+                <table className="bookings-table special-transport-csv-table">
+                  <thead>
+                    <tr>
+                      <th>Row</th>
+                      <th>Passenger</th>
+                      <th>Service</th>
+                      <th>Shift</th>
+                      <th>Check result</th>
+                      <th>Details</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {(csvBatch.rows || [])
+                      .map(
+                        (row) => {
+                          const raw =
+                            row.raw ||
+                            {};
+
+                          const normalised =
+                            row.normalised ||
+                            {};
+
+                          const issues = [
+                            ...(row.errors || []),
+                            ...(row.warnings || [])
+                          ];
+
+                          return (
+                            <tr
+                              key={row.id}
+                            >
+                              <td>
+                                {row.rowNumber}
+                              </td>
+
+                              <td>
+                                <strong>
+                                  {normalised.passengerName ||
+                                    [
+                                      raw['First Name'],
+                                      raw['Last Name']
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' ') ||
+                                    '—'}
+                                </strong>
+
+                                <small>
+                                  {normalised.passengerMobile ||
+                                    raw.Mobile ||
+                                    '—'}
+                                </small>
+                              </td>
+
+                              <td>
+                                {normalised.serviceName ||
+                                  raw.Service ||
+                                  '—'}
+                              </td>
+
+                              <td>
+                                <strong>
+                                  {normalised.shiftTime
+                                    ? formatSpecialTransportWindow(
+                                        normalised.shiftTime
+                                      )
+                                    : [
+                                        raw['Shift Date'],
+                                        raw['Shift Time']
+                                      ]
+                                        .filter(Boolean)
+                                        .join(' ') ||
+                                      '—'}
+                                </strong>
+
+                                <small>
+                                  {normalised.direction ===
+                                  'from_work'
+                                    ? 'From work'
+                                    : normalised.direction ===
+                                      'to_work'
+                                    ? 'To work'
+                                    : raw.Direction ||
+                                      '—'}
+                                </small>
+                              </td>
+
+                              <td>
+                                <span
+                                  className={`special-transport-csv-status ${row.status}`}
+                                >
+                                  {row.status ===
+                                  'ready'
+                                    ? 'Ready'
+                                    : row.status ===
+                                      'warning'
+                                    ? 'Warning'
+                                    : row.status ===
+                                      'error'
+                                    ? 'Error'
+                                    : row.status ===
+                                      'imported'
+                                    ? 'Imported'
+                                    : row.status}
+                                </span>
+                              </td>
+
+                              <td>
+                                {issues.length ===
+                                0 ? (
+                                  <span className="special-transport-csv-ok">
+                                    No issues
+                                  </span>
+                                ) : (
+                                  <ul className="special-transport-csv-issues">
+                                    {issues.map(
+                                      (
+                                        issue,
+                                        index
+                                      ) => (
+                                        <li
+                                          key={
+                                            index
+                                          }
+                                        >
+                                          {transportCsvIssueText(
+                                            issue
+                                          )}
+                                        </li>
+                                      )
+                                    )}
+                                  </ul>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        }
+                      )}
+                  </tbody>
+                </table>
+              </div>
+
+              {csvBatch.status !==
+                'imported' && (
+                <div className="special-transport-csv-confirm">
+                  {Number(
+                    csvBatch.warningCount
+                  ) > 0 && (
+                    <label className="special-transport-csv-warning-confirm">
+                      <input
+                        type="checkbox"
+                        checked={
+                          csvWarningsConfirmed
+                        }
+                        onChange={(
+                          event
+                        ) =>
+                          setCsvWarningsConfirmed(
+                            event.target
+                              .checked
+                          )
+                        }
+                        disabled={
+                          csvImporting
+                        }
+                      />
+
+                      <span>
+                        I have reviewed the
+                        warnings and want to
+                        import these requests.
+                      </span>
+                    </label>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={
+                      confirmTransportCsvImport
+                    }
+                    disabled={
+                      csvImporting ||
+                      Number(
+                        csvBatch.errorCount
+                      ) > 0 ||
+                      (
+                        Number(
+                          csvBatch.warningCount
+                        ) > 0 &&
+                        !csvWarningsConfirmed
+                      )
+                    }
+                  >
+                    {csvImporting
+                      ? 'Importing requests…'
+                      : `Import ${
+                          csvBatch.rowCount
+                        } ${
+                          Number(
+                            csvBatch.rowCount
+                          ) === 1
+                            ? 'request'
+                            : 'requests'
+                        }`}
+                  </button>
+                </div>
+              )}
+
+              {csvBatch.status ===
+                'imported' && (
+                <div className="notice success special-transport-csv-notice">
+                  Import complete —{' '}
+                  {csvBatch.importedCount}{' '}
+                  {Number(
+                    csvBatch.importedCount
+                  ) === 1
+                    ? 'request'
+                    : 'requests'}{' '}
+                  added.
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
       <section className="card special-transport-requests-card">
         <div className="special-transport-section-heading">
           <div>
@@ -17936,6 +19002,124 @@ function SpecialTransportPage({
             </p>
           </div>
         </div>
+
+        {isUhpAdmin &&
+          requests.length > 0 && (
+            <div className="special-transport-admin-filters">
+              <div className="form-grid two">
+                <label>
+                  Search requests
+
+                  <input
+                    type="search"
+                    value={
+                      transportRequestSearch
+                    }
+                    onChange={(event) =>
+                      setTransportRequestSearch(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Passenger, requester, address…"
+                  />
+                </label>
+
+                <label>
+                  Status
+
+                  <select
+                    value={
+                      transportRequestStatusFilter
+                    }
+                    onChange={(event) =>
+                      setTransportRequestStatusFilter(
+                        event.target.value
+                      )
+                    }
+                  >
+                    <option value="">
+                      All statuses
+                    </option>
+
+                    {transportRequestStatusOptions.map(
+                      (status) => (
+                        <option
+                          key={status}
+                          value={status}
+                        >
+                          {specialTransportStatusLabel(
+                            status
+                          )}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+
+                <label>
+                  Service day
+
+                  <select
+                    value={
+                      transportRequestServiceFilter
+                    }
+                    onChange={(event) =>
+                      setTransportRequestServiceFilter(
+                        event.target.value
+                      )
+                    }
+                  >
+                    <option value="">
+                      All services
+                    </option>
+
+                    {transportRequestServiceOptions.map(
+                      (service) => (
+                        <option
+                          key={service}
+                          value={service}
+                        >
+                          {service}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+
+                <div className="special-transport-filter-summary">
+                  <span>
+                    Showing{' '}
+                    <strong>
+                      {
+                        filteredTransportRequests.length
+                      }
+                    </strong>
+                    {' of '}
+                    <strong>
+                      {requests.length}
+                    </strong>
+                    {' requests'}
+                  </span>
+
+                  {(transportRequestSearch ||
+                    transportRequestStatusFilter ||
+                    transportRequestServiceFilter) && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => {
+                        setTransportRequestSearch('');
+                        setTransportRequestStatusFilter('');
+                        setTransportRequestServiceFilter('');
+                      }}
+                    >
+                      Clear filters
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
         {requests.length === 0 ? (
           <div className="empty-bookings">
@@ -17967,49 +19151,30 @@ function SpecialTransportPage({
               </thead>
 
               <tbody>
-                {requests.map(
+                {filteredTransportRequests.map(
                   (request) => (
                     <tr
                       key={request.id}
-                      className={
-                        isUhpAdmin
-                          ? 'special-transport-review-row'
-                          : undefined
+                      className="special-transport-review-row"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() =>
+                        openTransportRequestReview(
+                          request.id
+                        )
                       }
-                      role={
-                        isUhpAdmin
-                          ? 'button'
-                          : undefined
-                      }
-                      tabIndex={
-                        isUhpAdmin
-                          ? 0
-                          : undefined
-                      }
-                      onClick={
-                        isUhpAdmin
-                          ? () =>
-                              openTransportRequestReview(
-                                request.id
-                              )
-                          : undefined
-                      }
-                      onKeyDown={
-                        isUhpAdmin
-                          ? (event) => {
-                              if (
-                                event.key === 'Enter' ||
-                                event.key === ' '
-                              ) {
-                                event.preventDefault();
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === 'Enter' ||
+                          event.key === ' '
+                        ) {
+                          event.preventDefault();
 
-                                openTransportRequestReview(
-                                  request.id
-                                );
-                              }
-                            }
-                          : undefined
-                      }
+                          openTransportRequestReview(
+                            request.id
+                          );
+                        }
+                      }}
                     >
                       <td>
                         <strong>
@@ -18029,6 +19194,7 @@ function SpecialTransportPage({
                         <td>
                           {
                             request.requestedByName ||
+                            request.enteredByName ||
                             '—'
                           }
                         </td>
@@ -18091,12 +19257,11 @@ function SpecialTransportPage({
         )}
       </section>
 
-      {isUhpAdmin &&
-        (
-          reviewLoading ||
-          reviewRequest ||
-          reviewError
-        ) && (
+      {(
+        reviewLoading ||
+        reviewRequest ||
+        reviewError
+      ) && (
         <div
           className="modal-backdrop"
           onMouseDown={(event) => {
@@ -18112,7 +19277,7 @@ function SpecialTransportPage({
             <div className="special-transport-review-header">
               <div>
                 <small>
-                  UHP review
+                  Special Transport
                 </small>
 
                 <h2>
@@ -18166,6 +19331,7 @@ function SpecialTransportPage({
                     <span>Requested by</span>
                     <strong>
                       {reviewRequest.requestedByName ||
+                        reviewRequest.enteredByName ||
                         '—'}
                     </strong>
                     <small>
@@ -18299,6 +19465,259 @@ function SpecialTransportPage({
                   </div>
                 </div>
 
+                {requestEditMode &&
+                  requestEditForm && (
+                    <div className="special-transport-edit-panel">
+                      <div className="special-transport-subheading">
+                        Amend request
+                      </div>
+
+                      <div className="form-grid two">
+                        <label>
+                          Passenger name
+
+                          <input
+                            value={
+                              requestEditForm.passengerName
+                            }
+                            onChange={(event) =>
+                              updateTransportRequestEditField(
+                                'passengerName',
+                                event.target.value
+                              )
+                            }
+                            required
+                          />
+                        </label>
+
+                        <label>
+                          Mobile number
+
+                          <input
+                            type="tel"
+                            value={
+                              requestEditForm.passengerMobile
+                            }
+                            onChange={(event) =>
+                              updateTransportRequestEditField(
+                                'passengerMobile',
+                                event.target.value
+                              )
+                            }
+                            required
+                          />
+                        </label>
+
+                        <label>
+                          Email
+
+                          <input
+                            type="email"
+                            value={
+                              requestEditForm.passengerEmail
+                            }
+                            onChange={(event) =>
+                              updateTransportRequestEditField(
+                                'passengerEmail',
+                                event.target.value
+                              )
+                            }
+                          />
+                        </label>
+
+                        <label>
+                          Journey
+
+                          <select
+                            value={
+                              requestEditForm.direction
+                            }
+                            onChange={(event) =>
+                              updateTransportRequestEditField(
+                                'direction',
+                                event.target.value
+                              )
+                            }
+                          >
+                            <option value="to_work">
+                              Travelling to work
+                            </option>
+
+                            <option value="from_work">
+                              Travelling home from work
+                            </option>
+                          </select>
+                        </label>
+
+                        <label>
+                          {requestEditForm.direction ===
+                          'to_work'
+                            ? 'Shift start date and time'
+                            : 'Shift finish date and time'}
+
+                          <input
+                            type="datetime-local"
+                            value={
+                              requestEditForm.shiftTime
+                            }
+                            onChange={(event) =>
+                              updateTransportRequestEditField(
+                                'shiftTime',
+                                event.target.value
+                              )
+                            }
+                            required
+                          />
+                        </label>
+
+                        <label>
+                          Pickup address
+
+                          <input
+                            value={
+                              requestEditForm.pickupAddress
+                            }
+                            onChange={(event) =>
+                              updateTransportRequestEditField(
+                                'pickupAddress',
+                                event.target.value
+                              )
+                            }
+                            required
+                          />
+                        </label>
+
+                        <label>
+                          Pickup postcode
+
+                          <input
+                            value={
+                              requestEditForm.pickupPostcode
+                            }
+                            onChange={(event) =>
+                              updateTransportRequestEditField(
+                                'pickupPostcode',
+                                event.target.value
+                              )
+                            }
+                          />
+                        </label>
+
+                        <label>
+                          Destination address
+
+                          <input
+                            value={
+                              requestEditForm.destinationAddress
+                            }
+                            onChange={(event) =>
+                              updateTransportRequestEditField(
+                                'destinationAddress',
+                                event.target.value
+                              )
+                            }
+                            required
+                          />
+                        </label>
+
+                        <label>
+                          Destination postcode
+
+                          <input
+                            value={
+                              requestEditForm.destinationPostcode
+                            }
+                            onChange={(event) =>
+                              updateTransportRequestEditField(
+                                'destinationPostcode',
+                                event.target.value
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <label>
+                        Important information
+
+                        <textarea
+                          rows="3"
+                          value={
+                            requestEditForm.passengerNotes
+                          }
+                          onChange={(event) =>
+                            updateTransportRequestEditField(
+                              'passengerNotes',
+                              event.target.value
+                            )
+                          }
+                        />
+                      </label>
+
+                      <div className="special-transport-review-actions">
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={reviewSaving}
+                          onClick={() => {
+                            setRequestEditMode(false);
+
+                            setRequestEditForm(
+                              createTransportRequestEditForm(
+                                reviewRequest
+                              )
+                            );
+
+                            setReviewError('');
+                          }}
+                        >
+                          Cancel changes
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={reviewSaving}
+                          onClick={
+                            submitTransportRequestAmend
+                          }
+                        >
+                          {reviewSaving
+                            ? 'Saving…'
+                            : 'Save changes'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                {!requestEditMode &&
+                  transportRequestCanBeChanged(
+                    reviewRequest
+                  ) && (
+                    <div className="special-transport-review-actions">
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={reviewSaving}
+                        onClick={() =>
+                          setRequestEditMode(true)
+                        }
+                      >
+                        Amend request
+                      </button>
+
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={reviewSaving}
+                        onClick={
+                          cancelTransportRequestFromPortal
+                        }
+                      >
+                        Cancel request
+                      </button>
+                    </div>
+                  )}
+
                 <div className="special-transport-review-notes">
                   <div>
                     <span>
@@ -18313,20 +19732,22 @@ function SpecialTransportPage({
                   </div>
                 </div>
 
-                <label className="special-transport-internal-note">
-                  UHP internal note
+                {isUhpAdmin && (
+                  <label className="special-transport-internal-note">
+                    UHP internal note
 
-                  <textarea
-                    rows="4"
-                    value={reviewNotes}
-                    onChange={(event) =>
-                      setReviewNotes(
-                        event.target.value
-                      )
-                    }
-                    placeholder="Optional internal note for UHP review. This is not shown to the requester."
-                  />
-                </label>
+                    <textarea
+                      rows="4"
+                      value={reviewNotes}
+                      onChange={(event) =>
+                        setReviewNotes(
+                          event.target.value
+                        )
+                      }
+                      placeholder="Optional internal note for UHP review. This is not shown to the requester."
+                    />
+                  </label>
+                )}
 
                 <div className="special-transport-review-history">
                   <h3>
@@ -18342,9 +19763,18 @@ function SpecialTransportPage({
                         >
                           <div>
                             <strong>
-                              {specialTransportStatusLabel(
-                                event.newStatus
-                              )}
+                              {event.eventType ===
+                              'amended'
+                                ? 'Amended'
+                                : event.eventType ===
+                                  'cancelled'
+                                  ? 'Cancelled'
+                                  : event.eventType ===
+                                    'submitted'
+                                    ? 'Request received'
+                                    : specialTransportStatusLabel(
+                                        event.newStatus
+                                      )}
                             </strong>
 
                             <span>
@@ -18365,36 +19795,42 @@ function SpecialTransportPage({
                     )}
                 </div>
 
-                <div className="special-transport-review-actions">
-                  <button
-                    type="button"
-                    className="secondary"
-                    disabled={reviewSaving}
-                    onClick={() =>
-                      submitTransportRequestReview(
-                        'needs_information'
-                      )
-                    }
-                  >
-                    {reviewSaving
-                      ? 'Saving…'
-                      : 'More information needed'}
-                  </button>
+                {isUhpAdmin &&
+                  !requestEditMode &&
+                  transportRequestCanBeChanged(
+                    reviewRequest
+                  ) && (
+                    <div className="special-transport-review-actions">
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={reviewSaving}
+                        onClick={() =>
+                          submitTransportRequestReview(
+                            'needs_information'
+                          )
+                        }
+                      >
+                        {reviewSaving
+                          ? 'Saving…'
+                          : 'Needs more information'}
+                      </button>
 
-                  <button
-                    type="button"
-                    disabled={reviewSaving}
-                    onClick={() =>
-                      submitTransportRequestReview(
-                        'ready_for_planning'
-                      )
-                    }
-                  >
-                    {reviewSaving
-                      ? 'Saving…'
-                      : 'Details checked'}
-                  </button>
-                </div>
+                      <button
+                        type="button"
+                        disabled={reviewSaving}
+                        onClick={() =>
+                          submitTransportRequestReview(
+                            'ready_for_planning'
+                          )
+                        }
+                      >
+                        {reviewSaving
+                          ? 'Saving…'
+                          : 'Details checked'}
+                      </button>
+                    </div>
+                  )}
               </>
             ) : null}
           </div>
