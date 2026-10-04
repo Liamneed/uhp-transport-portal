@@ -6304,10 +6304,33 @@ function listStaffTransportRequestOptions() {
         id
     `).all();
 
+  const savedLocations =
+    db.prepare(`
+      SELECT
+        id,
+        name,
+        address,
+        postcode,
+        latitude,
+        longitude,
+        category,
+        display_order
+          AS displayOrder
+
+      FROM saved_locations
+
+      WHERE is_active = 1
+
+      ORDER BY
+        display_order,
+        name COLLATE NOCASE
+    `).all();
+
   return {
     options,
     budgets,
-    reasonCodes
+    reasonCodes,
+    savedLocations
   };
 }
 
@@ -21514,6 +21537,51 @@ const server = http.createServer(async (req, res) => {
           request
         }
       );
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/staff-transport/geocoding/search'
+    ) {
+      requireActiveStaffTransportAuth(
+        req
+      );
+
+      const query =
+        parseGeocodingSearchQuery(
+          url.searchParams.get('q')
+        );
+
+      const controller =
+        new AbortController();
+
+      const timeoutId =
+        setTimeout(
+          () =>
+            controller.abort(),
+          6000
+        );
+
+      try {
+        const results =
+          await searchMapTilerGeocoding(
+            query,
+            controller.signal
+          );
+
+        return sendJson(
+          res,
+          200,
+          {
+            results
+          }
+        );
+      } finally {
+        clearTimeout(
+          timeoutId
+        );
+      }
     }
 
     if (
