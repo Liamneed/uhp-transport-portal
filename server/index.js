@@ -2100,6 +2100,654 @@ function verifyStaffTransportEmailCode(
 }
 
 
+function normaliseStaffTransportMobile(
+  value
+) {
+  const raw =
+    String(value || '')
+      .trim()
+      .replace(/[^\d+]/g, '');
+
+  if (
+    /^07\d{9}$/.test(raw)
+  ) {
+    return `+44${raw.slice(1)}`;
+  }
+
+  if (
+    /^447\d{9}$/.test(raw)
+  ) {
+    return `+${raw}`;
+  }
+
+  if (
+    /^\+447\d{9}$/.test(raw)
+  ) {
+    return raw;
+  }
+
+  return '';
+}
+
+
+function updateStaffTransportProfile(
+  staffIdentityId,
+  payload
+) {
+  const identity =
+    getStaffTransportIdentityById(
+      staffIdentityId
+    );
+
+  if (!identity) {
+    const error =
+      new Error(
+        'Staff transport account not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    !identity.emailVerifiedAt
+  ) {
+    const error =
+      new Error(
+        'Email verification is required first'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (
+    ['suspended', 'archived']
+      .includes(identity.status)
+  ) {
+    const error =
+      new Error(
+        'This staff transport account cannot be updated'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const firstName =
+    String(
+      payload.firstName || ''
+    ).trim();
+
+  const lastName =
+    String(
+      payload.lastName || ''
+    ).trim();
+
+  const mobile =
+    normaliseStaffTransportMobile(
+      payload.mobile
+    );
+
+  if (!firstName) {
+    const error =
+      new Error(
+        'Enter your first name'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!lastName) {
+    const error =
+      new Error(
+        'Enter your last name'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!mobile) {
+    const error =
+      new Error(
+        'Enter a valid UK mobile number'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const mobileChanged =
+    Boolean(
+      identity.mobile &&
+      identity.mobile !== mobile
+    );
+
+  db.prepare(`
+    UPDATE transport_staff_identities
+    SET
+      first_name = ?,
+      last_name = ?,
+      mobile = ?,
+
+      mobile_verified_at =
+        CASE
+          WHEN ? = 1
+          THEN NULL
+          ELSE mobile_verified_at
+        END,
+
+      status =
+        CASE
+          WHEN ? = 1
+          THEN 'pending'
+          ELSE status
+        END,
+
+      updated_at =
+        CURRENT_TIMESTAMP
+
+    WHERE id = ?
+  `).run(
+    firstName,
+    lastName,
+    mobile,
+    mobileChanged ? 1 : 0,
+    mobileChanged ? 1 : 0,
+    identity.id
+  );
+
+  return getStaffTransportIdentityById(
+    identity.id
+  );
+}
+
+
+function requestStaffTransportSmsCode(
+  staffIdentityId,
+  req
+) {
+  const identity =
+    getStaffTransportIdentityById(
+      staffIdentityId
+    );
+
+  if (!identity) {
+    const error =
+      new Error(
+        'Staff transport account not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    !identity.emailVerifiedAt
+  ) {
+    const error =
+      new Error(
+        'Email verification is required first'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (
+    !identity.firstName ||
+    !identity.lastName ||
+    !identity.mobile
+  ) {
+    const error =
+      new Error(
+        'Complete your name and mobile number first'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    ['suspended', 'archived']
+      .includes(identity.status)
+  ) {
+    const error =
+      new Error(
+        'This staff transport account cannot sign in'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const recent =
+    db.prepare(`
+      SELECT
+        id,
+        created_at AS createdAt
+
+      FROM transport_staff_login_challenges
+      WHERE staff_identity_id = ?
+        AND channel = 'sms'
+        AND purpose = 'verify_mobile'
+        AND created_at >
+          datetime(
+            'now',
+            '-60 seconds'
+          )
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(
+      identity.id
+    );
+
+  if (recent) {
+    const error =
+      new Error(
+        'Please wait before requesting another verification code'
+      );
+
+    error.statusCode = 429;
+    throw error;
+  }
+
+  db.prepare(`
+    UPDATE transport_staff_login_challenges
+    SET consumed_at =
+      CURRENT_TIMESTAMP
+    WHERE staff_identity_id = ?
+      AND channel = 'sms'
+      AND purpose = 'verify_mobile'
+      AND consumed_at IS NULL
+  `).run(
+    identity.id
+  );
+
+  const challengeId =
+    randomBytes(24)
+      .toString('hex');
+
+  const code =
+    String(
+      randomInt(
+        0,
+        1000000
+      )
+    ).padStart(6, '0');
+
+  const salt =
+    randomBytes(16)
+      .toString('hex');
+
+  const codeHash =
+    hashOtp(
+      code,
+      salt
+    );
+
+  db.prepare(`
+    INSERT INTO transport_staff_login_challenges (
+      id,
+      staff_identity_id,
+      channel,
+      purpose,
+      destination,
+      code_hash,
+      code_salt,
+      attempts,
+      max_attempts,
+      expires_at
+    )
+    VALUES (
+      ?,
+      ?,
+      'sms',
+      'verify_mobile',
+      ?,
+      ?,
+      ?,
+      0,
+      5,
+      datetime(
+        'now',
+        '+10 minutes'
+      )
+    )
+  `).run(
+    challengeId,
+    identity.id,
+    identity.mobile,
+    codeHash,
+    salt
+  );
+
+  /*
+    Development delivery only.
+
+    Real SMS delivery will replace
+    this log before public launch.
+  */
+  console.log(
+    `[STAFF TRANSPORT DEV] SMS OTP for ${identity.mobile}: ${code} challenge=${challengeId} ip=${getRequestIp(req) || 'unknown'}`
+  );
+
+  return {
+    challengeId,
+    mobile:
+      identity.mobile,
+    expiresInSeconds: 600
+  };
+}
+
+
+function verifyStaffTransportSmsCode(
+  staffIdentityId,
+  challengeId,
+  code
+) {
+  const cleanChallengeId =
+    String(
+      challengeId || ''
+    ).trim();
+
+  const cleanCode =
+    String(code || '')
+      .replace(/\D/g, '');
+
+  if (
+    !cleanChallengeId ||
+    cleanCode.length !== 6
+  ) {
+    const error =
+      new Error(
+        'Enter the 6-digit verification code'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const identity =
+    getStaffTransportIdentityById(
+      staffIdentityId
+    );
+
+  if (!identity) {
+    const error =
+      new Error(
+        'Staff transport account not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    !identity.emailVerifiedAt ||
+    !identity.firstName ||
+    !identity.lastName ||
+    !identity.mobile
+  ) {
+    const error =
+      new Error(
+        'Complete email verification and your contact details first'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const challenge =
+    db.prepare(`
+      SELECT
+        id,
+
+        staff_identity_id
+          AS staffIdentityId,
+
+        destination,
+
+        code_hash
+          AS codeHash,
+
+        code_salt
+          AS codeSalt,
+
+        attempts,
+
+        max_attempts
+          AS maxAttempts,
+
+        expires_at
+          AS expiresAt,
+
+        consumed_at
+          AS consumedAt
+
+      FROM transport_staff_login_challenges
+      WHERE id = ?
+        AND staff_identity_id = ?
+        AND channel = 'sms'
+        AND purpose = 'verify_mobile'
+      LIMIT 1
+    `).get(
+      cleanChallengeId,
+      identity.id
+    );
+
+  if (
+    !challenge ||
+    challenge.consumedAt
+  ) {
+    const error =
+      new Error(
+        'This verification code is no longer valid'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    challenge.destination !==
+      identity.mobile
+  ) {
+    const error =
+      new Error(
+        'This verification code is no longer valid'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const expiryCheck =
+    db.prepare(`
+      SELECT
+        CASE
+          WHEN ? > CURRENT_TIMESTAMP
+          THEN 1
+          ELSE 0
+        END AS valid
+    `).get(
+      challenge.expiresAt
+    );
+
+  if (
+    !expiryCheck?.valid
+  ) {
+    db.prepare(`
+      UPDATE transport_staff_login_challenges
+      SET consumed_at =
+        CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      challenge.id
+    );
+
+    const error =
+      new Error(
+        'This verification code has expired'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    challenge.attempts >=
+      challenge.maxAttempts
+  ) {
+    const error =
+      new Error(
+        'Too many incorrect attempts'
+      );
+
+    error.statusCode = 429;
+    throw error;
+  }
+
+  const suppliedHash =
+    hashOtp(
+      cleanCode,
+      challenge.codeSalt
+    );
+
+  if (
+    !safeHashEqual(
+      challenge.codeHash,
+      suppliedHash
+    )
+  ) {
+    const nextAttempts =
+      challenge.attempts + 1;
+
+    db.prepare(`
+      UPDATE transport_staff_login_challenges
+      SET
+        attempts = ?,
+
+        consumed_at = CASE
+          WHEN ? >= max_attempts
+          THEN CURRENT_TIMESTAMP
+          ELSE consumed_at
+        END
+
+      WHERE id = ?
+    `).run(
+      nextAttempts,
+      nextAttempts,
+      challenge.id
+    );
+
+    const error =
+      new Error(
+        nextAttempts >=
+          challenge.maxAttempts
+          ? 'Too many incorrect attempts'
+          : 'The verification code is incorrect'
+      );
+
+    error.statusCode =
+      nextAttempts >=
+        challenge.maxAttempts
+        ? 429
+        : 400;
+
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_staff_login_challenges
+      SET consumed_at =
+        CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      challenge.id
+    );
+
+    db.prepare(`
+      UPDATE transport_staff_identities
+      SET
+        mobile_verified_at =
+          CURRENT_TIMESTAMP,
+
+        status =
+          CASE
+            WHEN
+              email_verified_at
+                IS NOT NULL
+              AND first_name
+                IS NOT NULL
+              AND trim(first_name) <> ''
+              AND last_name
+                IS NOT NULL
+              AND trim(last_name) <> ''
+              AND mobile
+                IS NOT NULL
+              AND trim(mobile) <> ''
+            THEN 'active'
+            ELSE 'pending'
+          END,
+
+        last_login_at =
+          CURRENT_TIMESTAMP,
+
+        updated_at =
+          CURRENT_TIMESTAMP
+
+      WHERE id = ?
+    `).run(
+      identity.id
+    );
+
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  return getStaffTransportIdentityById(
+    identity.id
+  );
+}
+
+
+function requireActiveStaffTransportAuth(
+  req
+) {
+  const auth =
+    requireStaffTransportAuth(
+      req
+    );
+
+  const staff =
+    auth.staff;
+
+  if (
+    staff.status !== 'active' ||
+    !staff.emailVerifiedAt ||
+    !staff.mobileVerifiedAt
+  ) {
+    const error =
+      new Error(
+        'Complete staff transport verification first'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  return auth;
+}
+
+
 function getStaffTransportAuthSession(
   req
 ) {
@@ -19533,6 +20181,102 @@ const server = http.createServer(async (req, res) => {
             buildStaffTransportSessionCookie(
               result.token
             )
+        }
+      );
+    }
+
+    if (
+      req.method === 'PATCH' &&
+      url.pathname ===
+        '/api/staff-transport/auth/profile'
+    ) {
+      const auth =
+        requireStaffTransportAuth(
+          req
+        );
+
+      const payload =
+        await readJson(req);
+
+      const staff =
+        updateStaffTransportProfile(
+          auth.staff.id,
+          payload
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          staff
+        }
+      );
+    }
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/staff-transport/auth/request-sms-code'
+    ) {
+      const auth =
+        requireStaffTransportAuth(
+          req
+        );
+
+      const challenge =
+        requestStaffTransportSmsCode(
+          auth.staff.id,
+          req
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          ok: true,
+
+          challengeId:
+            challenge.challengeId,
+
+          mobile:
+            challenge.mobile,
+
+          expiresInSeconds:
+            challenge.expiresInSeconds
+        }
+      );
+    }
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/staff-transport/auth/verify-sms-code'
+    ) {
+      const auth =
+        requireStaffTransportAuth(
+          req
+        );
+
+      const payload =
+        await readJson(req);
+
+      const staff =
+        verifyStaffTransportSmsCode(
+          auth.staff.id,
+          payload.challengeId,
+          payload.code
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          authenticated: true,
+          verificationStage:
+            staff.status === 'active'
+              ? 'complete'
+              : 'mobile_verified',
+          staff
         }
       );
     }
