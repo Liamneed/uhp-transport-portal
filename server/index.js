@@ -6153,6 +6153,236 @@ function listTransportRequestOptions(
 }
 
 
+function listStaffTransportRequestOptions() {
+  const now =
+    new Date().toISOString();
+
+  const options =
+    db.prepare(`
+      SELECT
+        tp.id
+          AS programmeId,
+
+        tp.code
+          AS programmeCode,
+
+        tp.name
+          AS programmeName,
+
+        tp.programme_type
+          AS programmeType,
+
+        tp.request_closes_at
+          AS requestClosesAt,
+
+        tp.public_notes
+          AS programmePublicNotes,
+
+        tpw.id
+          AS windowId,
+
+        tpw.name
+          AS windowName,
+
+        tpw.starts_at
+          AS startsAt,
+
+        tpw.ends_at
+          AS endsAt,
+
+        tpw.public_notes
+          AS windowPublicNotes
+
+      FROM transport_programmes tp
+
+      JOIN transport_programme_windows tpw
+        ON tpw.programme_id =
+          tp.id
+
+      WHERE tp.status = 'open'
+        AND tpw.is_active = 1
+
+        AND (
+          tp.request_opens_at IS NULL
+          OR tp.request_opens_at <= ?
+        )
+
+        AND (
+          tp.request_closes_at IS NULL
+          OR tp.request_closes_at >= ?
+        )
+
+      ORDER BY
+        tpw.starts_at,
+        tpw.display_order,
+        tpw.id
+    `).all(
+      now,
+      now
+    );
+
+  /*
+    Restricted staff are not granted budget
+    permissions. This list is only the set of active
+    UHP budgets that are structurally usable and have
+    a current active primary holder.
+
+    The request remains subject to UHP review before
+    planning/booking.
+  */
+  const budgets =
+    db.prepare(`
+      SELECT
+        b.id,
+
+        b.budget_number
+          AS budgetNumber,
+
+        b.name,
+
+        d.name
+          AS department
+
+      FROM budgets b
+
+      LEFT JOIN departments d
+        ON d.id =
+          b.department_id
+
+      WHERE b.status = 'active'
+
+        AND EXISTS (
+          SELECT 1
+
+          FROM budget_assignments ba
+
+          JOIN users holder
+            ON holder.id =
+              ba.user_id
+            AND holder.status =
+              'active'
+
+          WHERE ba.budget_id =
+              b.id
+
+            AND ba.assignment_type =
+              'primary_holder'
+
+            AND ba.is_active = 1
+
+            AND (
+              ba.valid_from IS NULL
+              OR ba.valid_from <=
+                date('now')
+            )
+
+            AND (
+              ba.valid_to IS NULL
+              OR ba.valid_to >=
+                date('now')
+            )
+        )
+
+      ORDER BY
+        b.budget_number,
+        b.id
+    `).all();
+
+  const reasonCodes =
+    db.prepare(`
+      SELECT
+        id,
+        code,
+        description
+
+      FROM reason_codes
+
+      WHERE status = 'active'
+
+      ORDER BY
+        code,
+        id
+    `).all();
+
+  return {
+    options,
+    budgets,
+    reasonCodes
+  };
+}
+
+
+function listTransportRequestsForStaffIdentity(
+  staffIdentityId
+) {
+  return db.prepare(`
+    SELECT
+      tr.id,
+
+      tr.programme_window_id
+        AS programmeWindowId,
+
+      tpw.name
+        AS programmeWindowName,
+
+      tp.id
+        AS programmeId,
+
+      tp.code
+        AS programmeCode,
+
+      tp.name
+        AS programmeName,
+
+      tr.source,
+
+      tr.passenger_name
+        AS passengerName,
+
+      tr.direction,
+
+      tr.shift_time
+        AS shiftTime,
+
+      tr.pickup_address
+        AS pickupAddress,
+
+      tr.destination_address
+        AS destinationAddress,
+
+      tr.passenger_count
+        AS passengerCount,
+
+      tr.status,
+
+      tr.submitted_at
+        AS submittedAt,
+
+      tr.updated_at
+        AS updatedAt
+
+    FROM transport_requests tr
+
+    JOIN transport_programme_windows tpw
+      ON tpw.id =
+        tr.programme_window_id
+
+    JOIN transport_programmes tp
+      ON tp.id =
+        tpw.programme_id
+
+    WHERE
+      tr.requested_by_staff_identity_id = ?
+
+    ORDER BY
+      datetime(tr.submitted_at) DESC,
+      tr.id DESC
+  `).all(
+    Number(staffIdentityId)
+  );
+}
+
+
 function getTransportRequestById(
   requestId
 ) {
@@ -6184,12 +6414,43 @@ function getTransportRequestById(
       tr.requested_by_user_id
         AS requestedByUserId,
 
-      u.first_name || ' ' ||
-        u.last_name
+      tr.requested_by_staff_identity_id
+        AS requestedByStaffIdentityId,
+
+      tr.entered_by_user_id
+        AS enteredByUserId,
+
+      tr.source,
+
+      CASE
+        WHEN u.id IS NOT NULL
+        THEN
+          u.first_name || ' ' ||
+          u.last_name
+
+        WHEN staff_identity.id IS NOT NULL
+        THEN
+          staff_identity.first_name || ' ' ||
+          staff_identity.last_name
+
+        ELSE NULL
+      END
         AS requestedByName,
 
-      u.email
+      COALESCE(
+        u.email,
+        staff_identity.email
+      )
         AS requestedByEmail,
+
+      CASE
+        WHEN entered.id IS NOT NULL
+        THEN
+          entered.first_name || ' ' ||
+          entered.last_name
+        ELSE NULL
+      END
+        AS enteredByName,
 
       tr.passenger_name
         AS passengerName,
@@ -6304,9 +6565,18 @@ function getTransportRequestById(
       ON tp.id =
         tpw.programme_id
 
-    JOIN users u
+    LEFT JOIN users u
       ON u.id =
         tr.requested_by_user_id
+
+    LEFT JOIN transport_staff_identities
+      staff_identity
+      ON staff_identity.id =
+        tr.requested_by_staff_identity_id
+
+    LEFT JOIN users entered
+      ON entered.id =
+        tr.entered_by_user_id
 
     LEFT JOIN departments department
       ON department.id =
@@ -6418,8 +6688,27 @@ function listAllTransportRequests() {
       tr.requested_by_user_id
         AS requestedByUserId,
 
-      u.first_name || ' ' ||
-        u.last_name
+      tr.requested_by_staff_identity_id
+        AS requestedByStaffIdentityId,
+
+      tr.entered_by_user_id
+        AS enteredByUserId,
+
+      tr.source,
+
+      CASE
+        WHEN u.id IS NOT NULL
+        THEN
+          u.first_name || ' ' ||
+          u.last_name
+
+        WHEN staff_identity.id IS NOT NULL
+        THEN
+          staff_identity.first_name || ' ' ||
+          staff_identity.last_name
+
+        ELSE tr.passenger_name
+      END
         AS requestedByName,
 
       tr.passenger_name
@@ -6460,9 +6749,14 @@ function listAllTransportRequests() {
       ON tp.id =
         tpw.programme_id
 
-    JOIN users u
+    LEFT JOIN users u
       ON u.id =
         tr.requested_by_user_id
+
+    LEFT JOIN transport_staff_identities
+      staff_identity
+      ON staff_identity.id =
+        tr.requested_by_staff_identity_id
 
     ORDER BY
       datetime(tr.submitted_at) DESC,
@@ -6487,11 +6781,20 @@ function listTransportRequestEvents(
       tre.actor_user_id
         AS actorUserId,
 
+      tre.actor_staff_identity_id
+        AS actorStaffIdentityId,
+
       CASE
         WHEN actor.id IS NOT NULL
         THEN
           actor.first_name || ' ' ||
           actor.last_name
+
+        WHEN staff_actor.id IS NOT NULL
+        THEN
+          staff_actor.first_name || ' ' ||
+          staff_actor.last_name
+
         ELSE NULL
       END
         AS actorName,
@@ -6512,6 +6815,11 @@ function listTransportRequestEvents(
     LEFT JOIN users actor
       ON actor.id =
         tre.actor_user_id
+
+    LEFT JOIN transport_staff_identities
+      staff_actor
+      ON staff_actor.id =
+        tre.actor_staff_identity_id
 
     WHERE tre.transport_request_id = ?
 
@@ -7062,6 +7370,793 @@ function resolveTransportRequestCoding(
     budgetHolderName:
       `${budgetHolder.firstName} ${budgetHolder.lastName}`
   };
+}
+
+
+function getTransportRequestForStaffIdentity(
+  requestId,
+  staffIdentityId
+) {
+  const request =
+    getTransportRequestById(
+      requestId
+    );
+
+  if (
+    !request ||
+    Number(
+      request.requestedByStaffIdentityId
+    ) !== Number(
+      staffIdentityId
+    )
+  ) {
+    const error =
+      new Error(
+        'Transport request not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const responseRequest = {
+    ...request,
+
+    events:
+      listTransportRequestEvents(
+        request.id
+      )
+  };
+
+  delete responseRequest.internalNotes;
+
+  return responseRequest;
+}
+
+
+function resolveStaffTransportRequestCoding(
+  payload
+) {
+  const budgetId =
+    Number(
+      payload.budgetId
+    );
+
+  const reasonCodeId =
+    Number(
+      payload.reasonCodeId
+    );
+
+  if (
+    !Number.isInteger(
+      budgetId
+    ) ||
+    budgetId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid budget number is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(
+      reasonCodeId
+    ) ||
+    reasonCodeId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid reason code is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const budget =
+    db.prepare(`
+      SELECT
+        b.id,
+
+        b.budget_number
+          AS budgetNumber,
+
+        b.name,
+
+        b.department_id
+          AS departmentId,
+
+        d.name
+          AS departmentName,
+
+        b.status
+
+      FROM budgets b
+
+      LEFT JOIN departments d
+        ON d.id =
+          b.department_id
+
+      WHERE b.id = ?
+      LIMIT 1
+    `).get(
+      budgetId
+    );
+
+  if (
+    !budget ||
+    budget.status !== 'active' ||
+    !budget.departmentId
+  ) {
+    const error =
+      new Error(
+        'The selected UHP budget is not available'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const reasonCode =
+    db.prepare(`
+      SELECT
+        id,
+        code,
+        description,
+        status
+
+      FROM reason_codes
+
+      WHERE id = ?
+      LIMIT 1
+    `).get(
+      reasonCodeId
+    );
+
+  if (
+    !reasonCode ||
+    reasonCode.status !== 'active'
+  ) {
+    const error =
+      new Error(
+        'The selected reason code is not active'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const budgetHolder =
+    db.prepare(`
+      SELECT
+        u.id,
+
+        u.first_name
+          AS firstName,
+
+        u.last_name
+          AS lastName
+
+      FROM budget_assignments ba
+
+      JOIN users u
+        ON u.id =
+          ba.user_id
+        AND u.status = 'active'
+
+      WHERE ba.budget_id = ?
+
+        AND ba.assignment_type =
+          'primary_holder'
+
+        AND ba.is_active = 1
+
+        AND (
+          ba.valid_from IS NULL
+          OR ba.valid_from <=
+            date('now')
+        )
+
+        AND (
+          ba.valid_to IS NULL
+          OR ba.valid_to >=
+            date('now')
+        )
+
+      ORDER BY
+        ba.id DESC
+
+      LIMIT 1
+    `).get(
+      budgetId
+    );
+
+  if (!budgetHolder) {
+    const error =
+      new Error(
+        'The selected budget has no active primary budget holder'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return {
+    departmentId:
+      Number(
+        budget.departmentId
+      ),
+
+    departmentName:
+      budget.departmentName,
+
+    budgetId:
+      Number(
+        budget.id
+      ),
+
+    budgetNumber:
+      budget.budgetNumber,
+
+    budgetName:
+      budget.name,
+
+    reasonCodeId:
+      Number(
+        reasonCode.id
+      ),
+
+    reasonCode:
+      reasonCode.code,
+
+    reasonDescription:
+      reasonCode.description,
+
+    budgetHolderUserId:
+      Number(
+        budgetHolder.id
+      ),
+
+    budgetHolderName:
+      `${budgetHolder.firstName} ${budgetHolder.lastName}`
+  };
+}
+
+
+function findStaffTransportDuplicate({
+  staffIdentityId,
+  programmeWindowId,
+  direction
+}) {
+  return db.prepare(`
+    SELECT
+      id,
+      status,
+      shift_time
+        AS shiftTime,
+
+      submitted_at
+        AS submittedAt
+
+    FROM transport_requests
+
+    WHERE
+      requested_by_staff_identity_id = ?
+
+      AND programme_window_id = ?
+
+      AND direction = ?
+
+      AND status NOT IN (
+        'cancelled',
+        'not_accommodated'
+      )
+
+    ORDER BY
+      datetime(submitted_at) DESC,
+      id DESC
+
+    LIMIT 1
+  `).get(
+    Number(staffIdentityId),
+    Number(programmeWindowId),
+    direction
+  );
+}
+
+
+function createStaffTransportRequest(
+  payload,
+  staff
+) {
+  if (
+    !staff ||
+    staff.status !== 'active' ||
+    !staff.emailVerifiedAt ||
+    !staff.mobileVerifiedAt
+  ) {
+    const error =
+      new Error(
+        'Complete staff transport verification first'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const programmeWindowId =
+    Number(
+      payload.programmeWindowId
+    );
+
+  if (
+    !Number.isInteger(
+      programmeWindowId
+    ) ||
+    programmeWindowId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid service window is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const window =
+    getTransportRequestWindowForSubmission(
+      programmeWindowId
+    );
+
+  if (!window) {
+    const error =
+      new Error(
+        'Service window not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    Number(window.isActive) !== 1
+  ) {
+    const error =
+      new Error(
+        'This service window is not available for requests'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (
+    window.programmeStatus !==
+      'open'
+  ) {
+    const error =
+      new Error(
+        'This transport programme is not accepting requests'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const now =
+    new Date();
+
+  if (
+    window.requestOpensAt &&
+    now <
+      new Date(
+        window.requestOpensAt
+      )
+  ) {
+    const error =
+      new Error(
+        'Requests for this transport programme are not open yet'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (
+    window.requestClosesAt &&
+    now >
+      new Date(
+        window.requestClosesAt
+      )
+  ) {
+    const error =
+      new Error(
+        'Requests for this transport programme are closed'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const direction =
+    String(
+      payload.direction || ''
+    ).trim();
+
+  if (
+    ![
+      'to_work',
+      'from_work'
+    ].includes(
+      direction
+    )
+  ) {
+    const error =
+      new Error(
+        'Invalid transport direction'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  /*
+    Hard duplicate block for self-service.
+
+    A verified staff identity can have one live request
+    per service window / direction.
+
+    Cancelled or explicitly unaccommodated requests do
+    not block a fresh submission.
+  */
+  const duplicate =
+    findStaffTransportDuplicate({
+      staffIdentityId:
+        staff.id,
+      programmeWindowId,
+      direction
+    });
+
+  if (duplicate) {
+    const error =
+      new Error(
+        'You already have an active transport request for this service and direction'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const coding =
+    resolveStaffTransportRequestCoding(
+      payload
+    );
+
+  const passengerName =
+    [
+      staff.firstName,
+      staff.lastName
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+  const passengerMobile =
+    String(
+      staff.mobile || ''
+    ).trim();
+
+  const passengerEmail =
+    String(
+      staff.email || ''
+    ).trim();
+
+  if (
+    !passengerName ||
+    !passengerMobile ||
+    !passengerEmail
+  ) {
+    const error =
+      new Error(
+        'Verified staff identity details are incomplete'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const shiftTime =
+    normaliseOptionalDateTime(
+      payload.shiftTime,
+      'Shift time'
+    );
+
+  const pickupAddress =
+    String(
+      payload.pickupAddress || ''
+    ).trim();
+
+  const pickupPostcode =
+    String(
+      payload.pickupPostcode || ''
+    ).trim() || null;
+
+  const destinationAddress =
+    String(
+      payload.destinationAddress || ''
+    ).trim();
+
+  const destinationPostcode =
+    String(
+      payload.destinationPostcode || ''
+    ).trim() || null;
+
+  if (
+    !shiftTime ||
+    !pickupAddress ||
+    !destinationAddress
+  ) {
+    const error =
+      new Error(
+        'Shift time, pickup and destination are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const pickupLatitude =
+    normaliseOptionalTransportCoordinate(
+      payload.pickupLatitude,
+      'Pickup latitude'
+    );
+
+  const pickupLongitude =
+    normaliseOptionalTransportCoordinate(
+      payload.pickupLongitude,
+      'Pickup longitude'
+    );
+
+  const destinationLatitude =
+    normaliseOptionalTransportCoordinate(
+      payload.destinationLatitude,
+      'Destination latitude'
+    );
+
+  const destinationLongitude =
+    normaliseOptionalTransportCoordinate(
+      payload.destinationLongitude,
+      'Destination longitude'
+    );
+
+  if (
+    (
+      pickupLatitude === null
+    ) !== (
+      pickupLongitude === null
+    )
+  ) {
+    const error =
+      new Error(
+        'Pickup latitude and longitude must be supplied together'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    (
+      destinationLatitude === null
+    ) !== (
+      destinationLongitude === null
+    )
+  ) {
+    const error =
+      new Error(
+        'Destination latitude and longitude must be supplied together'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const passengerNotes =
+    String(
+      payload.passengerNotes || ''
+    ).trim() || null;
+
+  db.exec('BEGIN');
+
+  try {
+    const result =
+      db.prepare(`
+        INSERT INTO transport_requests
+        (
+          programme_window_id,
+
+          requested_by_user_id,
+          requested_by_staff_identity_id,
+          entered_by_user_id,
+          source,
+
+          passenger_name,
+          passenger_mobile,
+          passenger_email,
+
+          direction,
+          shift_time,
+
+          pickup_address,
+          pickup_postcode,
+          pickup_latitude,
+          pickup_longitude,
+
+          destination_address,
+          destination_postcode,
+          destination_latitude,
+          destination_longitude,
+
+          passenger_count,
+
+          accessibility_notes,
+          passenger_notes,
+
+          department_id,
+          budget_id,
+          reason_code_id,
+          budget_holder_user_id,
+
+          status
+        )
+        VALUES (
+          ?,
+
+          NULL,
+          ?,
+          NULL,
+          'staff_self_service',
+
+          ?, ?, ?,
+
+          ?, ?,
+
+          ?, ?, ?, ?,
+
+          ?, ?, ?, ?,
+
+          1,
+
+          NULL,
+          ?,
+
+          ?, ?, ?, ?,
+
+          'submitted'
+        )
+      `).run(
+        programmeWindowId,
+
+        staff.id,
+
+        passengerName,
+        passengerMobile,
+        passengerEmail,
+
+        direction,
+        shiftTime,
+
+        pickupAddress,
+        pickupPostcode,
+        pickupLatitude,
+        pickupLongitude,
+
+        destinationAddress,
+        destinationPostcode,
+        destinationLatitude,
+        destinationLongitude,
+
+        passengerNotes,
+
+        coding.departmentId,
+        coding.budgetId,
+        coding.reasonCodeId,
+        coding.budgetHolderUserId
+      );
+
+    const requestId =
+      Number(
+        result.lastInsertRowid
+      );
+
+    db.prepare(`
+      INSERT INTO transport_request_events
+      (
+        transport_request_id,
+        event_type,
+        actor_user_id,
+        actor_staff_identity_id,
+        old_status,
+        new_status,
+        notes
+      )
+      VALUES (
+        ?,
+        'submitted',
+        NULL,
+        ?,
+        NULL,
+        'submitted',
+        'Transport request submitted'
+      )
+    `).run(
+      requestId,
+      staff.id
+    );
+
+    writeAudit({
+      action:
+        'CREATE',
+
+      entityType:
+        'transport_request',
+
+      entityId:
+        requestId,
+
+      newValue:
+        JSON.stringify({
+          programmeWindowId,
+
+          requestedByStaffIdentityId:
+            staff.id,
+
+          source:
+            'staff_self_service',
+
+          passengerName,
+
+          direction,
+          shiftTime,
+
+          departmentId:
+            coding.departmentId,
+
+          budgetId:
+            coding.budgetId,
+
+          reasonCodeId:
+            coding.reasonCodeId,
+
+          budgetHolderUserId:
+            coding.budgetHolderUserId,
+
+          status:
+            'submitted'
+        }),
+
+      source:
+        'staff_self_service',
+
+      actorUserId:
+        null
+    });
+
+    db.exec('COMMIT');
+
+    return getTransportRequestForStaffIdentity(
+      requestId,
+      staff.id
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 
@@ -20320,6 +21415,103 @@ const server = http.createServer(async (req, res) => {
         {
           'Set-Cookie':
             buildExpiredStaffTransportSessionCookie()
+        }
+      );
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/staff-transport/request-options'
+    ) {
+      requireActiveStaffTransportAuth(
+        req
+      );
+
+      return sendJson(
+        res,
+        200,
+        listStaffTransportRequestOptions()
+      );
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/staff-transport/requests'
+    ) {
+      const auth =
+        requireActiveStaffTransportAuth(
+          req
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          requests:
+            listTransportRequestsForStaffIdentity(
+              auth.staff.id
+            )
+        }
+      );
+    }
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/staff-transport/requests'
+    ) {
+      const auth =
+        requireActiveStaffTransportAuth(
+          req
+        );
+
+      const payload =
+        await readJson(req);
+
+      const request =
+        createStaffTransportRequest(
+          payload,
+          auth.staff
+        );
+
+      return sendJson(
+        res,
+        201,
+        {
+          request
+        }
+      );
+    }
+
+    const staffTransportRequestMatch =
+      url.pathname.match(
+        /^\/api\/staff-transport\/requests\/(\d+)$/
+      );
+
+    if (
+      req.method === 'GET' &&
+      staffTransportRequestMatch
+    ) {
+      const auth =
+        requireActiveStaffTransportAuth(
+          req
+        );
+
+      const request =
+        getTransportRequestForStaffIdentity(
+          Number(
+            staffTransportRequestMatch[1]
+          ),
+          auth.staff.id
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          request
         }
       );
     }
