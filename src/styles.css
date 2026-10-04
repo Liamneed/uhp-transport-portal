@@ -4520,3 +4520,754 @@ button:disabled {
   color: #8290a0;
   font-weight: 700;
 }
+
+/* UHP account booking filters */
+
+.uhp-booking-filter-panel {
+  margin-bottom: 16px;
+}
+
+.uhp-booking-filter-toolbar {
+  display: grid;
+  grid-template-columns:
+    minmax(320px, 2fr)
+    minmax(160px, .8fr)
+    minmax(160px, .8fr)
+    auto
+    auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.uhp-booking-filter-search {
+  min-width: 0;
+}
+
+.uhp-filter-control,
+.uhp-booking-filter-toolbar input,
+.uhp-booking-filter-drawer select,
+.uhp-booking-filter-drawer input {
+  width: 100%;
+  min-height: 42px;
+}
+
+.uhp-filter-toggle {
+  position: relative;
+  min-height: 42px;
+  padding-left: 16px;
+  padding-right: 16px;
+  white-space: nowrap;
+}
+
+.uhp-filter-toggle.active {
+  background: #eef7fb;
+  border-color: #91c8df;
+  color: #075985;
+}
+
+.uhp-filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #0b6fa4;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.uhp-filter-reset {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: #526476;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.uhp-filter-reset:hover {
+  color: #123a56;
+  text-decoration: underline;
+}
+
+.uhp-booking-filter-drawer {
+  display: grid;
+  grid-template-columns:
+    repeat(5, minmax(150px, 1fr))
+    minmax(145px, .8fr)
+    minmax(145px, .8fr);
+  gap: 12px;
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.uhp-filter-field,
+.uhp-inline-date {
+  display: grid;
+  gap: 5px;
+}
+
+.uhp-filter-field > span,
+.uhp-inline-date > span {
+  color: #687b8e;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.uhp-booking-filter-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 30px;
+  margin-top: 10px;
+}
+
+.uhp-booking-filter-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  color: #657687;
+  font-size: 13px;
+}
+
+.uhp-booking-filter-summary strong {
+  color: #20364b;
+  font-size: 15px;
+}
+
+.uhp-filter-summary-muted {
+  color: #8795a3;
+}
+
+.uhp-filter-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #41576c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.uhp-filter-context span {
+  padding-left: 8px;
+  border-left: 1px solid #d4dde4;
+  color: #7a8996;
+  font-weight: 600;
+}
+
+@media (max-width: 1250px) {
+  .uhp-booking-filter-toolbar {
+    grid-template-columns:
+      minmax(260px, 1fr)
+      repeat(2, minmax(150px, .5fr))
+      auto
+      auto;
+  }
+
+  .uhp-booking-filter-drawer {
+    grid-template-columns:
+      repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 850px) {
+  .uhp-booking-filter-toolbar {
+    grid-template-columns:
+      1fr 1fr;
+  }
+
+  .uhp-booking-filter-search {
+    grid-column: 1 / -1;
+  }
+
+  .uhp-booking-filter-drawer {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .uhp-booking-filter-toolbar,
+  .uhp-booking-filter-drawer {
+    grid-template-columns: 1fr;
+  }
+
+  .uhp-booking-filter-search {
+    grid-column: auto;
+  }
+
+  .uhp-booking-filter-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+
+/* Role-specific NHS dashboards */
+
+.role-dashboard-kpis {
+  display: grid;
+  grid-template-columns:
+    repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.role-dashboard-kpi {
+  display: grid;
+  gap: 3px;
+  min-height: 112px;
+  padding: 18px 20px;
+}
+
+.role-dashboard-kpi small {
+  color: #718294;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.role-dashboard-kpi strong {
+  color: #17324b;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.role-dashboard-kpi span {
+  color: #82909e;
+  font-size: 12px;
+}
+
+.role-dashboard-kpi.attention {
+  border-color: #efd9ae;
+  background:
+    linear-gradient(
+      180deg,
+      #fffdf8 0%,
+      #ffffff 100%
+    );
+}
+
+.role-dashboard-kpi.attention strong {
+  color: #9a5c08;
+}
+
+.role-dashboard-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.2fr)
+    minmax(340px, .8fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.booker-dashboard-grid {
+  grid-template-columns:
+    minmax(350px, .8fr)
+    minmax(0, 1.2fr);
+}
+
+.role-dashboard-panel {
+  overflow: hidden;
+}
+
+.role-dashboard-wide {
+  margin-top: 14px;
+}
+
+.role-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.role-panel-heading small {
+  display: block;
+  margin-bottom: 3px;
+  color: #8190a0;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.role-panel-heading h2 {
+  margin: 0;
+  color: #20364b;
+  font-size: 18px;
+}
+
+.role-feature-booking {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 18px;
+  border: 1px solid #e1e8ee;
+  border-radius: 12px;
+  background: #f8fbfd;
+  text-align: left;
+  cursor: pointer;
+}
+
+.role-feature-booking:hover {
+  border-color: #b8d7e8;
+  background: #f4fafc;
+}
+
+.role-feature-booking > div {
+  display: grid;
+  gap: 6px;
+}
+
+.role-feature-booking strong {
+  color: #17324b;
+  font-size: 16px;
+}
+
+.role-feature-booking span:not(.badge) {
+  color: #5f7284;
+  font-size: 13px;
+}
+
+.role-route-arrow {
+  color: #9aabb9 !important;
+  font-size: 15px !important;
+}
+
+.role-booking-list {
+  display: grid;
+}
+
+.role-booking-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 12px 2px;
+  border: 0;
+  border-bottom: 1px solid #edf1f4;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.role-booking-row:last-child {
+  border-bottom: 0;
+}
+
+.role-booking-row:hover {
+  background: #f9fbfc;
+}
+
+.role-booking-row > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.role-booking-row strong {
+  color: #233b52;
+  font-size: 13px;
+}
+
+.role-booking-row span {
+  color: #485f73;
+  font-size: 12px;
+}
+
+.role-booking-row small {
+  overflow: hidden;
+  color: #82909f;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-booking-budget {
+  display: grid;
+  flex: 0 0 130px;
+  gap: 2px;
+  text-align: right;
+}
+
+.role-dashboard-empty {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 34px 20px;
+  color: #8998a6;
+  text-align: center;
+}
+
+.role-dashboard-empty strong {
+  color: #43586b;
+}
+
+.role-dashboard-empty.success {
+  color: #5f9274;
+}
+
+.budget-overview-table {
+  display: grid;
+}
+
+.budget-overview-header,
+.budget-overview-row {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 1fr)
+    90px
+    100px
+    80px;
+  gap: 12px;
+  align-items: center;
+}
+
+.budget-overview-header {
+  padding: 8px 0;
+  border-bottom: 1px solid #e8edf1;
+  color: #8795a3;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.budget-overview-row {
+  padding: 13px 0;
+  border-bottom: 1px solid #edf1f4;
+  color: #526679;
+  font-size: 12px;
+}
+
+.budget-overview-row:last-child {
+  border-bottom: 0;
+}
+
+.budget-overview-row > div {
+  display: grid;
+  gap: 2px;
+}
+
+.budget-overview-row strong {
+  color: #263f56;
+  font-size: 13px;
+}
+
+.budget-overview-row small {
+  color: #8492a0;
+}
+
+.attention-count,
+.attention-label {
+  color: #9a5c08 !important;
+  font-weight: 800;
+}
+
+.attention-label {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #fff3dd;
+  font-size: 10px !important;
+  white-space: nowrap;
+}
+
+@media (max-width: 1050px) {
+  .role-dashboard-kpis {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .role-dashboard-grid,
+  .booker-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 650px) {
+  .role-dashboard-kpis {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .budget-overview-header,
+  .budget-overview-row {
+    grid-template-columns:
+      minmax(130px, 1fr)
+      65px
+      75px
+      65px;
+    gap: 8px;
+  }
+}
+
+
+/* Account overview dashboards */
+
+.overview-kpi-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.overview-kpi {
+  display: grid;
+  gap: 3px;
+  min-height: 105px;
+  padding: 17px 18px;
+}
+
+.overview-kpi small {
+  color: #738496;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+}
+
+.overview-kpi strong {
+  color: #17334c;
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.overview-kpi span {
+  color: #8997a4;
+  font-size: 11px;
+}
+
+.overview-kpi.attention {
+  border-color: #efd7aa;
+  background:
+    linear-gradient(
+      180deg,
+      #fffdf8 0%,
+      #ffffff 100%
+    );
+}
+
+.overview-kpi.attention strong {
+  color: #995b08;
+}
+
+.overview-dashboard-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.overview-panel {
+  overflow: hidden;
+  min-width: 0;
+}
+
+.overview-panel-wide {
+  grid-column: 1 / -1;
+}
+
+.overview-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.overview-panel-heading small {
+  display: block;
+  margin-bottom: 3px;
+  color: #8292a1;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .065em;
+  text-transform: uppercase;
+}
+
+.overview-panel-heading h2 {
+  margin: 0;
+  color: #20384f;
+  font-size: 18px;
+}
+
+.overview-panel-heading p {
+  margin: 4px 0 0;
+  color: #8795a3;
+  font-size: 11px;
+}
+
+.overview-panel-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 9px;
+  border-radius: 10px;
+  background: #fff3dd;
+  color: #995b08;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.overview-panel-count.finance {
+  background: #eef5fa;
+  color: #1d6289;
+}
+
+.overview-booking-list {
+  display: grid;
+}
+
+.overview-booking-row {
+  display: grid;
+  grid-template-columns:
+    155px
+    minmax(0, 1fr)
+    minmax(120px, auto);
+  gap: 18px;
+  align-items: center;
+  width: 100%;
+  padding: 12px 2px;
+  border: 0;
+  border-bottom: 1px solid #edf1f4;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.overview-booking-row:last-child {
+  border-bottom: 0;
+}
+
+.overview-booking-row:hover {
+  background: #f9fbfc;
+}
+
+.overview-booking-time,
+.overview-booking-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.overview-booking-time strong,
+.overview-booking-main strong {
+  color: #243d54;
+  font-size: 12px;
+}
+
+.overview-booking-time small,
+.overview-booking-main small {
+  overflow: hidden;
+  color: #81909e;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-booking-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.status-attention-chip,
+.financial-attention-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 21px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.status-attention-chip {
+  background: #fff3dd;
+  color: #9a5b08;
+}
+
+.financial-attention-chip {
+  background: #edf5fa;
+  color: #23678d;
+}
+
+.nac-overview-grid {
+  grid-template-columns:
+    minmax(0, 1.45fr)
+    minmax(360px, .55fr);
+}
+
+.nac-overview-grid
+.overview-panel-wide {
+  grid-column: auto;
+}
+
+@media (max-width: 1200px) {
+  .overview-kpi-grid {
+    grid-template-columns:
+      repeat(3, minmax(0, 1fr));
+  }
+
+  .nac-overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .overview-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-panel-wide {
+    grid-column: auto;
+  }
+
+  .overview-booking-row {
+    grid-template-columns:
+      135px minmax(0, 1fr);
+  }
+
+  .overview-booking-meta {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 650px) {
+  .overview-kpi-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .overview-booking-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .overview-booking-meta {
+    grid-column: auto;
+  }
+}

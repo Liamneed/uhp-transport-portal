@@ -620,6 +620,14 @@ function App() {
             <ReasonCodesPage/>
           ) : active === 'admin-locations' ? (
             <LocationsPage/>
+          ) : active === 'booker-dashboard' ? (
+            <BookerDashboard
+              currentUser={currentUser}
+            />
+          ) : active === 'holder-dashboard' ? (
+            <BudgetHolderDashboard
+              currentUser={currentUser}
+            />
           ) : active === 'book-transport' ? (
             <BookTransportPage
               currentUser={currentUser}
@@ -668,7 +676,10 @@ function App() {
   );
 }
 
-function UhpAdminDashboard() {
+
+function BookerDashboard({
+  currentUser
+}) {
   const [bookings, setBookings] =
     useState([]);
 
@@ -681,10 +692,479 @@ function UhpAdminDashboard() {
   const [selectedBooking, setSelectedBooking] =
     useState(null);
 
-  useEscapeClose(
-    Boolean(selectedBooking),
-    () => setSelectedBooking(null)
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDashboard() {
+      setLoading(true);
+      setError('');
+
+      try {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/my-bookings`
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              'Unable to load your bookings'
+          );
+        }
+
+        if (!cancelled) {
+          setBookings(
+            data.bookings ?? []
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Unable to load dashboard'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dashboard = useMemo(() => {
+    const now = new Date();
+
+    const dayValue = (date) =>
+      [
+        date.getFullYear(),
+        String(
+          date.getMonth() + 1
+        ).padStart(2, '0'),
+        String(
+          date.getDate()
+        ).padStart(2, '0')
+      ].join('-');
+
+    const today = dayValue(now);
+
+    const tomorrowDate =
+      new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + 1
+      );
+
+    const tomorrow =
+      dayValue(tomorrowDate);
+
+    const sevenDays =
+      new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + 7,
+        23,
+        59,
+        59
+      );
+
+    const terminal =
+      new Set([
+        'completed',
+        'cancelled',
+        'no_show',
+        'no_fare',
+        'failed'
+      ]);
+
+    const upcoming =
+      bookings
+        .filter((booking) => {
+          if (
+            terminal.has(
+              booking.operationalStatus
+            )
+          ) {
+            return false;
+          }
+
+          const pickup =
+            new Date(
+              String(
+                booking.requestedPickupAt ||
+                  ''
+              ).replace(' ', 'T')
+            );
+
+          return (
+            !Number.isNaN(
+              pickup.getTime()
+            ) &&
+            pickup.getTime() >=
+              now.getTime()
+          );
+        })
+        .sort(
+          (a, b) =>
+            new Date(
+              String(
+                a.requestedPickupAt
+              ).replace(' ', 'T')
+            ) -
+            new Date(
+              String(
+                b.requestedPickupAt
+              ).replace(' ', 'T')
+            )
+        );
+
+    const todayBookings =
+      upcoming.filter(
+        (booking) =>
+          String(
+            booking.requestedPickupAt ||
+              ''
+          ).slice(0, 10) === today
+      );
+
+    const tomorrowBookings =
+      upcoming.filter(
+        (booking) =>
+          String(
+            booking.requestedPickupAt ||
+              ''
+          ).slice(0, 10) === tomorrow
+      );
+
+    const nextSevenDays =
+      upcoming.filter((booking) => {
+        const pickup =
+          new Date(
+            String(
+              booking.requestedPickupAt ||
+                ''
+            ).replace(' ', 'T')
+          );
+
+        return (
+          !Number.isNaN(
+            pickup.getTime()
+          ) &&
+          pickup <= sevenDays
+        );
+      });
+
+    const needsAttention =
+      bookings.filter(
+        (booking) =>
+          booking.operationalStatus ===
+            'requires_review' ||
+          booking.financialStatus ===
+            'coding_required' ||
+          booking.financialStatus ===
+            'pending_review' ||
+          booking.financialStatus ===
+            'disputed' ||
+          booking.financialStatus ===
+            'adjustment_required'
+      );
+
+    return {
+      upcoming,
+      todayBookings,
+      tomorrowBookings,
+      nextSevenDays,
+      needsAttention,
+      nextBooking:
+        upcoming[0] ?? null
+    };
+  }, [bookings]);
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading your dashboard...
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>My Transport Dashboard</h1>
+
+          <p>
+            Your upcoming UHP transport
+            bookings at a glance.
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="role-dashboard-kpis">
+        <div className="card role-dashboard-kpi">
+          <small>Today</small>
+          <strong>
+            {
+              dashboard
+                .todayBookings
+                .length
+            }
+          </strong>
+          <span>bookings</span>
+        </div>
+
+        <div className="card role-dashboard-kpi">
+          <small>Tomorrow</small>
+          <strong>
+            {
+              dashboard
+                .tomorrowBookings
+                .length
+            }
+          </strong>
+          <span>bookings</span>
+        </div>
+
+        <div className="card role-dashboard-kpi">
+          <small>Next 7 Days</small>
+          <strong>
+            {
+              dashboard
+                .nextSevenDays
+                .length
+            }
+          </strong>
+          <span>bookings</span>
+        </div>
+
+        <div className="card role-dashboard-kpi attention">
+          <small>Needs Attention</small>
+          <strong>
+            {
+              dashboard
+                .needsAttention
+                .length
+            }
+          </strong>
+          <span>items</span>
+        </div>
+      </div>
+
+      <div className="role-dashboard-grid booker-dashboard-grid">
+        <section className="card role-dashboard-panel role-next-booking">
+          <div className="role-panel-heading">
+            <div>
+              <small>Next booking</small>
+              <h2>
+                {dashboard.nextBooking
+                  ? formatBookingDateTime(
+                      dashboard
+                        .nextBooking
+                        .requestedPickupAt
+                    )
+                  : 'No upcoming booking'}
+              </h2>
+            </div>
+          </div>
+
+          {dashboard.nextBooking ? (
+            <button
+              type="button"
+              className="role-feature-booking"
+              onClick={() =>
+                setSelectedBooking(
+                  dashboard.nextBooking
+                )
+              }
+            >
+              <div>
+                <strong>
+                  {
+                    dashboard
+                      .nextBooking
+                      .passengerName
+                  }
+                </strong>
+
+                <span>
+                  {
+                    dashboard
+                      .nextBooking
+                      .pickupAddress
+                  }
+                </span>
+
+                <span className="role-route-arrow">
+                  ↓
+                </span>
+
+                <span>
+                  {
+                    dashboard
+                      .nextBooking
+                      .destinationAddress
+                  }
+                </span>
+              </div>
+
+              <span
+                className={
+                  `badge ${
+                    dashboard
+                      .nextBooking
+                      .operationalStatus
+                  }`
+                }
+              >
+                {formatOperationalStatus(
+                  dashboard
+                    .nextBooking
+                    .operationalStatus
+                )}
+              </span>
+            </button>
+          ) : (
+            <div className="role-dashboard-empty">
+              <CalendarDays size={28}/>
+
+              <strong>
+                Nothing upcoming
+              </strong>
+
+              <span>
+                Your next booking will
+                appear here.
+              </span>
+            </div>
+          )}
+        </section>
+
+        <section className="card role-dashboard-panel">
+          <div className="role-panel-heading">
+            <div>
+              <small>Upcoming</small>
+              <h2>My Bookings</h2>
+            </div>
+          </div>
+
+          {dashboard.upcoming.length ? (
+            <div className="role-booking-list">
+              {dashboard.upcoming
+                .slice(0, 6)
+                .map((booking) => (
+                <button
+                  type="button"
+                  className="role-booking-row"
+                  key={booking.id}
+                  onClick={() =>
+                    setSelectedBooking(
+                      booking
+                    )
+                  }
+                >
+                  <div>
+                    <strong>
+                      {formatBookingDateTime(
+                        booking
+                          .requestedPickupAt
+                      )}
+                    </strong>
+
+                    <span>
+                      {
+                        booking
+                          .passengerName
+                      }
+                    </span>
+
+                    <small>
+                      {booking.pickupAddress}
+                      {' → '}
+                      {
+                        booking
+                          .destinationAddress
+                      }
+                    </small>
+                  </div>
+
+                  <span
+                    className={
+                      `badge ${
+                        booking
+                          .operationalStatus
+                      }`
+                    }
+                  >
+                    {formatOperationalStatus(
+                      booking
+                        .operationalStatus
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty">
+              <CheckCircle2 size={28}/>
+
+              <strong>
+                No upcoming bookings
+              </strong>
+
+              <span>
+                There is nothing requiring
+                your attention.
+              </span>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {selectedBooking && (
+        <BookingDetailModal
+          booking={selectedBooking}
+          context="uhp"
+          onClose={() =>
+            setSelectedBooking(null)
+          }
+        />
+      )}
+    </>
   );
+}
+
+
+function BudgetHolderDashboard({
+  currentUser
+}) {
+  const [bookings, setBookings] =
+    useState([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState('');
+
+  const [selectedBooking, setSelectedBooking] =
+    useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -696,7 +1176,7 @@ function UhpAdminDashboard() {
       try {
         const response =
           await apiFetch(
-            `${API_BASE}/api/uhp/bookings`
+            `${API_BASE}/api/budget-bookings`
           );
 
         const data =
@@ -705,7 +1185,7 @@ function UhpAdminDashboard() {
         if (!response.ok) {
           throw new Error(
             data.error ||
-            'Unable to load dashboard'
+              'Unable to load budget bookings'
           );
         }
 
@@ -750,38 +1230,8 @@ function UhpAdminDashboard() {
         ).padStart(2, '0')
       ].join('-');
 
-    const todaysBookings =
-      bookings.filter(
-        (booking) =>
-          String(
-            booking.requestedPickupAt || ''
-          ).slice(0, 10) === today
-      );
-
-    const live =
-      bookings.filter(
-        (booking) =>
-          bookingStatusGroup(
-            booking
-          ) === 'live'
-      );
-
-    const completedToday =
-      bookings.filter(
-        (booking) =>
-          booking.operationalStatus ===
-            'completed' &&
-          String(
-            booking.completedAt || ''
-          ).slice(0, 10) === today
-      );
-
-    const codingRequired =
-      bookings.filter(
-        (booking) =>
-          booking.financialStatus ===
-            'coding_required'
-      );
+    const monthPrefix =
+      today.slice(0, 7);
 
     const terminal =
       new Set([
@@ -794,33 +1244,31 @@ function UhpAdminDashboard() {
 
     const upcoming =
       bookings
-        .filter(
-          (booking) => {
-            if (
-              terminal.has(
-                booking.operationalStatus
-              )
-            ) {
-              return false;
-            }
-
-            const pickup =
-              new Date(
-                String(
-                  booking.requestedPickupAt ||
-                    ''
-                ).replace(' ', 'T')
-              );
-
-            return (
-              !Number.isNaN(
-                pickup.getTime()
-              ) &&
-              pickup.getTime() >=
-                now.getTime()
-            );
+        .filter((booking) => {
+          if (
+            terminal.has(
+              booking.operationalStatus
+            )
+          ) {
+            return false;
           }
-        )
+
+          const pickup =
+            new Date(
+              String(
+                booking.requestedPickupAt ||
+                  ''
+              ).replace(' ', 'T')
+            );
+
+          return (
+            !Number.isNaN(
+              pickup.getTime()
+            ) &&
+            pickup.getTime() >=
+              now.getTime()
+          );
+        })
         .sort(
           (a, b) =>
             new Date(
@@ -833,8 +1281,636 @@ function UhpAdminDashboard() {
                 b.requestedPickupAt
               ).replace(' ', 'T')
             )
+        );
+
+    const todayBookings =
+      bookings.filter(
+        (booking) =>
+          String(
+            booking.requestedPickupAt ||
+              ''
+          ).slice(0, 10) === today
+      );
+
+    const monthBookings =
+      bookings.filter(
+        (booking) =>
+          String(
+            booking.requestedPickupAt ||
+              ''
+          ).slice(0, 7) ===
+            monthPrefix
+      );
+
+    const needsAttention =
+      bookings.filter(
+        (booking) =>
+          booking.operationalStatus ===
+            'requires_review' ||
+          booking.financialStatus ===
+            'coding_required' ||
+          booking.financialStatus ===
+            'pending_review' ||
+          booking.financialStatus ===
+            'disputed' ||
+          booking.financialStatus ===
+            'adjustment_required'
+      );
+
+    const budgets =
+      new Map();
+
+    for (const booking of bookings) {
+      const key =
+        String(
+          booking.budgetId ||
+            booking.budgetNumber ||
+            'uncoded'
+        );
+
+      if (!budgets.has(key)) {
+        budgets.set(key, {
+          key,
+          budgetNumber:
+            booking.budgetNumber ||
+              'No budget',
+          budgetName:
+            booking.budgetName ||
+              'Unallocated',
+          upcoming: 0,
+          thisMonth: 0,
+          attention: 0
+        });
+      }
+
+      const row =
+        budgets.get(key);
+
+      if (
+        upcoming.some(
+          (item) =>
+            item.id === booking.id
         )
-        .slice(0, 6);
+      ) {
+        row.upcoming += 1;
+      }
+
+      if (
+        String(
+          booking.requestedPickupAt ||
+            ''
+        ).slice(0, 7) ===
+          monthPrefix
+      ) {
+        row.thisMonth += 1;
+      }
+
+      if (
+        needsAttention.some(
+          (item) =>
+            item.id === booking.id
+        )
+      ) {
+        row.attention += 1;
+      }
+    }
+
+    return {
+      upcoming,
+      todayBookings,
+      monthBookings,
+      needsAttention,
+      budgets:
+        [...budgets.values()]
+          .sort(
+            (a, b) =>
+              a.budgetNumber
+                .localeCompare(
+                  b.budgetNumber
+                )
+          )
+    };
+  }, [bookings]);
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading budget overview...
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>Budget Overview</h1>
+
+          <p>
+            Transport activity and coding
+            across the budgets you oversee.
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="role-dashboard-kpis">
+        <div className="card role-dashboard-kpi">
+          <small>Today</small>
+
+          <strong>
+            {
+              dashboard
+                .todayBookings
+                .length
+            }
+          </strong>
+
+          <span>bookings</span>
+        </div>
+
+        <div className="card role-dashboard-kpi">
+          <small>Upcoming</small>
+
+          <strong>
+            {
+              dashboard
+                .upcoming
+                .length
+            }
+          </strong>
+
+          <span>bookings</span>
+        </div>
+
+        <div className="card role-dashboard-kpi">
+          <small>This Month</small>
+
+          <strong>
+            {
+              dashboard
+                .monthBookings
+                .length
+            }
+          </strong>
+
+          <span>bookings</span>
+        </div>
+
+        <div className="card role-dashboard-kpi attention">
+          <small>Needs Attention</small>
+
+          <strong>
+            {
+              dashboard
+                .needsAttention
+                .length
+            }
+          </strong>
+
+          <span>items</span>
+        </div>
+      </div>
+
+      <div className="role-dashboard-grid">
+        <section className="card role-dashboard-panel">
+          <div className="role-panel-heading">
+            <div>
+              <small>Controlled budgets</small>
+              <h2>My Budgets</h2>
+            </div>
+          </div>
+
+          {dashboard.budgets.length ? (
+            <div className="budget-overview-table">
+              <div className="budget-overview-header">
+                <span>Budget</span>
+                <span>Upcoming</span>
+                <span>This Month</span>
+                <span>Attention</span>
+              </div>
+
+              {dashboard.budgets.map(
+                (budget) => (
+                <div
+                  className="budget-overview-row"
+                  key={budget.key}
+                >
+                  <div>
+                    <strong>
+                      {
+                        budget
+                          .budgetNumber
+                      }
+                    </strong>
+
+                    <small>
+                      {budget.budgetName}
+                    </small>
+                  </div>
+
+                  <span>
+                    {budget.upcoming}
+                  </span>
+
+                  <span>
+                    {budget.thisMonth}
+                  </span>
+
+                  <span
+                    className={
+                      budget.attention
+                        ? 'attention-count'
+                        : ''
+                    }
+                  >
+                    {budget.attention}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty">
+              <CalendarDays size={28}/>
+
+              <strong>
+                No budget activity
+              </strong>
+            </div>
+          )}
+        </section>
+
+        <section className="card role-dashboard-panel">
+          <div className="role-panel-heading">
+            <div>
+              <small>Review</small>
+              <h2>Needs Attention</h2>
+            </div>
+          </div>
+
+          {dashboard.needsAttention.length ? (
+            <div className="role-booking-list">
+              {dashboard
+                .needsAttention
+                .slice(0, 6)
+                .map((booking) => (
+                <button
+                  type="button"
+                  className="role-booking-row"
+                  key={booking.id}
+                  onClick={() =>
+                    setSelectedBooking(
+                      booking
+                    )
+                  }
+                >
+                  <div>
+                    <strong>
+                      {
+                        booking
+                          .budgetNumber ||
+                        'No budget'
+                      }
+                    </strong>
+
+                    <span>
+                      {
+                        booking
+                          .passengerName
+                      }
+                    </span>
+
+                    <small>
+                      {formatBookingDateTime(
+                        booking
+                          .requestedPickupAt
+                      )}
+                    </small>
+                  </div>
+
+                  <span className="attention-label">
+                    Needs Attention
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty success">
+              <CheckCircle2 size={28}/>
+
+              <strong>
+                Nothing needs attention
+              </strong>
+
+              <span>
+                Your budgets currently have
+                no review items.
+              </span>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <section className="card role-dashboard-panel role-dashboard-wide">
+        <div className="role-panel-heading">
+          <div>
+            <small>Next journeys</small>
+            <h2>Upcoming Bookings</h2>
+          </div>
+        </div>
+
+        {dashboard.upcoming.length ? (
+          <div className="role-booking-list">
+            {dashboard.upcoming
+              .slice(0, 8)
+              .map((booking) => (
+              <button
+                type="button"
+                className="role-booking-row"
+                key={booking.id}
+                onClick={() =>
+                  setSelectedBooking(
+                    booking
+                  )
+                }
+              >
+                <div>
+                  <strong>
+                    {formatBookingDateTime(
+                      booking
+                        .requestedPickupAt
+                    )}
+                  </strong>
+
+                  <span>
+                    {
+                      booking
+                        .passengerName
+                    }
+                  </span>
+
+                  <small>
+                    {booking.pickupAddress}
+                    {' → '}
+                    {
+                      booking
+                        .destinationAddress
+                    }
+                  </small>
+                </div>
+
+                <div className="role-booking-budget">
+                  <strong>
+                    {
+                      booking
+                        .budgetNumber ||
+                      '—'
+                    }
+                  </strong>
+
+                  <small>
+                    {
+                      booking
+                        .budgetName ||
+                      ''
+                    }
+                  </small>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="role-dashboard-empty">
+            <CalendarDays size={28}/>
+
+            <strong>
+              No upcoming bookings
+            </strong>
+          </div>
+        )}
+      </section>
+
+      {selectedBooking && (
+        <BookingDetailModal
+          booking={selectedBooking}
+          context="uhp"
+          onClose={() =>
+            setSelectedBooking(null)
+          }
+        />
+      )}
+    </>
+  );
+}
+
+
+
+function UhpAdminDashboard() {
+  const [bookings, setBookings] =
+    useState([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState('');
+
+  const [selectedBooking, setSelectedBooking] =
+    useState(null);
+
+  useEscapeClose(
+    Boolean(selectedBooking),
+    () => setSelectedBooking(null)
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDashboard() {
+      setLoading(true);
+      setError('');
+
+      try {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/uhp/bookings`
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              'Unable to load dashboard'
+          );
+        }
+
+        if (!cancelled) {
+          setBookings(
+            data.bookings ?? []
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Unable to load dashboard'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dashboard = useMemo(() => {
+    const now = new Date();
+
+    const today =
+      [
+        now.getFullYear(),
+        String(
+          now.getMonth() + 1
+        ).padStart(2, '0'),
+        String(
+          now.getDate()
+        ).padStart(2, '0')
+      ].join('-');
+
+    const terminal =
+      new Set([
+        'completed',
+        'cancelled',
+        'no_show',
+        'no_fare',
+        'failed'
+      ]);
+
+    const todaysBookings =
+      bookings.filter(
+        (booking) =>
+          String(
+            booking.requestedPickupAt ||
+              ''
+          ).slice(0, 10) === today
+      );
+
+    const live =
+      bookings.filter(
+        (booking) =>
+          bookingStatusGroup(
+            booking
+          ) === 'live'
+      );
+
+    const completedToday =
+      todaysBookings.filter(
+        (booking) =>
+          booking.operationalStatus ===
+            'completed'
+      );
+
+    const cancelledOrNoFareToday =
+      todaysBookings.filter(
+        (booking) =>
+          [
+            'cancelled',
+            'no_show',
+            'no_fare'
+          ].includes(
+            booking.operationalStatus
+          )
+      );
+
+    const upcoming =
+      bookings
+        .filter((booking) => {
+          if (
+            terminal.has(
+              booking.operationalStatus
+            )
+          ) {
+            return false;
+          }
+
+          const pickup =
+            new Date(
+              String(
+                booking.requestedPickupAt ||
+                  ''
+              ).replace(' ', 'T')
+            );
+
+          return (
+            !Number.isNaN(
+              pickup.getTime()
+            ) &&
+            pickup.getTime() >=
+              now.getTime()
+          );
+        })
+        .sort(
+          (a, b) =>
+            new Date(
+              String(
+                a.requestedPickupAt
+              ).replace(' ', 'T')
+            ) -
+            new Date(
+              String(
+                b.requestedPickupAt
+              ).replace(' ', 'T')
+            )
+        );
+
+    const operationalAttention =
+      bookings.filter(
+        (booking) =>
+          booking.operationalStatus ===
+            'requires_review' ||
+          booking.operationalStatus ===
+            'failed' ||
+          bookingIsStale(booking) ||
+          bookingIsOverdue(booking)
+      );
+
+    const financialAttention =
+      bookings.filter(
+        (booking) =>
+          [
+            'coding_required',
+            'pending_review',
+            'disputed',
+            'adjustment_required'
+          ].includes(
+            booking.financialStatus
+          )
+      );
+
+    const attentionIds =
+      new Set([
+        ...operationalAttention.map(
+          (booking) => booking.id
+        ),
+        ...financialAttention.map(
+          (booking) => booking.id
+        )
+      ]);
 
     const recent =
       [...bookings]
@@ -856,29 +1932,38 @@ function UhpAdminDashboard() {
         .slice(0, 6);
 
     return {
-      today,
       todaysBookings,
       live,
       completedToday,
-      codingRequired,
+      cancelledOrNoFareToday,
       upcoming,
+      operationalAttention,
+      financialAttention,
+      needsAttention:
+        attentionIds.size,
       recent
     };
   }, [bookings]);
 
-  function dashboardBookingRow(
-    booking
+  function accountBookingRow(
+    booking,
+    options = {}
   ) {
+    const {
+      showOperationalAttention = false,
+      showFinancialAttention = false
+    } = options;
+
     return (
       <button
-        key={booking.id}
         type="button"
-        className="dashboard-booking-row"
+        className="overview-booking-row"
+        key={booking.id}
         onClick={() =>
           setSelectedBooking(booking)
         }
       >
-        <div className="dashboard-booking-time">
+        <div className="overview-booking-time">
           <strong>
             {formatBookingDateTime(
               booking.requestedPickupAt
@@ -892,21 +1977,22 @@ function UhpAdminDashboard() {
           </small>
         </div>
 
-        <div className="dashboard-booking-main">
+        <div className="overview-booking-main">
           <strong>
             {booking.passengerName ||
               'Passenger'}
           </strong>
 
           <small>
-            {booking.pickupAddress || '—'}
+            {booking.pickupAddress ||
+              '—'}
             {' → '}
             {booking.destinationAddress ||
               '—'}
           </small>
         </div>
 
-        <div className="dashboard-booking-meta">
+        <div className="overview-booking-meta">
           <span
             className={
               `badge ${
@@ -919,19 +2005,61 @@ function UhpAdminDashboard() {
             )}
           </span>
 
-          {bookingIsStale(
-                              booking
-                            ) && (
-                              <span className="stale-chip">
-                                Stale
-                              </span>
-                            )}
+          {showOperationalAttention &&
+            bookingIsOverdue(
+              booking
+            ) && (
+            <span className="status-attention-chip">
+              Status overdue
+            </span>
+          )}
 
-                            {bookingIsOverdue(
-            booking
-          ) && (
-            <span className="overdue-chip">
-              Overdue
+          {showOperationalAttention &&
+            bookingIsStale(
+              booking
+            ) && (
+            <span className="status-attention-chip">
+              Status stale
+            </span>
+          )}
+
+          {showOperationalAttention &&
+            booking.operationalStatus ===
+              'requires_review' && (
+            <span className="status-attention-chip">
+              Needs Attention
+            </span>
+          )}
+
+          {showFinancialAttention &&
+            booking.financialStatus ===
+              'coding_required' && (
+            <span className="financial-attention-chip">
+              Coding required
+            </span>
+          )}
+
+          {showFinancialAttention &&
+            booking.financialStatus ===
+              'pending_review' && (
+            <span className="financial-attention-chip">
+              Financial review
+            </span>
+          )}
+
+          {showFinancialAttention &&
+            booking.financialStatus ===
+              'disputed' && (
+            <span className="financial-attention-chip">
+              Disputed
+            </span>
+          )}
+
+          {showFinancialAttention &&
+            booking.financialStatus ===
+              'adjustment_required' && (
+            <span className="financial-attention-chip">
+              Adjustment required
             </span>
           )}
         </div>
@@ -954,9 +2082,9 @@ function UhpAdminDashboard() {
           <h1>UHP Transport Dashboard</h1>
 
           <p>
-            Hospital-wide overview of UHP
-            transport activity and coding
-            workload.
+            Whole-account view of hospital
+            transport activity, operational
+            attention and financial workload.
           </p>
         </div>
       </div>
@@ -967,103 +2095,114 @@ function UhpAdminDashboard() {
         </div>
       )}
 
-      <div className="dashboard-kpi-grid">
-        <div className="card dashboard-kpi">
-          <div className="dashboard-kpi-icon">
-            <CalendarDays/>
-          </div>
+      <div className="overview-kpi-grid">
+        <div className="card overview-kpi">
+          <small>Today</small>
 
-          <div>
-            <small>
-              Today's Bookings
-            </small>
+          <strong>
+            {
+              dashboard
+                .todaysBookings
+                .length
+            }
+          </strong>
 
-            <strong>
-              {
-                dashboard
-                  .todaysBookings
-                  .length
-              }
-            </strong>
-          </div>
+          <span>journeys</span>
         </div>
 
-        <div className="card dashboard-kpi">
-          <div className="dashboard-kpi-icon">
-            <CarFront/>
-          </div>
+        <div className="card overview-kpi">
+          <small>Upcoming</small>
 
-          <div>
-            <small>Live Now</small>
+          <strong>
+            {
+              dashboard
+                .upcoming
+                .length
+            }
+          </strong>
 
-            <strong>
-              {dashboard.live.length}
-            </strong>
-          </div>
+          <span>future journeys</span>
         </div>
 
-        <div className="card dashboard-kpi">
-          <div className="dashboard-kpi-icon">
-            <CheckCircle2/>
-          </div>
+        <div className="card overview-kpi">
+          <small>Live</small>
 
-          <div>
-            <small>
-              Completed Today
-            </small>
+          <strong>
+            {dashboard.live.length}
+          </strong>
 
-            <strong>
-              {
-                dashboard
-                  .completedToday
-                  .length
-              }
-            </strong>
-          </div>
+          <span>in progress</span>
         </div>
 
-        <div className="card dashboard-kpi">
-          <div className="dashboard-kpi-icon">
-            <AlertTriangle/>
-          </div>
+        <div className="card overview-kpi">
+          <small>Completed</small>
 
-          <div>
-            <small>
-              Coding Required
-            </small>
+          <strong>
+            {
+              dashboard
+                .completedToday
+                .length
+            }
+          </strong>
 
-            <strong>
-              {
-                dashboard
-                  .codingRequired
-                  .length
-              }
-            </strong>
-          </div>
+          <span>today</span>
+        </div>
+
+        <div className="card overview-kpi">
+          <small>Cancelled / No Fare</small>
+
+          <strong>
+            {
+              dashboard
+                .cancelledOrNoFareToday
+                .length
+            }
+          </strong>
+
+          <span>today</span>
+        </div>
+
+        <div className="card overview-kpi attention">
+          <small>Needs Attention</small>
+
+          <strong>
+            {dashboard.needsAttention}
+          </strong>
+
+          <span>account items</span>
         </div>
       </div>
 
-      <div className="uhp-dashboard-grid">
-        <section className="card dashboard-panel">
-          <div className="panel-heading">
+      <div className="overview-dashboard-grid">
+        <section className="card overview-panel overview-panel-wide">
+          <div className="overview-panel-heading">
             <div>
-              <h2>Next UHP Journeys</h2>
+              <small>Account activity</small>
+
+              <h2>
+                Upcoming Journeys
+              </h2>
 
               <p>
-                Upcoming non-terminal
-                hospital transport bookings.
+                Next hospital transport
+                bookings across UHP.
               </p>
             </div>
           </div>
 
           {dashboard.upcoming.length ? (
-            <div className="dashboard-booking-list">
-              {dashboard.upcoming.map(
-                dashboardBookingRow
-              )}
+            <div className="overview-booking-list">
+              {dashboard.upcoming
+                .slice(0, 8)
+                .map(
+                  (booking) =>
+                    accountBookingRow(
+                      booking
+                    )
+                )}
             </div>
           ) : (
-            <div className="empty-bookings compact-empty">
+            <div className="role-dashboard-empty">
               <CalendarDays size={28}/>
 
               <strong>
@@ -1078,87 +2217,156 @@ function UhpAdminDashboard() {
           )}
         </section>
 
-        <aside className="card dashboard-panel">
-          <div className="panel-heading">
+        <section className="card overview-panel">
+          <div className="overview-panel-heading">
             <div>
-              <h2>Coding Overview</h2>
+              <small>Operations</small>
+
+              <h2>
+                Operational Attention
+              </h2>
 
               <p>
-                Bookings currently waiting
-                for valid UHP coding.
+                Journeys whose operational
+                status may need checking.
+              </p>
+            </div>
+
+            <strong className="overview-panel-count">
+              {
+                dashboard
+                  .operationalAttention
+                  .length
+              }
+            </strong>
+          </div>
+
+          {dashboard
+            .operationalAttention
+            .length ? (
+            <div className="overview-booking-list">
+              {dashboard
+                .operationalAttention
+                .slice(0, 5)
+                .map(
+                  (booking) =>
+                    accountBookingRow(
+                      booking,
+                      {
+                        showOperationalAttention:
+                          true
+                      }
+                    )
+                )}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty success">
+              <CheckCircle2 size={28}/>
+
+              <strong>
+                Operations clear
+              </strong>
+
+              <span>
+                No journeys currently
+                require operational attention.
+              </span>
+            </div>
+          )}
+        </section>
+
+        <section className="card overview-panel">
+          <div className="overview-panel-heading">
+            <div>
+              <small>Finance</small>
+
+              <h2>
+                Financial Attention
+              </h2>
+
+              <p>
+                Coding, review, dispute and
+                adjustment workload.
+              </p>
+            </div>
+
+            <strong className="overview-panel-count finance">
+              {
+                dashboard
+                  .financialAttention
+                  .length
+              }
+            </strong>
+          </div>
+
+          {dashboard
+            .financialAttention
+            .length ? (
+            <div className="overview-booking-list">
+              {dashboard
+                .financialAttention
+                .slice(0, 5)
+                .map(
+                  (booking) =>
+                    accountBookingRow(
+                      booking,
+                      {
+                        showFinancialAttention:
+                          true
+                      }
+                    )
+                )}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty success">
+              <CheckCircle2 size={28}/>
+
+              <strong>
+                Financial review clear
+              </strong>
+
+              <span>
+                No bookings currently
+                require financial attention.
+              </span>
+            </div>
+          )}
+        </section>
+
+        <section className="card overview-panel overview-panel-wide">
+          <div className="overview-panel-heading">
+            <div>
+              <small>Account history</small>
+
+              <h2>Recent Activity</h2>
+
+              <p>
+                Latest transport bookings
+                received by the portal.
               </p>
             </div>
           </div>
 
-          <div className="dashboard-coding-summary">
-            <strong>
-              {
-                dashboard
-                  .codingRequired
-                  .length
-              }
-            </strong>
+          {dashboard.recent.length ? (
+            <div className="overview-booking-list">
+              {dashboard.recent.map(
+                (booking) =>
+                  accountBookingRow(
+                    booking
+                  )
+              )}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty">
+              <CalendarDays size={28}/>
 
-            <span>
-              booking
-              {
-                dashboard
-                  .codingRequired
-                  .length === 1
-                  ? ''
-                  : 's'
-              } requiring coding review
-            </span>
-          </div>
-
-          {dashboard.codingRequired
-            .slice(0, 5)
-            .map(
-              dashboardBookingRow
-            )}
-
-          {dashboard.codingRequired.length ===
-            0 && (
-            <div className="dashboard-clear-state">
-              <CheckCircle2 size={22}/>
-
-              <span>
-                No bookings currently
-                require coding.
-              </span>
+              <strong>
+                No recent activity
+              </strong>
             </div>
           )}
-        </aside>
+        </section>
       </div>
-
-      <section className="card dashboard-panel dashboard-recent-panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Recent Bookings</h2>
-
-            <p>
-              Latest UHP transport bookings
-              received by the portal.
-            </p>
-          </div>
-        </div>
-
-        {dashboard.recent.length ? (
-          <div className="dashboard-booking-list">
-            {dashboard.recent.map(
-              dashboardBookingRow
-            )}
-          </div>
-        ) : (
-          <div className="empty-bookings compact-empty">
-            <CalendarDays size={28}/>
-
-            <strong>
-              No bookings yet
-            </strong>
-          </div>
-        )}
-      </section>
 
       {selectedBooking && (
         <BookingDetailModal
@@ -1172,7 +2380,6 @@ function UhpAdminDashboard() {
     </>
   );
 }
-
 
 
 function UsersPage() {
@@ -4048,11 +5255,19 @@ function BookingDetailModal({
 }
 
 
+
 function NacControlPage() {
-  const [summary, setSummary] = useState(null);
-  const [bookings, setBookings] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [summary, setSummary] =
+    useState(null);
+
+  const [bookings, setBookings] =
+    useState([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState('');
 
   const [selectedBooking, setSelectedBooking] =
     useState(null);
@@ -4062,7 +5277,10 @@ function NacControlPage() {
     setError('');
 
     try {
-      const [summaryResponse, bookingsResponse] =
+      const [
+        summaryResponse,
+        bookingsResponse
+      ] =
         await Promise.all([
           apiFetch(
             `${API_BASE}/api/control/summary`
@@ -4081,19 +5299,22 @@ function NacControlPage() {
       if (!summaryResponse.ok) {
         throw new Error(
           summaryData.error ||
-          'Unable to load control summary'
+            'Unable to load control summary'
         );
       }
 
       if (!bookingsResponse.ok) {
         throw new Error(
           bookingData.error ||
-          'Unable to load bookings'
+            'Unable to load bookings'
         );
       }
 
       setSummary(summaryData);
-      setBookings(bookingData.bookings ?? []);
+
+      setBookings(
+        bookingData.bookings ?? []
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -4109,51 +5330,238 @@ function NacControlPage() {
     loadControl();
   }, []);
 
-  const operationalQueue = useMemo(
-    () =>
+  const dashboard = useMemo(() => {
+    const now = new Date();
+
+    const today =
+      [
+        now.getFullYear(),
+        String(
+          now.getMonth() + 1
+        ).padStart(2, '0'),
+        String(
+          now.getDate()
+        ).padStart(2, '0')
+      ].join('-');
+
+    const terminal =
+      new Set([
+        'completed',
+        'cancelled',
+        'no_show',
+        'no_fare',
+        'failed'
+      ]);
+
+    const todaysBookings =
       bookings
         .filter(
           (booking) =>
-            [
-              'live',
-              'stale',
-              'booked'
-            ].includes(
-              bookingStatusGroup(
-                booking
-              )
+            String(
+              booking.requestedPickupAt ||
+                ''
+            ).slice(0, 10) === today
+        )
+        .sort(
+          (a, b) =>
+            new Date(
+              String(
+                a.requestedPickupAt
+              ).replace(' ', 'T')
+            ) -
+            new Date(
+              String(
+                b.requestedPickupAt
+              ).replace(' ', 'T')
             )
+        );
+
+    const upcomingToday =
+      todaysBookings.filter(
+        (booking) => {
+          if (
+            terminal.has(
+              booking.operationalStatus
+            )
+          ) {
+            return false;
+          }
+
+          const pickup =
+            new Date(
+              String(
+                booking.requestedPickupAt ||
+                  ''
+              ).replace(' ', 'T')
+            );
+
+          return (
+            !Number.isNaN(
+              pickup.getTime()
+            ) &&
+            pickup.getTime() >=
+              now.getTime()
+          );
+        }
+      );
+
+    const live =
+      bookings.filter(
+        (booking) =>
+          bookingStatusGroup(
+            booking
+          ) === 'live'
+      );
+
+    const completedToday =
+      todaysBookings.filter(
+        (booking) =>
+          booking.operationalStatus ===
+            'completed'
+      );
+
+    const cancelledOrNoFareToday =
+      todaysBookings.filter(
+        (booking) =>
+          [
+            'cancelled',
+            'no_show',
+            'no_fare'
+          ].includes(
+            booking.operationalStatus
+          )
+      );
+
+    const operationalAttention =
+      bookings
+        .filter(
+          (booking) =>
+            booking.operationalStatus ===
+              'requires_review' ||
+            booking.operationalStatus ===
+              'failed' ||
+            bookingIsStale(booking) ||
+            bookingIsOverdue(booking)
         )
         .sort(
           (a, b) => {
-            const aOverdue =
-              bookingIsOverdue(a);
+            const aPickup =
+              new Date(
+                String(
+                  a.requestedPickupAt ||
+                    ''
+                ).replace(' ', 'T')
+              );
 
-            const bOverdue =
-              bookingIsOverdue(b);
-
-            if (
-              aOverdue !== bOverdue
-            ) {
-              return aOverdue
-                ? -1
-                : 1;
-            }
+            const bPickup =
+              new Date(
+                String(
+                  b.requestedPickupAt ||
+                    ''
+                ).replace(' ', 'T')
+              );
 
             return (
-              new Date(
-                a.requestedPickupAt
-              ) -
-              new Date(
-                b.requestedPickupAt
-              )
+              bPickup.getTime() -
+              aPickup.getTime()
             );
           }
-        )
-        .slice(0, 8),
-    [bookings]
-  );
+        );
 
+    return {
+      todaysBookings,
+      upcomingToday,
+      live,
+      completedToday,
+      cancelledOrNoFareToday,
+      operationalAttention
+    };
+  }, [bookings]);
+
+  function controlBookingRow(
+    booking,
+    showAttention = false
+  ) {
+    return (
+      <button
+        type="button"
+        className="overview-booking-row"
+        key={booking.id}
+        onClick={() =>
+          setSelectedBooking(booking)
+        }
+      >
+        <div className="overview-booking-time">
+          <strong>
+            {formatBookingDateTime(
+              booking.requestedPickupAt
+            )}
+          </strong>
+
+          <small>
+            {autocabBookingPrimary(
+              booking
+            )}
+          </small>
+        </div>
+
+        <div className="overview-booking-main">
+          <strong>
+            {booking.passengerName ||
+              'Passenger'}
+          </strong>
+
+          <small>
+            {booking.pickupAddress ||
+              '—'}
+            {' → '}
+            {booking.destinationAddress ||
+              '—'}
+          </small>
+        </div>
+
+        <div className="overview-booking-meta">
+          <span
+            className={
+              `badge ${
+                booking.operationalStatus
+              }`
+            }
+          >
+            {formatOperationalStatus(
+              booking.operationalStatus
+            )}
+          </span>
+
+          {showAttention &&
+            bookingIsOverdue(
+              booking
+            ) && (
+            <span className="status-attention-chip">
+              Status overdue
+            </span>
+          )}
+
+          {showAttention &&
+            bookingIsStale(
+              booking
+            ) && (
+            <span className="status-attention-chip">
+              Status stale
+            </span>
+          )}
+
+          {showAttention &&
+            booking.operationalStatus ===
+              'requires_review' && (
+            <span className="status-attention-chip">
+              Needs Attention
+            </span>
+          )}
+        </div>
+      </button>
+    );
+  }
 
   if (loading) {
     return (
@@ -4170,8 +5578,8 @@ function NacControlPage() {
           <h1>Need-A-Cab Control</h1>
 
           <p>
-            Operational view of UHP-funded
-            transport requests.
+            Today's operational view of
+            UHP-funded transport.
           </p>
         </div>
       </div>
@@ -4182,173 +5590,186 @@ function NacControlPage() {
         </div>
       )}
 
-      <div className="stats-grid nac-control-stats">
-        <Stat
-          icon={<CarFront/>}
-          label="Active"
-          value={summary?.active ?? 0}
-        />
+      <div className="overview-kpi-grid">
+        <div className="card overview-kpi">
+          <small>Today</small>
 
-        <Stat
-          icon={<Clock3/>}
-          label="Due Today"
-          value={summary?.dueToday ?? 0}
-        />
+          <strong>
+            {
+              dashboard
+                .todaysBookings
+                .length
+            }
+          </strong>
 
-        <Stat
-          icon={<CheckCircle2/>}
-          label="Completed"
-          value={summary?.completed ?? 0}
-        />
+          <span>journeys</span>
+        </div>
 
-        <Stat
-          icon={<AlertTriangle/>}
-          label="Exceptions"
-          value={summary?.exceptions ?? 0}
-        />
+        <div className="card overview-kpi">
+          <small>Upcoming Today</small>
+
+          <strong>
+            {
+              dashboard
+                .upcomingToday
+                .length
+            }
+          </strong>
+
+          <span>still to run</span>
+        </div>
+
+        <div className="card overview-kpi">
+          <small>Live</small>
+
+          <strong>
+            {dashboard.live.length}
+          </strong>
+
+          <span>in progress</span>
+        </div>
+
+        <div className="card overview-kpi">
+          <small>Completed</small>
+
+          <strong>
+            {
+              dashboard
+                .completedToday
+                .length
+            }
+          </strong>
+
+          <span>today</span>
+        </div>
+
+        <div className="card overview-kpi">
+          <small>Cancelled / No Fare</small>
+
+          <strong>
+            {
+              dashboard
+                .cancelledOrNoFareToday
+                .length
+            }
+          </strong>
+
+          <span>today</span>
+        </div>
+
+        <div className="card overview-kpi attention">
+          <small>Needs Attention</small>
+
+          <strong>
+            {
+              dashboard
+                .operationalAttention
+                .length
+            }
+          </strong>
+
+          <span>operational items</span>
+        </div>
       </div>
 
-      <div className="control-grid">
-        <section className="card control-panel">
-          <div className="panel-heading">
+      <div className="overview-dashboard-grid nac-overview-grid">
+        <section className="card overview-panel overview-panel-wide">
+          <div className="overview-panel-heading">
             <div>
-              <h2>Operational Queue</h2>
+              <small>Daily operation</small>
+
+              <h2>Today's Journeys</h2>
 
               <p>
-                Live, upcoming and overdue UHP
-                journeys requiring operational
-                visibility.
+                UHP journeys scheduled for
+                today in pickup-time order.
               </p>
             </div>
           </div>
 
-          {operationalQueue.length === 0 ? (
-            <div className="empty-bookings compact-empty">
+          {dashboard
+            .todaysBookings
+            .length ? (
+            <div className="overview-booking-list">
+              {dashboard
+                .todaysBookings
+                .map(
+                  (booking) =>
+                    controlBookingRow(
+                      booking
+                    )
+                )}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty">
               <CalendarDays size={28}/>
 
               <strong>
-                No active requests
+                No journeys today
               </strong>
 
               <span>
-                New or live UHP bookings will
+                Today's UHP bookings will
                 appear here.
               </span>
-            </div>
-          ) : (
-            <div className="control-booking-list">
-              {operationalQueue.map((booking) => (
-                <div
-                  className="control-booking-item booking-row-clickable"
-                  key={booking.id}
-                  role="button"
-                  tabIndex="0"
-                  onClick={() =>
-                    setSelectedBooking(booking)
-                  }
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === 'Enter' ||
-                      event.key === ' '
-                    ) {
-                      event.preventDefault();
-                      setSelectedBooking(booking);
-                    }
-                  }}
-                >
-                  <div className="control-time">
-                    <strong>
-                      {formatBookingDateTime(
-                        booking.requestedPickupAt
-                      )}
-                    </strong>
-
-                    <small>
-                      {autocabBookingPrimary(booking)}
-                    </small>
-                  </div>
-
-                  <div className="control-passenger">
-                    <strong>
-                      {booking.passengerName}
-                    </strong>
-
-                    <small>
-                      {booking.pickupAddress}
-                      {' → '}
-                      {booking.destinationAddress}
-                    </small>
-                  </div>
-
-                  <div className="control-meta">
-                    <span
-                      className={
-                        `badge ${booking.operationalStatus}`
-                      }
-                    >
-                      {formatOperationalStatus(
-                        booking.operationalStatus
-                      )}
-                    </span>
-
-                    {bookingIsStale(
-                              booking
-                            ) && (
-                              <span className="stale-chip">
-                                Stale
-                              </span>
-                            )}
-
-                            {bookingIsOverdue(
-                      booking
-                    ) && (
-                      <span className="overdue-chip">
-                        Overdue
-                      </span>
-                    )}
-
-                    {booking.hasException && (
-                      <span className="exception-chip">
-                        Exception
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
             </div>
           )}
         </section>
 
-        <aside className="card control-side-panel">
-          <h3>Portal Status</h3>
+        <section className="card overview-panel">
+          <div className="overview-panel-heading">
+            <div>
+              <small>Operations</small>
 
-          <div className="control-kpi">
-            <span>Request Recorded</span>
-            <strong>
-              {summary?.requestRecorded ?? 0}
+              <h2>
+                Needs Attention
+              </h2>
+
+              <p>
+                Statuses that may require
+                operational checking.
+              </p>
+            </div>
+
+            <strong className="overview-panel-count">
+              {
+                dashboard
+                  .operationalAttention
+                  .length
+              }
             </strong>
           </div>
 
-          <div className="control-kpi">
-            <span>Cancelled</span>
-            <strong>
-              {summary?.cancelled ?? 0}
-            </strong>
-          </div>
+          {dashboard
+            .operationalAttention
+            .length ? (
+            <div className="overview-booking-list">
+              {dashboard
+                .operationalAttention
+                .slice(0, 8)
+                .map(
+                  (booking) =>
+                    controlBookingRow(
+                      booking,
+                      true
+                    )
+                )}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty success">
+              <CheckCircle2 size={28}/>
 
-          <div className="control-kpi">
-            <span>Total Requests</span>
-            <strong>
-              {summary?.total ?? 0}
-            </strong>
-          </div>
+              <strong>
+                Operations clear
+              </strong>
 
-          <div className="control-note">
-            Autocab-linked UHP bookings and
-            portal requests are shown together
-            in this operational view.
-          </div>
-        </aside>
+              <span>
+                Nothing currently requires
+                operational attention.
+              </span>
+            </div>
+          )}
+        </section>
       </div>
 
       {selectedBooking && (
@@ -4363,6 +5784,7 @@ function NacControlPage() {
     </>
   );
 }
+
 
 function NacBookingsPage({
   exceptionsOnly = false
@@ -6232,6 +7654,27 @@ function MyBookingsPage({
   const [toDate, setToDate] =
     useState('');
 
+  const [datePreset, setDatePreset] =
+    useState('all');
+
+  const [budgetFilter, setBudgetFilter] =
+    useState('all');
+
+  const [budgetHolderFilter, setBudgetHolderFilter] =
+    useState('all');
+
+  const [reasonFilter, setReasonFilter] =
+    useState('all');
+
+  const [bookerFilter, setBookerFilter] =
+    useState('all');
+
+  const [sourceFilter, setSourceFilter] =
+    useState('all');
+
+  const [showAdvancedFilters, setShowAdvancedFilters] =
+    useState(false);
+
   const [selectedBooking, setSelectedBooking] =
     useState(null);
 
@@ -6416,6 +7859,238 @@ function MyBookingsPage({
     bookingUserId
   ]);
 
+  const bookingFilterOptions = useMemo(() => {
+    const uniqueOptions = (
+      valueKey,
+      labelKey
+    ) => {
+      const values = new Map();
+
+      for (const booking of bookings) {
+        const value =
+          booking[valueKey];
+
+        const label =
+          booking[labelKey];
+
+        if (
+          value === null ||
+          value === undefined ||
+          String(value).trim() === '' ||
+          !label
+        ) {
+          continue;
+        }
+
+        values.set(
+          String(value),
+          String(label)
+        );
+      }
+
+      return [...values.entries()]
+        .map(([value, label]) => ({
+          value,
+          label
+        }))
+        .sort((a, b) =>
+          a.label.localeCompare(
+            b.label
+          )
+        );
+    };
+
+    const bookers =
+      new Set();
+
+    for (const booking of bookings) {
+      const label =
+        bookingDisplayBooker(
+          booking
+        );
+
+      if (
+        label &&
+        label !== '—'
+      ) {
+        bookers.add(label);
+      }
+    }
+
+    return {
+      budgets:
+        uniqueOptions(
+          'budgetId',
+          'budgetNumber'
+        ),
+
+      budgetHolders:
+        uniqueOptions(
+          'budgetHolderUserId',
+          'budgetHolder'
+        ),
+
+      reasons:
+        uniqueOptions(
+          'reasonCodeId',
+          'reasonCode'
+        ),
+
+      bookers:
+        [...bookers]
+          .sort((a, b) =>
+            a.localeCompare(b)
+          )
+    };
+  }, [bookings]);
+
+
+  function localBookingDateValue(
+    date
+  ) {
+    return [
+      date.getFullYear(),
+      String(
+        date.getMonth() + 1
+      ).padStart(2, '0'),
+      String(
+        date.getDate()
+      ).padStart(2, '0')
+    ].join('-');
+  }
+
+
+  function applyBookingDatePreset(
+    preset
+  ) {
+    setDatePreset(preset);
+
+    const now = new Date();
+
+    const today =
+      new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate()
+      );
+
+    if (preset === 'all') {
+      setFromDate('');
+      setToDate('');
+      return;
+    }
+
+    if (preset === 'today') {
+      const value =
+        localBookingDateValue(
+          today
+        );
+
+      setFromDate(value);
+      setToDate(value);
+      return;
+    }
+
+    if (preset === 'tomorrow') {
+      const tomorrow =
+        new Date(today);
+
+      tomorrow.setDate(
+        tomorrow.getDate() + 1
+      );
+
+      const value =
+        localBookingDateValue(
+          tomorrow
+        );
+
+      setFromDate(value);
+      setToDate(value);
+      return;
+    }
+
+    if (preset === 'next7') {
+      const end =
+        new Date(today);
+
+      end.setDate(
+        end.getDate() + 6
+      );
+
+      setFromDate(
+        localBookingDateValue(
+          today
+        )
+      );
+
+      setToDate(
+        localBookingDateValue(
+          end
+        )
+      );
+
+      return;
+    }
+
+    if (preset === 'month') {
+      const start =
+        new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          1
+        );
+
+      const end =
+        new Date(
+          today.getFullYear(),
+          today.getMonth() + 1,
+          0
+        );
+
+      setFromDate(
+        localBookingDateValue(
+          start
+        )
+      );
+
+      setToDate(
+        localBookingDateValue(
+          end
+        )
+      );
+
+      return;
+    }
+
+    if (
+      preset ===
+        'christmas-2026'
+    ) {
+      setFromDate(
+        '2026-12-21'
+      );
+
+      setToDate(
+        '2027-01-04'
+      );
+    }
+  }
+
+
+  function clearBookingFilters() {
+    setQuery('');
+    setStatusFilter('all');
+    setDatePreset('all');
+    setFromDate('');
+    setToDate('');
+    setBudgetFilter('all');
+    setBudgetHolderFilter('all');
+    setReasonFilter('all');
+    setBookerFilter('all');
+    setSourceFilter('all');
+  }
+
+
   const filteredBookings = useMemo(() => {
     const term =
       query.trim().toLowerCase();
@@ -6446,11 +8121,50 @@ function MyBookingsPage({
           booking
         ).includes(term);
 
+      const matchesBudget =
+        budgetFilter === 'all' ||
+        String(
+          booking.budgetId
+        ) === budgetFilter;
+
+      const matchesBudgetHolder =
+        budgetHolderFilter === 'all' ||
+        String(
+          booking.budgetHolderUserId
+        ) === budgetHolderFilter;
+
+      const matchesReason =
+        reasonFilter === 'all' ||
+        String(
+          booking.reasonCodeId
+        ) === reasonFilter;
+
+      const matchesBooker =
+        bookerFilter === 'all' ||
+        bookingDisplayBooker(
+          booking
+        ) === bookerFilter;
+
+      const matchesSource =
+        sourceFilter === 'all' ||
+        (
+          sourceFilter === 'portal'
+            ? booking.source ===
+                'portal'
+            : booking.source !==
+                'portal'
+        );
+
       return (
         matchesStatus &&
         matchesFrom &&
         matchesTo &&
-        matchesQuery
+        matchesQuery &&
+        matchesBudget &&
+        matchesBudgetHolder &&
+        matchesReason &&
+        matchesBooker &&
+        matchesSource
       );
     });
   }, [
@@ -6458,7 +8172,12 @@ function MyBookingsPage({
     query,
     statusFilter,
     fromDate,
-    toDate
+    toDate,
+    budgetFilter,
+    budgetHolderFilter,
+    reasonFilter,
+    bookerFilter,
+    sourceFilter
   ]);
 
   const stats = useMemo(
@@ -7464,79 +9183,387 @@ function MyBookingsPage({
       </div>
 
       <div className="card">
-        <div className="toolbar">
-          <div className="search compact">
-            <Search size={17}/>
+        <div className="uhp-booking-filter-panel">
+          <div className="uhp-booking-filter-toolbar">
+            <div className="search compact uhp-booking-filter-search">
+              <Search size={17}/>
 
-            <input
-              value={query}
+              <input
+                value={query}
+                onChange={(e) =>
+                  setQuery(e.target.value)
+                }
+                placeholder="Search booking, passenger, phone, journey or booker..."
+              />
+            </div>
+
+            {allScope && (
+              <select
+                className="uhp-filter-control"
+                value={datePreset}
+                onChange={(e) =>
+                  applyBookingDatePreset(
+                    e.target.value
+                  )
+                }
+              >
+                <option value="all">
+                  All dates
+                </option>
+
+                <option
+                  value="custom"
+                  disabled
+                >
+                  Custom dates
+                </option>
+
+                <option value="today">
+                  Today
+                </option>
+
+                <option value="tomorrow">
+                  Tomorrow
+                </option>
+
+                <option value="next7">
+                  Next 7 days
+                </option>
+
+                <option value="month">
+                  This month
+                </option>
+
+                <option value="christmas-2026">
+                  Christmas 2026
+                </option>
+              </select>
+            )}
+
+            <select
+              className="uhp-filter-control"
+              value={statusFilter}
               onChange={(e) =>
-                setQuery(e.target.value)
+                setStatusFilter(
+                  e.target.value
+                )
               }
-              placeholder="Search ID, passenger, phone, journey, booked by..."
-            />
+            >
+              <option value="all">
+                All statuses
+              </option>
+
+              <option value="live">
+                Live
+              </option>
+
+              <option value="booked">
+                Booked
+              </option>
+
+              <option value="completed">
+                Completed
+              </option>
+
+              <option value="no_fare">
+                No Fare
+              </option>
+
+              <option value="cancelled">
+                Cancelled
+              </option>
+            </select>
+
+            {allScope ? (
+              <>
+                <button
+                  type="button"
+                  className={
+                    `secondary uhp-filter-toggle ${
+                      showAdvancedFilters
+                        ? 'active'
+                        : ''
+                    }`
+                  }
+                  onClick={() =>
+                    setShowAdvancedFilters(
+                      (current) => !current
+                    )
+                  }
+                >
+                  {showAdvancedFilters
+                    ? 'Hide filters'
+                    : 'More filters'}
+
+                  {[
+                    budgetFilter !== 'all',
+                    budgetHolderFilter !== 'all',
+                    reasonFilter !== 'all',
+                    bookerFilter !== 'all',
+                    sourceFilter !== 'all',
+                    datePreset === 'custom'
+                  ].filter(Boolean).length > 0 && (
+                    <span className="uhp-filter-count">
+                      {
+                        [
+                          budgetFilter !== 'all',
+                          budgetHolderFilter !== 'all',
+                          reasonFilter !== 'all',
+                          bookerFilter !== 'all',
+                          sourceFilter !== 'all',
+                          datePreset === 'custom'
+                        ].filter(Boolean).length
+                      }
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  className="uhp-filter-reset"
+                  onClick={() => {
+                    clearBookingFilters();
+                    setShowAdvancedFilters(false);
+                  }}
+                >
+                  Reset
+                </button>
+              </>
+            ) : (
+              <>
+                <label className="uhp-inline-date">
+                  <span>From</span>
+
+                  <input
+                    type="date"
+                    value={fromDate}
+                    onChange={(e) =>
+                      setFromDate(
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label className="uhp-inline-date">
+                  <span>To</span>
+
+                  <input
+                    type="date"
+                    value={toDate}
+                    onChange={(e) =>
+                      setToDate(
+                        e.target.value
+                      )
+                    }
+                  />
+                </label>
+              </>
+            )}
           </div>
 
-          <select
-            value={statusFilter}
-            onChange={(e) =>
-              setStatusFilter(
-                e.target.value
-              )
-            }
-          >
-            <option value="all">
-              All statuses
-            </option>
+          {allScope &&
+            showAdvancedFilters && (
+            <div className="uhp-booking-filter-drawer">
+              <div className="uhp-filter-field">
+                <span>Budget</span>
 
-            <option value="live">
-              Live
-            </option>
+                <select
+                  value={budgetFilter}
+                  onChange={(e) =>
+                    setBudgetFilter(
+                      e.target.value
+                    )
+                  }
+                >
+                  <option value="all">
+                    All budgets
+                  </option>
 
-            <option value="booked">
-              Booked
-            </option>
+                  {bookingFilterOptions
+                    .budgets
+                    .map((option) => (
+                      <option
+                        key={option.value}
+                        value={option.value}
+                      >
+                        {option.label}
+                      </option>
+                    ))}
+                </select>
+              </div>
 
-            <option value="completed">
-              Completed
-            </option>
+              <div className="uhp-filter-field">
+                <span>Budget holder</span>
 
-            <option value="no_fare">
-              No Fare
-            </option>
+                <select
+                  value={budgetHolderFilter}
+                  onChange={(e) =>
+                    setBudgetHolderFilter(
+                      e.target.value
+                    )
+                  }
+                >
+                  <option value="all">
+                    All budget holders
+                  </option>
 
-            <option value="cancelled">
-              Cancelled
-            </option>
-          </select>
+                  {bookingFilterOptions
+                    .budgetHolders
+                    .map((option) => (
+                      <option
+                        key={option.value}
+                        value={option.value}
+                      >
+                        {option.label}
+                      </option>
+                    ))}
+                </select>
+              </div>
 
-          <label className="date-filter-field">
-            <span>From</span>
+              <div className="uhp-filter-field">
+                <span>Reason code</span>
 
-            <input
-              type="date"
-              value={fromDate}
-              onChange={(e) =>
-                setFromDate(
-                  e.target.value
-                )
-              }
-            />
-          </label>
+                <select
+                  value={reasonFilter}
+                  onChange={(e) =>
+                    setReasonFilter(
+                      e.target.value
+                    )
+                  }
+                >
+                  <option value="all">
+                    All reason codes
+                  </option>
 
-          <label className="date-filter-field">
-            <span>To</span>
+                  {bookingFilterOptions
+                    .reasons
+                    .map((option) => (
+                      <option
+                        key={option.value}
+                        value={option.value}
+                      >
+                        {option.label}
+                      </option>
+                    ))}
+                </select>
+              </div>
 
-            <input
-              type="date"
-              value={toDate}
-              onChange={(e) =>
-                setToDate(
-                  e.target.value
-                )
-              }
-            />
-          </label>
+              <div className="uhp-filter-field">
+                <span>Booked by</span>
+
+                <select
+                  value={bookerFilter}
+                  onChange={(e) =>
+                    setBookerFilter(
+                      e.target.value
+                    )
+                  }
+                >
+                  <option value="all">
+                    All bookers
+                  </option>
+
+                  {bookingFilterOptions
+                    .bookers
+                    .map((booker) => (
+                      <option
+                        key={booker}
+                        value={booker}
+                      >
+                        {booker}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="uhp-filter-field">
+                <span>Source</span>
+
+                <select
+                  value={sourceFilter}
+                  onChange={(e) =>
+                    setSourceFilter(
+                      e.target.value
+                    )
+                  }
+                >
+                  <option value="all">
+                    All sources
+                  </option>
+
+                  <option value="portal">
+                    UHP Portal
+                  </option>
+
+                  <option value="external">
+                    Autocab / External
+                  </option>
+                </select>
+              </div>
+
+              <div className="uhp-filter-field">
+                <span>From</span>
+
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => {
+                    setFromDate(
+                      e.target.value
+                    );
+                    setDatePreset(
+                      'custom'
+                    );
+                  }}
+                />
+              </div>
+
+              <div className="uhp-filter-field">
+                <span>To</span>
+
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => {
+                    setToDate(
+                      e.target.value
+                    );
+                    setDatePreset(
+                      'custom'
+                    );
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="uhp-booking-filter-footer">
+            <div className="uhp-booking-filter-summary">
+              <strong>
+                {filteredBookings.length}
+              </strong>
+
+              <span>
+                {filteredBookings.length === 1
+                  ? 'booking'
+                  : 'bookings'}
+              </span>
+
+              <span className="uhp-filter-summary-muted">
+                shown
+              </span>
+            </div>
+
+            {allScope &&
+              datePreset ===
+                'christmas-2026' && (
+              <div className="uhp-filter-context">
+                Christmas 2026
+                <span>21 Dec – 4 Jan</span>
+              </div>
+            )}
+          </div>
         </div>
 
         {filteredBookings.length === 0 ? (
