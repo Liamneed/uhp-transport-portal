@@ -5075,7 +5075,12 @@ function getTransportRequestForUser(
     throw error;
   }
 
-  return {
+  const canViewInternal =
+    userCanViewAllTransportRequests(
+      authUser
+    );
+
+  const responseRequest = {
     ...request,
 
     events:
@@ -5083,6 +5088,12 @@ function getTransportRequestForUser(
         request.id
       )
   };
+
+  if (!canViewInternal) {
+    delete responseRequest.internalNotes;
+  }
+
+  return responseRequest;
 }
 
 
@@ -5124,6 +5135,199 @@ function getTransportRequestWindowForSubmission(
 
     WHERE tpw.id = ?
   `).get(windowId);
+}
+
+
+
+function reviewTransportRequest(
+  requestId,
+  payload,
+  authUser
+) {
+  if (
+    !userHasAnyRole(
+      authUser,
+      ['uhp_admin']
+    )
+  ) {
+    const error =
+      new Error(
+        'You do not have permission to review transport requests'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const request =
+    getTransportRequestById(
+      requestId
+    );
+
+  if (!request) {
+    const error =
+      new Error(
+        'Transport request not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const nextStatus =
+    String(
+      payload.status || ''
+    ).trim();
+
+  const allowedStatuses = [
+    'needs_information',
+    'ready_for_planning'
+  ];
+
+  if (
+    !allowedStatuses.includes(
+      nextStatus
+    )
+  ) {
+    const error =
+      new Error(
+        'Invalid review status'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const reviewableStatuses = [
+    'submitted',
+    'needs_information',
+    'ready_for_planning'
+  ];
+
+  if (
+    !reviewableStatuses.includes(
+      request.status
+    )
+  ) {
+    const error =
+      new Error(
+        'This transport request can no longer be changed in UHP review'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const internalNotes =
+    payload.internalNotes ===
+      undefined
+      ? request.internalNotes
+      : String(
+          payload.internalNotes || ''
+        ).trim() || null;
+
+  const eventType =
+    nextStatus ===
+      'needs_information'
+      ? 'needs_information'
+      : 'details_checked';
+
+  const eventNote =
+    nextStatus ===
+      'needs_information'
+      ? 'More information needed'
+      : 'Details checked';
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_requests
+      SET
+        status = ?,
+        internal_notes = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      nextStatus,
+      internalNotes,
+      requestId
+    );
+
+    db.prepare(`
+      INSERT INTO transport_request_events
+      (
+        transport_request_id,
+        event_type,
+        actor_user_id,
+        old_status,
+        new_status,
+        notes
+      )
+      VALUES (
+        ?,
+        ?,
+        ?,
+        ?,
+        ?,
+        ?
+      )
+    `).run(
+      requestId,
+      eventType,
+      authUser.id,
+      request.status,
+      nextStatus,
+      eventNote
+    );
+
+    const updated =
+      getTransportRequestById(
+        requestId
+      );
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType:
+        'transport_request',
+      entityId:
+        requestId,
+      fieldName:
+        'review',
+      oldValue:
+        JSON.stringify({
+          status:
+            request.status,
+          internalNotes:
+            request.internalNotes
+        }),
+      newValue:
+        JSON.stringify({
+          status:
+            updated.status,
+          internalNotes:
+            updated.internalNotes
+        }),
+      source:
+        'uhp_admin',
+      actorUserId:
+        authUser.id
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      ...updated,
+
+      events:
+        listTransportRequestEvents(
+          requestId
+        )
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 
@@ -18823,6 +19027,38 @@ const server = http.createServer(async (req, res) => {
       url.pathname.match(
         /^\/api\/transport-requests\/(\d+)$/
       );
+
+
+    if (
+      req.method === 'PATCH' &&
+      transportRequestMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['uhp_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const request =
+        reviewTransportRequest(
+          Number(
+            transportRequestMatch[1]
+          ),
+          payload,
+          auth.user
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          request
+        }
+      );
+    }
 
 
     if (
