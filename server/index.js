@@ -933,6 +933,19 @@ function enforceApiAccess(
   }
 
   if (
+    pathname === '/api/transport-request-imports' ||
+    pathname.startsWith(
+      '/api/transport-request-imports/'
+    )
+  ) {
+    return requireAnyRole(
+      req,
+      ['uhp_admin']
+    );
+  }
+
+
+  if (
     pathname === '/api/transport-requests' ||
     pathname.startsWith(
       '/api/transport-requests/'
@@ -6068,6 +6081,1786 @@ function normaliseOptionalTransportCoordinate(
   return number;
 }
 
+
+
+const TRANSPORT_REQUEST_CSV_HEADERS = [
+  'First Name',
+  'Last Name',
+  'Mobile',
+  'Email',
+  'Service',
+  'Direction',
+  'Shift Date',
+  'Shift Time',
+  'Pickup Address',
+  'Pickup Postcode',
+  'Work Destination',
+  'Work Postcode',
+  'Budget Number',
+  'Reason Code',
+  'Important Information'
+];
+
+
+function parseTransportRequestCsv(
+  csvText
+) {
+  const input =
+    String(
+      csvText || ''
+    )
+      .replace(
+        /^\uFEFF/,
+        ''
+      );
+
+  const rows = [];
+
+  let row = [];
+  let value = '';
+  let quoted = false;
+
+  for (
+    let index = 0;
+    index < input.length;
+    index += 1
+  ) {
+    const character =
+      input[index];
+
+    if (quoted) {
+      if (
+        character === '"' &&
+        input[index + 1] === '"'
+      ) {
+        value += '"';
+        index += 1;
+        continue;
+      }
+
+      if (character === '"') {
+        quoted = false;
+        continue;
+      }
+
+      value += character;
+      continue;
+    }
+
+    if (character === '"') {
+      quoted = true;
+      continue;
+    }
+
+    if (character === ',') {
+      row.push(value);
+      value = '';
+      continue;
+    }
+
+    if (
+      character === '\n' ||
+      character === '\r'
+    ) {
+      if (
+        character === '\r' &&
+        input[index + 1] === '\n'
+      ) {
+        index += 1;
+      }
+
+      row.push(value);
+      value = '';
+
+      if (
+        row.some(
+          (cell) =>
+            String(
+              cell || ''
+            ).trim() !== ''
+        )
+      ) {
+        rows.push(row);
+      }
+
+      row = [];
+      continue;
+    }
+
+    value += character;
+  }
+
+  if (quoted) {
+    const error =
+      new Error(
+        'The CSV contains an unfinished quoted field'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  row.push(value);
+
+  if (
+    row.some(
+      (cell) =>
+        String(
+          cell || ''
+        ).trim() !== ''
+    )
+  ) {
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+
+function normaliseCsvHeader(
+  value
+) {
+  return String(
+    value || ''
+  )
+    .trim()
+    .replace(
+      /\s+/g,
+      ' '
+    )
+    .toLowerCase();
+}
+
+
+function normaliseTransportCsvMobile(
+  value
+) {
+  const original =
+    String(
+      value || ''
+    ).trim();
+
+  if (!original) {
+    return '';
+  }
+
+  let compact =
+    original.replace(
+      /[\s().-]/g,
+      ''
+    );
+
+  if (
+    compact.startsWith(
+      '0044'
+    )
+  ) {
+    compact =
+      `+44${compact.slice(4)}`;
+  }
+
+  if (
+    compact.startsWith(
+      '44'
+    )
+  ) {
+    compact =
+      `+${compact}`;
+  }
+
+  if (
+    compact.startsWith(
+      '07'
+    )
+  ) {
+    compact =
+      `+44${compact.slice(1)}`;
+  }
+
+  if (
+    !/^\+447\d{9}$/.test(
+      compact
+    )
+  ) {
+    return null;
+  }
+
+  return compact;
+}
+
+
+function normaliseTransportCsvPostcode(
+  value
+) {
+  const compact =
+    String(
+      value || ''
+    )
+      .trim()
+      .toUpperCase()
+      .replace(
+        /\s+/g,
+        ''
+      );
+
+  if (!compact) {
+    return null;
+  }
+
+  if (
+    !/^[A-Z]{1,2}\d[A-Z\d]?\d[A-Z]{2}$/.test(
+      compact
+    )
+  ) {
+    return null;
+  }
+
+  return (
+    `${compact.slice(0, -3)} ` +
+    compact.slice(-3)
+  );
+}
+
+
+function normaliseTransportCsvDirection(
+  value
+) {
+  const normalised =
+    String(
+      value || ''
+    )
+      .trim()
+      .toLowerCase()
+      .replace(
+        /[_-]+/g,
+        ' '
+      )
+      .replace(
+        /\s+/g,
+        ' '
+      );
+
+  if (
+    [
+      'to work',
+      'towork'
+    ].includes(
+      normalised
+    )
+  ) {
+    return 'to_work';
+  }
+
+  if (
+    [
+      'from work',
+      'fromwork'
+    ].includes(
+      normalised
+    )
+  ) {
+    return 'from_work';
+  }
+
+  return null;
+}
+
+
+function normaliseTransportCsvDate(
+  value
+) {
+  const input =
+    String(
+      value || ''
+    ).trim();
+
+  let year;
+  let month;
+  let day;
+
+  let match =
+    input.match(
+      /^(\d{4})-(\d{2})-(\d{2})$/
+    );
+
+  if (match) {
+    year =
+      Number(match[1]);
+
+    month =
+      Number(match[2]);
+
+    day =
+      Number(match[3]);
+  } else {
+    match =
+      input.match(
+        /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/
+      );
+
+    if (!match) {
+      return null;
+    }
+
+    day =
+      Number(match[1]);
+
+    month =
+      Number(match[2]);
+
+    year =
+      Number(match[3]);
+  }
+
+  const date =
+    new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day
+      )
+    );
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !==
+      month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return [
+    String(year).padStart(
+      4,
+      '0'
+    ),
+    String(month).padStart(
+      2,
+      '0'
+    ),
+    String(day).padStart(
+      2,
+      '0'
+    )
+  ].join('-');
+}
+
+
+function normaliseTransportCsvTime(
+  value
+) {
+  const input =
+    String(
+      value || ''
+    ).trim();
+
+  const match =
+    input.match(
+      /^(\d{1,2}):(\d{2})$/
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const hours =
+    Number(
+      match[1]
+    );
+
+  const minutes =
+    Number(
+      match[2]
+    );
+
+  if (
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null;
+  }
+
+  return (
+    `${String(hours).padStart(2, '0')}:` +
+    String(minutes).padStart(
+      2,
+      '0'
+    )
+  );
+}
+
+
+function normaliseTransportCsvEmail(
+  value
+) {
+  const email =
+    String(
+      value || ''
+    )
+      .trim()
+      .toLowerCase();
+
+  if (!email) {
+    return null;
+  }
+
+  if (
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+      email
+    )
+  ) {
+    return false;
+  }
+
+  return email;
+}
+
+
+function getTransportCsvServiceOptions() {
+  const now =
+    new Date().toISOString();
+
+  return db.prepare(`
+    SELECT
+      tp.id
+        AS programmeId,
+
+      tp.code
+        AS programmeCode,
+
+      tp.name
+        AS programmeName,
+
+      tpw.id
+        AS programmeWindowId,
+
+      tpw.name
+        AS serviceName,
+
+      tpw.starts_at
+        AS startsAt,
+
+      tpw.ends_at
+        AS endsAt
+
+    FROM transport_programmes tp
+
+    JOIN transport_programme_windows tpw
+      ON tpw.programme_id =
+        tp.id
+
+    WHERE tp.status = 'open'
+
+      AND tpw.is_active = 1
+
+      AND (
+        tp.request_opens_at IS NULL
+        OR tp.request_opens_at <= ?
+      )
+
+      AND (
+        tp.request_closes_at IS NULL
+        OR tp.request_closes_at >= ?
+      )
+
+    ORDER BY
+      tpw.starts_at,
+      tpw.display_order,
+      tpw.id
+  `).all(
+    now,
+    now
+  );
+}
+
+
+function findTransportCsvService(
+  serviceText,
+  serviceOptions
+) {
+  const wanted =
+    String(
+      serviceText || ''
+    )
+      .trim()
+      .toLowerCase();
+
+  if (!wanted) {
+    return {
+      service: null,
+      error:
+        'Service is required'
+    };
+  }
+
+  const exact =
+    serviceOptions.filter(
+      (option) =>
+        String(
+          option.serviceName ||
+          ''
+        )
+          .trim()
+          .toLowerCase() ===
+        wanted
+    );
+
+  if (exact.length === 1) {
+    return {
+      service:
+        exact[0],
+      error: null
+    };
+  }
+
+  if (exact.length > 1) {
+    return {
+      service: null,
+      error:
+        'Service name is ambiguous. Use a unique configured service name.'
+    };
+  }
+
+  const programmeAndWindow =
+    serviceOptions.filter(
+      (option) =>
+        (
+          `${option.programmeName} — ${option.serviceName}`
+        )
+          .trim()
+          .toLowerCase() ===
+        wanted ||
+        (
+          `${option.programmeName} - ${option.serviceName}`
+        )
+          .trim()
+          .toLowerCase() ===
+        wanted
+    );
+
+  if (
+    programmeAndWindow.length ===
+    1
+  ) {
+    return {
+      service:
+        programmeAndWindow[0],
+      error: null
+    };
+  }
+
+  return {
+    service: null,
+    error:
+      `Unknown or unavailable service: ${serviceText}`
+  };
+}
+
+
+function resolveTransportCsvCoding({
+  budgetNumber,
+  reasonCode
+}) {
+  const budget =
+    db.prepare(`
+      SELECT
+        id,
+        budget_number
+          AS budgetNumber
+
+      FROM budgets
+
+      WHERE
+        budget_number = ?
+        COLLATE NOCASE
+
+        AND status = 'active'
+
+      LIMIT 1
+    `).get(
+      String(
+        budgetNumber || ''
+      ).trim()
+    );
+
+  if (!budget) {
+    return {
+      coding: null,
+      error:
+        `Unknown or inactive budget number: ${budgetNumber}`
+    };
+  }
+
+  const reason =
+    db.prepare(`
+      SELECT
+        id,
+        code
+
+      FROM reason_codes
+
+      WHERE
+        code = ?
+        COLLATE NOCASE
+
+        AND status = 'active'
+
+      LIMIT 1
+    `).get(
+      String(
+        reasonCode || ''
+      ).trim()
+    );
+
+  if (!reason) {
+    return {
+      coding: null,
+      error:
+        `Unknown or inactive reason code: ${reasonCode}`
+    };
+  }
+
+  try {
+    const coding =
+      resolveStaffTransportRequestCoding({
+        budgetId:
+          budget.id,
+
+        reasonCodeId:
+          reason.id
+      });
+
+    return {
+      coding,
+      error: null
+    };
+  } catch (error) {
+    return {
+      coding: null,
+      error:
+        error.message ||
+        'Unable to resolve funding details'
+    };
+  }
+}
+
+
+function findExistingTransportCsvDuplicate({
+  programmeWindowId,
+  direction,
+  passengerName,
+  mobile,
+  email,
+  shiftTime,
+  pickupAddress
+}) {
+  const candidates =
+    db.prepare(`
+      SELECT
+        id,
+
+        passenger_name
+          AS passengerName,
+
+        passenger_mobile
+          AS passengerMobile,
+
+        passenger_email
+          AS passengerEmail,
+
+        shift_time
+          AS shiftTime,
+
+        pickup_address
+          AS pickupAddress,
+
+        status
+
+      FROM transport_requests
+
+      WHERE programme_window_id = ?
+        AND direction = ?
+
+        AND status NOT IN (
+          'cancelled',
+          'not_accommodated'
+        )
+
+      ORDER BY id DESC
+    `).all(
+      programmeWindowId,
+      direction
+    );
+
+  const normaliseName =
+    (value) =>
+      String(
+        value || ''
+      )
+        .trim()
+        .toLowerCase()
+        .replace(
+          /\s+/g,
+          ' '
+        );
+
+  const normaliseAddress =
+    (value) =>
+      String(
+        value || ''
+      )
+        .trim()
+        .toLowerCase()
+        .replace(
+          /\s+/g,
+          ' '
+        );
+
+  const rowName =
+    normaliseName(
+      passengerName
+    );
+
+  const rowAddress =
+    normaliseAddress(
+      pickupAddress
+    );
+
+  for (
+    const candidate
+    of candidates
+  ) {
+    const candidateMobile =
+      normaliseTransportCsvMobile(
+        candidate.passengerMobile
+      );
+
+    const candidateEmail =
+      normaliseTransportCsvEmail(
+        candidate.passengerEmail
+      );
+
+    if (
+      mobile &&
+      candidateMobile &&
+      candidateMobile === mobile
+    ) {
+      return {
+        requestId:
+          Number(candidate.id),
+        reason:
+          'Same mobile, service and journey direction'
+      };
+    }
+
+    if (
+      email &&
+      candidateEmail &&
+      candidateEmail === email
+    ) {
+      return {
+        requestId:
+          Number(candidate.id),
+        reason:
+          'Same email, service and journey direction'
+      };
+    }
+
+    if (
+      normaliseName(
+        candidate.passengerName
+      ) === rowName &&
+      candidate.shiftTime ===
+        shiftTime &&
+      normaliseAddress(
+        candidate.pickupAddress
+      ) === rowAddress
+    ) {
+      return {
+        requestId:
+          Number(candidate.id),
+        reason:
+          'Same passenger, shift time and pickup address'
+      };
+    }
+  }
+
+  return null;
+}
+
+
+function transportCsvInternalDuplicateKey(
+  row
+) {
+  return [
+    row.programmeWindowId,
+    row.direction,
+    row.mobile ||
+      row.email ||
+      String(
+        row.passengerName ||
+        ''
+      ).toLowerCase(),
+    row.shiftTime
+  ].join('|');
+}
+
+
+function getTransportRequestImportBatch(
+  batchId
+) {
+  const batch =
+    db.prepare(`
+      SELECT
+        trib.id,
+        trib.source,
+        trib.status,
+
+        trib.original_filename
+          AS originalFilename,
+
+        trib.row_count
+          AS rowCount,
+
+        trib.ready_count
+          AS readyCount,
+
+        trib.warning_count
+          AS warningCount,
+
+        trib.error_count
+          AS errorCount,
+
+        trib.imported_count
+          AS importedCount,
+
+        trib.created_by_user_id
+          AS createdByUserId,
+
+        u.first_name || ' ' ||
+          u.last_name
+          AS createdByName,
+
+        trib.created_at
+          AS createdAt,
+
+        trib.updated_at
+          AS updatedAt,
+
+        trib.imported_at
+          AS importedAt
+
+      FROM transport_request_import_batches trib
+
+      JOIN users u
+        ON u.id =
+          trib.created_by_user_id
+
+      WHERE trib.id = ?
+    `).get(
+      Number(batchId)
+    );
+
+  if (!batch) {
+    return null;
+  }
+
+  const rows =
+    db.prepare(`
+      SELECT
+        id,
+
+        batch_id
+          AS batchId,
+
+        row_number
+          AS rowNumber,
+
+        status,
+
+        raw_json
+          AS rawJson,
+
+        normalised_json
+          AS normalisedJson,
+
+        error_json
+          AS errorJson,
+
+        warning_json
+          AS warningJson,
+
+        duplicate_transport_request_id
+          AS duplicateTransportRequestId,
+
+        imported_transport_request_id
+          AS importedTransportRequestId
+
+      FROM transport_request_import_rows
+
+      WHERE batch_id = ?
+
+      ORDER BY row_number
+    `).all(
+      Number(batchId)
+    )
+      .map(
+        (row) => ({
+          ...row,
+
+          raw:
+            JSON.parse(
+              row.rawJson
+            ),
+
+          normalised:
+            row.normalisedJson
+              ? JSON.parse(
+                  row.normalisedJson
+                )
+              : null,
+
+          errors:
+            row.errorJson
+              ? JSON.parse(
+                  row.errorJson
+                )
+              : [],
+
+          warnings:
+            row.warningJson
+              ? JSON.parse(
+                  row.warningJson
+                )
+              : []
+        })
+      )
+      .map(
+        ({
+          rawJson,
+          normalisedJson,
+          errorJson,
+          warningJson,
+          ...row
+        }) => row
+      );
+
+  return {
+    ...batch,
+    rows
+  };
+}
+
+
+function createTransportRequestImportPreview(
+  payload,
+  authUser
+) {
+  if (
+    !userHasAnyRole(
+      authUser,
+      ['uhp_admin']
+    )
+  ) {
+    const error =
+      new Error(
+        'You do not have permission to import transport requests'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const filename =
+    String(
+      payload.filename ||
+      'transport-requests.csv'
+    )
+      .trim()
+      .slice(
+        0,
+        255
+      );
+
+  const csvText =
+    String(
+      payload.csvText ||
+      ''
+    );
+
+  if (!csvText.trim()) {
+    const error =
+      new Error(
+        'CSV data is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  /*
+    readJson() is capped at 1 MB already.
+    Keep the CSV itself lower so the response/metadata
+    also remains comfortably inside that limit.
+  */
+  if (
+    Buffer.byteLength(
+      csvText,
+      'utf8'
+    ) >
+    512 * 1024
+  ) {
+    const error =
+      new Error(
+        'CSV file is too large. Maximum size is 512 KB.'
+      );
+
+    error.statusCode = 413;
+    throw error;
+  }
+
+  const parsed =
+    parseTransportRequestCsv(
+      csvText
+    );
+
+  if (
+    parsed.length < 2
+  ) {
+    const error =
+      new Error(
+        'The CSV must contain a header row and at least one request'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const incomingHeaders =
+    parsed[0].map(
+      normaliseCsvHeader
+    );
+
+  const expectedHeaders =
+    TRANSPORT_REQUEST_CSV_HEADERS.map(
+      normaliseCsvHeader
+    );
+
+  if (
+    incomingHeaders.length !==
+      expectedHeaders.length ||
+    incomingHeaders.some(
+      (header, index) =>
+        header !==
+        expectedHeaders[index]
+    )
+  ) {
+    const error =
+      new Error(
+        'CSV headers do not match the transport request template'
+      );
+
+    error.statusCode = 400;
+
+    error.details = {
+      expectedHeaders:
+        TRANSPORT_REQUEST_CSV_HEADERS
+    };
+
+    throw error;
+  }
+
+  const dataRows =
+    parsed.slice(1);
+
+  if (
+    dataRows.length > 250
+  ) {
+    const error =
+      new Error(
+        'CSV contains too many rows. Maximum is 250 requests per upload.'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const serviceOptions =
+    getTransportCsvServiceOptions();
+
+  const stagedRows = [];
+
+  for (
+    let index = 0;
+    index < dataRows.length;
+    index += 1
+  ) {
+    const cells = [
+      ...dataRows[index]
+    ];
+
+    while (
+      cells.length <
+      TRANSPORT_REQUEST_CSV_HEADERS.length
+    ) {
+      cells.push('');
+    }
+
+    const raw = {};
+
+    TRANSPORT_REQUEST_CSV_HEADERS.forEach(
+      (header, headerIndex) => {
+        raw[header] =
+          String(
+            cells[headerIndex] ??
+            ''
+          ).trim();
+      }
+    );
+
+    const errors = [];
+    const warnings = [];
+
+    if (
+      cells.length >
+      TRANSPORT_REQUEST_CSV_HEADERS.length
+    ) {
+      errors.push(
+        'Row contains more columns than the CSV template'
+      );
+    }
+
+    const firstName =
+      raw['First Name'];
+
+    const lastName =
+      raw['Last Name'];
+
+    if (!firstName) {
+      errors.push(
+        'First Name is required'
+      );
+    }
+
+    if (!lastName) {
+      errors.push(
+        'Last Name is required'
+      );
+    }
+
+    const passengerName =
+      [
+        firstName,
+        lastName
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+    const mobile =
+      normaliseTransportCsvMobile(
+        raw.Mobile
+      );
+
+    if (!raw.Mobile) {
+      errors.push(
+        'Mobile is required'
+      );
+    } else if (!mobile) {
+      errors.push(
+        'Mobile must be a valid UK mobile number'
+      );
+    }
+
+    const email =
+      normaliseTransportCsvEmail(
+        raw.Email
+      );
+
+    if (
+      email === false
+    ) {
+      errors.push(
+        'Email is not valid'
+      );
+    }
+
+    const direction =
+      normaliseTransportCsvDirection(
+        raw.Direction
+      );
+
+    if (!direction) {
+      errors.push(
+        'Direction must be To work or From work'
+      );
+    }
+
+    const shiftDate =
+      normaliseTransportCsvDate(
+        raw['Shift Date']
+      );
+
+    if (!shiftDate) {
+      errors.push(
+        'Shift Date must be DD/MM/YYYY or YYYY-MM-DD'
+      );
+    }
+
+    const shiftClockTime =
+      normaliseTransportCsvTime(
+        raw['Shift Time']
+      );
+
+    if (!shiftClockTime) {
+      errors.push(
+        'Shift Time must be HH:MM'
+      );
+    }
+
+    const shiftTime =
+      shiftDate &&
+      shiftClockTime
+        ? `${shiftDate}T${shiftClockTime}:00`
+        : null;
+
+    if (
+      !raw['Pickup Address']
+    ) {
+      errors.push(
+        'Pickup Address is required'
+      );
+    }
+
+    const pickupPostcode =
+      normaliseTransportCsvPostcode(
+        raw['Pickup Postcode']
+      );
+
+    if (
+      raw['Pickup Postcode'] &&
+      !pickupPostcode
+    ) {
+      errors.push(
+        'Pickup Postcode is not valid'
+      );
+    }
+
+    if (
+      !raw['Work Destination']
+    ) {
+      errors.push(
+        'Work Destination is required'
+      );
+    }
+
+    const workPostcode =
+      normaliseTransportCsvPostcode(
+        raw['Work Postcode']
+      );
+
+    if (
+      raw['Work Postcode'] &&
+      !workPostcode
+    ) {
+      errors.push(
+        'Work Postcode is not valid'
+      );
+    }
+
+    const serviceResult =
+      findTransportCsvService(
+        raw.Service,
+        serviceOptions
+      );
+
+    if (
+      serviceResult.error
+    ) {
+      errors.push(
+        serviceResult.error
+      );
+    }
+
+    const service =
+      serviceResult.service;
+
+    if (
+      service &&
+      shiftTime
+    ) {
+      const shift =
+        new Date(
+          shiftTime
+        );
+
+      const starts =
+        new Date(
+          service.startsAt
+        );
+
+      const ends =
+        new Date(
+          service.endsAt
+        );
+
+      if (
+        Number.isNaN(
+          shift.getTime()
+        ) ||
+        shift < starts ||
+        shift > ends
+      ) {
+        errors.push(
+          'Shift time falls outside the selected service window'
+        );
+      }
+    }
+
+    const codingResult =
+      resolveTransportCsvCoding({
+        budgetNumber:
+          raw['Budget Number'],
+
+        reasonCode:
+          raw['Reason Code']
+      });
+
+    if (
+      codingResult.error
+    ) {
+      errors.push(
+        codingResult.error
+      );
+    }
+
+    const coding =
+      codingResult.coding;
+
+    let normalised = null;
+    let existingDuplicate =
+      null;
+
+    if (
+      errors.length === 0
+    ) {
+      /*
+        The template always describes the traveller's
+        home/pickup and their work location.
+
+        Direction determines which becomes actual pickup
+        and destination for the operational request.
+      */
+      const homeAddress =
+        raw['Pickup Address'];
+
+      const workAddress =
+        raw['Work Destination'];
+
+      const actualPickupAddress =
+        direction ===
+        'to_work'
+          ? homeAddress
+          : workAddress;
+
+      const actualPickupPostcode =
+        direction ===
+        'to_work'
+          ? pickupPostcode
+          : workPostcode;
+
+      const actualDestinationAddress =
+        direction ===
+        'to_work'
+          ? workAddress
+          : homeAddress;
+
+      const actualDestinationPostcode =
+        direction ===
+        'to_work'
+          ? workPostcode
+          : pickupPostcode;
+
+      normalised = {
+        programmeWindowId:
+          Number(
+            service.programmeWindowId
+          ),
+
+        programmeName:
+          service.programmeName,
+
+        serviceName:
+          service.serviceName,
+
+        passengerName,
+
+        passengerMobile:
+          mobile,
+
+        passengerEmail:
+          email || null,
+
+        direction,
+
+        shiftTime,
+
+        pickupAddress:
+          actualPickupAddress,
+
+        pickupPostcode:
+          actualPickupPostcode,
+
+        pickupLatitude: null,
+        pickupLongitude: null,
+
+        destinationAddress:
+          actualDestinationAddress,
+
+        destinationPostcode:
+          actualDestinationPostcode,
+
+        destinationLatitude: null,
+        destinationLongitude: null,
+
+        passengerCount: 1,
+
+        passengerNotes:
+          raw[
+            'Important Information'
+          ] ||
+          null,
+
+        accessibilityNotes:
+          null,
+
+        departmentId:
+          coding.departmentId,
+
+        departmentName:
+          coding.departmentName,
+
+        budgetId:
+          coding.budgetId,
+
+        budgetNumber:
+          coding.budgetNumber,
+
+        budgetName:
+          coding.budgetName,
+
+        reasonCodeId:
+          coding.reasonCodeId,
+
+        reasonCode:
+          coding.reasonCode,
+
+        reasonDescription:
+          coding.reasonDescription,
+
+        budgetHolderUserId:
+          coding.budgetHolderUserId,
+
+        budgetHolderName:
+          coding.budgetHolderName
+      };
+
+      existingDuplicate =
+        findExistingTransportCsvDuplicate({
+          programmeWindowId:
+            normalised.programmeWindowId,
+
+          direction:
+            normalised.direction,
+
+          passengerName:
+            normalised.passengerName,
+
+          mobile:
+            normalised.passengerMobile,
+
+          email:
+            normalised.passengerEmail,
+
+          shiftTime:
+            normalised.shiftTime,
+
+          pickupAddress:
+            normalised.pickupAddress
+        });
+
+      if (
+        existingDuplicate
+      ) {
+        warnings.push(
+          `Possible duplicate of request #${existingDuplicate.requestId}: ${existingDuplicate.reason}`
+        );
+      }
+    }
+
+    stagedRows.push({
+      rowNumber:
+        index + 2,
+
+      raw,
+
+      normalised,
+
+      errors,
+      warnings,
+
+      duplicateTransportRequestId:
+        existingDuplicate?.requestId ||
+        null
+    });
+  }
+
+  /*
+    Find duplicates within this upload after all rows
+    have been normalised.
+  */
+  const firstByKey =
+    new Map();
+
+  for (
+    const row
+    of stagedRows
+  ) {
+    if (
+      !row.normalised ||
+      row.errors.length
+    ) {
+      continue;
+    }
+
+    const key =
+      transportCsvInternalDuplicateKey(
+        row.normalised
+      );
+
+    const earlier =
+      firstByKey.get(
+        key
+      );
+
+    if (earlier) {
+      row.warnings.push(
+        `Possible duplicate of CSV row ${earlier.rowNumber}`
+      );
+
+      if (
+        !earlier.warnings.some(
+          (warning) =>
+            warning.includes(
+              `CSV row ${row.rowNumber}`
+            )
+        )
+      ) {
+        earlier.warnings.push(
+          `Possible duplicate of CSV row ${row.rowNumber}`
+        );
+      }
+    } else {
+      firstByKey.set(
+        key,
+        row
+      );
+    }
+  }
+
+  for (
+    const row
+    of stagedRows
+  ) {
+    row.status =
+      row.errors.length
+        ? 'error'
+        : row.warnings.length
+          ? 'warning'
+          : 'ready';
+  }
+
+  const readyCount =
+    stagedRows.filter(
+      (row) =>
+        row.status ===
+        'ready'
+    ).length;
+
+  const warningCount =
+    stagedRows.filter(
+      (row) =>
+        row.status ===
+        'warning'
+    ).length;
+
+  const errorCount =
+    stagedRows.filter(
+      (row) =>
+        row.status ===
+        'error'
+    ).length;
+
+  const batchStatus =
+    errorCount > 0
+      ? 'has_errors'
+      : 'ready';
+
+  db.exec('BEGIN');
+
+  try {
+    const batchResult =
+      db.prepare(`
+        INSERT INTO transport_request_import_batches
+        (
+          source,
+          status,
+          original_filename,
+
+          row_count,
+          ready_count,
+          warning_count,
+          error_count,
+          imported_count,
+
+          created_by_user_id
+        )
+        VALUES (
+          'department_csv',
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          0,
+          ?
+        )
+      `).run(
+        batchStatus,
+        filename,
+        stagedRows.length,
+        readyCount,
+        warningCount,
+        errorCount,
+        authUser.id
+      );
+
+    const batchId =
+      Number(
+        batchResult.lastInsertRowid
+      );
+
+    const insertRow =
+      db.prepare(`
+        INSERT INTO transport_request_import_rows
+        (
+          batch_id,
+          row_number,
+          status,
+
+          raw_json,
+          normalised_json,
+
+          error_json,
+          warning_json,
+
+          duplicate_transport_request_id
+        )
+        VALUES (
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?
+        )
+      `);
+
+    for (
+      const row
+      of stagedRows
+    ) {
+      insertRow.run(
+        batchId,
+        row.rowNumber,
+        row.status,
+
+        JSON.stringify(
+          row.raw
+        ),
+
+        row.normalised
+          ? JSON.stringify(
+              row.normalised
+            )
+          : null,
+
+        row.errors.length
+          ? JSON.stringify(
+              row.errors
+            )
+          : null,
+
+        row.warnings.length
+          ? JSON.stringify(
+              row.warnings
+            )
+          : null,
+
+        row.duplicateTransportRequestId
+      );
+    }
+
+    writeAudit({
+      action:
+        'CREATE',
+
+      entityType:
+        'transport_request_import_batch',
+
+      entityId:
+        batchId,
+
+      newValue:
+        JSON.stringify({
+          source:
+            'department_csv',
+
+          filename,
+
+          rowCount:
+            stagedRows.length,
+
+          readyCount,
+          warningCount,
+          errorCount,
+
+          status:
+            batchStatus
+        }),
+
+      source:
+        'department_csv',
+
+      actorUserId:
+        authUser.id
+    });
+
+    db.exec('COMMIT');
+
+    return getTransportRequestImportBatch(
+      batchId
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 
 function listTransportRequestOptions(
@@ -23060,6 +24853,36 @@ const server = http.createServer(async (req, res) => {
             listTransportRequestOptions(
               auth.user
             )
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/transport-request-imports/preview'
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['uhp_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const batch =
+        createTransportRequestImportPreview(
+          payload,
+          auth.user
+        );
+
+      return sendJson(
+        res,
+        201,
+        {
+          batch
         }
       );
     }
