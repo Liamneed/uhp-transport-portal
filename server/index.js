@@ -914,6 +914,16 @@ function enforceApiAccess(
   }
 
   if (
+    pathname === '/api/transport-requests' ||
+    pathname.startsWith(
+      '/api/transport-requests/'
+    )
+  ) {
+    return requireAuth(req);
+  }
+
+
+  if (
     pathname === '/api/transport-programmes' ||
     pathname.startsWith(
       '/api/transport-programmes/'
@@ -4564,6 +4574,886 @@ function updateTransportProgrammeCapacity(
   }
 }
 
+
+
+function userCanSubmitTransportRequest(
+  user
+) {
+  return userHasAnyRole(
+    user,
+    [
+      'booker',
+      'budget_holder',
+      'department_manager',
+      'uhp_admin'
+    ]
+  );
+}
+
+
+function userCanViewAllTransportRequests(
+  user
+) {
+  return userHasAnyRole(
+    user,
+    [
+      'uhp_admin',
+      'nac_admin'
+    ]
+  );
+}
+
+
+function normaliseOptionalTransportCoordinate(
+  value,
+  fieldName
+) {
+  if (
+    value === undefined ||
+    value === null ||
+    String(value).trim() === ''
+  ) {
+    return null;
+  }
+
+  const number =
+    Number(value);
+
+  if (!Number.isFinite(number)) {
+    const error =
+      new Error(
+        `${fieldName} must be a valid number`
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return number;
+}
+
+
+function getTransportRequestById(
+  requestId
+) {
+  return db.prepare(`
+    SELECT
+      tr.id,
+
+      tr.programme_window_id
+        AS programmeWindowId,
+
+      tpw.name
+        AS programmeWindowName,
+
+      tpw.starts_at
+        AS windowStartsAt,
+
+      tpw.ends_at
+        AS windowEndsAt,
+
+      tp.id
+        AS programmeId,
+
+      tp.code
+        AS programmeCode,
+
+      tp.name
+        AS programmeName,
+
+      tr.requested_by_user_id
+        AS requestedByUserId,
+
+      u.first_name || ' ' ||
+        u.last_name
+        AS requestedByName,
+
+      u.email
+        AS requestedByEmail,
+
+      tr.passenger_name
+        AS passengerName,
+
+      tr.passenger_mobile
+        AS passengerMobile,
+
+      tr.passenger_email
+        AS passengerEmail,
+
+      tr.direction,
+
+      tr.shift_time
+        AS shiftTime,
+
+      tr.pickup_address
+        AS pickupAddress,
+
+      tr.pickup_postcode
+        AS pickupPostcode,
+
+      tr.pickup_latitude
+        AS pickupLatitude,
+
+      tr.pickup_longitude
+        AS pickupLongitude,
+
+      tr.destination_address
+        AS destinationAddress,
+
+      tr.destination_postcode
+        AS destinationPostcode,
+
+      tr.destination_latitude
+        AS destinationLatitude,
+
+      tr.destination_longitude
+        AS destinationLongitude,
+
+      tr.passenger_count
+        AS passengerCount,
+
+      tr.accessibility_notes
+        AS accessibilityNotes,
+
+      tr.passenger_notes
+        AS passengerNotes,
+
+      tr.internal_notes
+        AS internalNotes,
+
+      tr.status,
+
+      tr.submitted_at
+        AS submittedAt,
+
+      tr.confirmed_at
+        AS confirmedAt,
+
+      tr.cancelled_at
+        AS cancelledAt,
+
+      tr.created_at
+        AS createdAt,
+
+      tr.updated_at
+        AS updatedAt
+
+    FROM transport_requests tr
+
+    JOIN transport_programme_windows tpw
+      ON tpw.id =
+        tr.programme_window_id
+
+    JOIN transport_programmes tp
+      ON tp.id =
+        tpw.programme_id
+
+    JOIN users u
+      ON u.id =
+        tr.requested_by_user_id
+
+    WHERE tr.id = ?
+  `).get(requestId);
+}
+
+
+function listTransportRequestsForUser(
+  userId
+) {
+  return db.prepare(`
+    SELECT
+      tr.id,
+
+      tr.programme_window_id
+        AS programmeWindowId,
+
+      tpw.name
+        AS programmeWindowName,
+
+      tp.id
+        AS programmeId,
+
+      tp.code
+        AS programmeCode,
+
+      tp.name
+        AS programmeName,
+
+      tr.passenger_name
+        AS passengerName,
+
+      tr.direction,
+
+      tr.shift_time
+        AS shiftTime,
+
+      tr.pickup_address
+        AS pickupAddress,
+
+      tr.destination_address
+        AS destinationAddress,
+
+      tr.passenger_count
+        AS passengerCount,
+
+      tr.status,
+
+      tr.submitted_at
+        AS submittedAt,
+
+      tr.updated_at
+        AS updatedAt
+
+    FROM transport_requests tr
+
+    JOIN transport_programme_windows tpw
+      ON tpw.id =
+        tr.programme_window_id
+
+    JOIN transport_programmes tp
+      ON tp.id =
+        tpw.programme_id
+
+    WHERE tr.requested_by_user_id = ?
+
+    ORDER BY
+      datetime(tr.submitted_at) DESC,
+      tr.id DESC
+  `).all(userId);
+}
+
+
+function listAllTransportRequests() {
+  return db.prepare(`
+    SELECT
+      tr.id,
+
+      tr.programme_window_id
+        AS programmeWindowId,
+
+      tpw.name
+        AS programmeWindowName,
+
+      tp.id
+        AS programmeId,
+
+      tp.code
+        AS programmeCode,
+
+      tp.name
+        AS programmeName,
+
+      tr.requested_by_user_id
+        AS requestedByUserId,
+
+      u.first_name || ' ' ||
+        u.last_name
+        AS requestedByName,
+
+      tr.passenger_name
+        AS passengerName,
+
+      tr.passenger_mobile
+        AS passengerMobile,
+
+      tr.direction,
+
+      tr.shift_time
+        AS shiftTime,
+
+      tr.pickup_address
+        AS pickupAddress,
+
+      tr.destination_address
+        AS destinationAddress,
+
+      tr.passenger_count
+        AS passengerCount,
+
+      tr.status,
+
+      tr.submitted_at
+        AS submittedAt,
+
+      tr.updated_at
+        AS updatedAt
+
+    FROM transport_requests tr
+
+    JOIN transport_programme_windows tpw
+      ON tpw.id =
+        tr.programme_window_id
+
+    JOIN transport_programmes tp
+      ON tp.id =
+        tpw.programme_id
+
+    JOIN users u
+      ON u.id =
+        tr.requested_by_user_id
+
+    ORDER BY
+      datetime(tr.submitted_at) DESC,
+      tr.id DESC
+  `).all();
+}
+
+
+function listTransportRequestEvents(
+  requestId
+) {
+  return db.prepare(`
+    SELECT
+      tre.id,
+
+      tre.transport_request_id
+        AS transportRequestId,
+
+      tre.event_type
+        AS eventType,
+
+      tre.actor_user_id
+        AS actorUserId,
+
+      CASE
+        WHEN actor.id IS NOT NULL
+        THEN
+          actor.first_name || ' ' ||
+          actor.last_name
+        ELSE NULL
+      END
+        AS actorName,
+
+      tre.old_status
+        AS oldStatus,
+
+      tre.new_status
+        AS newStatus,
+
+      tre.notes,
+
+      tre.created_at
+        AS createdAt
+
+    FROM transport_request_events tre
+
+    LEFT JOIN users actor
+      ON actor.id =
+        tre.actor_user_id
+
+    WHERE tre.transport_request_id = ?
+
+    ORDER BY
+      datetime(tre.created_at),
+      tre.id
+  `).all(requestId);
+}
+
+
+function getTransportRequestForUser(
+  requestId,
+  authUser
+) {
+  const request =
+    getTransportRequestById(
+      requestId
+    );
+
+  if (!request) {
+    const error =
+      new Error(
+        'Transport request not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    !userCanViewAllTransportRequests(
+      authUser
+    ) &&
+    Number(
+      request.requestedByUserId
+    ) !== Number(
+      authUser.id
+    )
+  ) {
+    const error =
+      new Error(
+        'Transport request not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return {
+    ...request,
+
+    events:
+      listTransportRequestEvents(
+        request.id
+      )
+  };
+}
+
+
+function getTransportRequestWindowForSubmission(
+  windowId
+) {
+  return db.prepare(`
+    SELECT
+      tpw.id,
+
+      tpw.programme_id
+        AS programmeId,
+
+      tpw.name,
+
+      tpw.starts_at
+        AS startsAt,
+
+      tpw.ends_at
+        AS endsAt,
+
+      tpw.is_active
+        AS isActive,
+
+      tp.status
+        AS programmeStatus,
+
+      tp.request_opens_at
+        AS requestOpensAt,
+
+      tp.request_closes_at
+        AS requestClosesAt
+
+    FROM transport_programme_windows tpw
+
+    JOIN transport_programmes tp
+      ON tp.id =
+        tpw.programme_id
+
+    WHERE tpw.id = ?
+  `).get(windowId);
+}
+
+
+function createTransportRequest(
+  payload,
+  authUser
+) {
+  if (
+    !userCanSubmitTransportRequest(
+      authUser
+    )
+  ) {
+    const error =
+      new Error(
+        'You do not have permission to submit transport requests'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const programmeWindowId =
+    Number(
+      payload.programmeWindowId
+    );
+
+  if (
+    !Number.isInteger(
+      programmeWindowId
+    ) ||
+    programmeWindowId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid service window is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const window =
+    getTransportRequestWindowForSubmission(
+      programmeWindowId
+    );
+
+  if (!window) {
+    const error =
+      new Error(
+        'Service window not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    Number(window.isActive) !== 1
+  ) {
+    const error =
+      new Error(
+        'This service window is not available for requests'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (
+    window.programmeStatus !==
+      'open'
+  ) {
+    const error =
+      new Error(
+        'This transport programme is not accepting requests'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const now =
+    new Date();
+
+  if (
+    window.requestOpensAt &&
+    now <
+      new Date(
+        window.requestOpensAt
+      )
+  ) {
+    const error =
+      new Error(
+        'Requests for this transport programme are not open yet'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (
+    window.requestClosesAt &&
+    now >
+      new Date(
+        window.requestClosesAt
+      )
+  ) {
+    const error =
+      new Error(
+        'Requests for this transport programme are closed'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const passengerName =
+    String(
+      payload.passengerName || ''
+    ).trim();
+
+  const passengerMobile =
+    String(
+      payload.passengerMobile || ''
+    ).trim();
+
+  const passengerEmail =
+    String(
+      payload.passengerEmail || ''
+    ).trim() || null;
+
+  const direction =
+    String(
+      payload.direction || ''
+    ).trim();
+
+  const shiftTime =
+    normaliseOptionalDateTime(
+      payload.shiftTime,
+      'Shift time'
+    );
+
+  const pickupAddress =
+    String(
+      payload.pickupAddress || ''
+    ).trim();
+
+  const pickupPostcode =
+    String(
+      payload.pickupPostcode || ''
+    ).trim() || null;
+
+  const destinationAddress =
+    String(
+      payload.destinationAddress || ''
+    ).trim();
+
+  const destinationPostcode =
+    String(
+      payload.destinationPostcode || ''
+    ).trim() || null;
+
+  const passengerCount =
+    payload.passengerCount === undefined
+      ? 1
+      : Number(
+          payload.passengerCount
+        );
+
+  if (
+    !passengerName ||
+    !passengerMobile ||
+    !shiftTime ||
+    !pickupAddress ||
+    !destinationAddress
+  ) {
+    const error =
+      new Error(
+        'Passenger name, mobile, shift time, pickup and destination are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    ![
+      'to_work',
+      'from_work'
+    ].includes(
+      direction
+    )
+  ) {
+    const error =
+      new Error(
+        'Invalid transport direction'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(
+      passengerCount
+    ) ||
+    passengerCount < 1
+  ) {
+    const error =
+      new Error(
+        'Passenger count must be at least 1'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const pickupLatitude =
+    normaliseOptionalTransportCoordinate(
+      payload.pickupLatitude,
+      'Pickup latitude'
+    );
+
+  const pickupLongitude =
+    normaliseOptionalTransportCoordinate(
+      payload.pickupLongitude,
+      'Pickup longitude'
+    );
+
+  const destinationLatitude =
+    normaliseOptionalTransportCoordinate(
+      payload.destinationLatitude,
+      'Destination latitude'
+    );
+
+  const destinationLongitude =
+    normaliseOptionalTransportCoordinate(
+      payload.destinationLongitude,
+      'Destination longitude'
+    );
+
+  if (
+    (
+      pickupLatitude === null
+    ) !== (
+      pickupLongitude === null
+    )
+  ) {
+    const error =
+      new Error(
+        'Pickup latitude and longitude must be supplied together'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    (
+      destinationLatitude === null
+    ) !== (
+      destinationLongitude === null
+    )
+  ) {
+    const error =
+      new Error(
+        'Destination latitude and longitude must be supplied together'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const accessibilityNotes =
+    String(
+      payload.accessibilityNotes ||
+        ''
+    ).trim() || null;
+
+  const passengerNotes =
+    String(
+      payload.passengerNotes ||
+        ''
+    ).trim() || null;
+
+  db.exec('BEGIN');
+
+  try {
+    const result =
+      db.prepare(`
+        INSERT INTO transport_requests
+        (
+          programme_window_id,
+          requested_by_user_id,
+
+          passenger_name,
+          passenger_mobile,
+          passenger_email,
+
+          direction,
+          shift_time,
+
+          pickup_address,
+          pickup_postcode,
+          pickup_latitude,
+          pickup_longitude,
+
+          destination_address,
+          destination_postcode,
+          destination_latitude,
+          destination_longitude,
+
+          passenger_count,
+
+          accessibility_notes,
+          passenger_notes,
+
+          status
+        )
+        VALUES (
+          ?, ?,
+          ?, ?, ?,
+          ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?, ?,
+          ?,
+          ?, ?,
+          'submitted'
+        )
+      `).run(
+        programmeWindowId,
+        authUser.id,
+
+        passengerName,
+        passengerMobile,
+        passengerEmail,
+
+        direction,
+        shiftTime,
+
+        pickupAddress,
+        pickupPostcode,
+        pickupLatitude,
+        pickupLongitude,
+
+        destinationAddress,
+        destinationPostcode,
+        destinationLatitude,
+        destinationLongitude,
+
+        passengerCount,
+
+        accessibilityNotes,
+        passengerNotes
+      );
+
+    const requestId =
+      Number(
+        result.lastInsertRowid
+      );
+
+    db.prepare(`
+      INSERT INTO transport_request_events
+      (
+        transport_request_id,
+        event_type,
+        actor_user_id,
+        old_status,
+        new_status,
+        notes
+      )
+      VALUES (
+        ?,
+        'submitted',
+        ?,
+        NULL,
+        'submitted',
+        'Transport request submitted'
+      )
+    `).run(
+      requestId,
+      authUser.id
+    );
+
+    writeAudit({
+      action: 'CREATE',
+      entityType:
+        'transport_request',
+      entityId:
+        requestId,
+      newValue:
+        JSON.stringify({
+          programmeWindowId,
+          requestedByUserId:
+            authUser.id,
+          passengerName,
+          direction,
+          shiftTime,
+          status:
+            'submitted'
+        }),
+      source:
+        'transport_portal',
+      actorUserId:
+        authUser.id
+    });
+
+    db.exec('COMMIT');
+
+    return getTransportRequestById(
+      requestId
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 function getBookingOptions(userId) {
   const user = db.prepare(`
@@ -17763,6 +18653,90 @@ const server = http.createServer(async (req, res) => {
         200,
         {
           capacity
+        }
+      );
+    }
+
+
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/transport-requests'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      return sendJson(
+        res,
+        200,
+        {
+          requests:
+            userCanViewAllTransportRequests(
+              auth.user
+            )
+              ? listAllTransportRequests()
+              : listTransportRequestsForUser(
+                  auth.user.id
+                )
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/transport-requests'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      const payload =
+        await readJson(req);
+
+      const request =
+        createTransportRequest(
+          payload,
+          auth.user
+        );
+
+      return sendJson(
+        res,
+        201,
+        {
+          request
+        }
+      );
+    }
+
+
+    const transportRequestMatch =
+      url.pathname.match(
+        /^\/api\/transport-requests\/(\d+)$/
+      );
+
+
+    if (
+      req.method === 'GET' &&
+      transportRequestMatch
+    ) {
+      const auth =
+        requireAuth(req);
+
+      const request =
+        getTransportRequestForUser(
+          Number(
+            transportRequestMatch[1]
+          ),
+          auth.user
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          request
         }
       );
     }
