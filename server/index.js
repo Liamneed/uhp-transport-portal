@@ -9868,6 +9868,80 @@ function getTransportPlanningCandidates() {
   const overview =
     getTransportOperationsOverview();
 
+  const serviceWindows =
+    db.prepare(`
+      SELECT
+        w.id,
+        w.programme_id AS programmeId,
+        p.code AS programmeCode,
+        p.name AS programmeName,
+        w.name,
+        w.starts_at AS startsAt,
+        w.ends_at AS endsAt,
+        w.display_order AS displayOrder,
+        w.is_active AS isActive
+      FROM transport_programme_windows w
+      JOIN transport_programmes p
+        ON p.id = w.programme_id
+      WHERE w.is_active = 1
+      ORDER BY
+        p.id,
+        w.display_order,
+        w.id
+    `).all().map(
+      window => {
+        const capacity =
+          listTransportProgrammeCapacity(
+            window.id
+          );
+
+        const hasUnlimitedCapacity =
+          capacity.some(
+            row =>
+              Number(
+                row.isUnlimited
+              ) === 1
+          );
+
+        const finiteSeatCapacity =
+          capacity.reduce(
+            (total, row) => {
+              if (
+                Number(
+                  row.isUnlimited
+                ) === 1
+              ) {
+                return total;
+              }
+
+              return (
+                total +
+                Number(
+                  row.seatCapacity || 0
+                ) *
+                  Number(
+                    row.quantity || 0
+                  )
+              );
+            },
+            0
+          );
+
+        return {
+          ...window,
+
+          capacityConfigured:
+            capacity.length > 0,
+
+          hasUnlimitedCapacity,
+
+          finiteSeatCapacity,
+
+          capacity
+        };
+      }
+    );
+
   const ready =
     overview.requests.filter(
       request =>
@@ -9964,6 +10038,28 @@ function getTransportPlanningCandidates() {
           ),
 
         finiteSeatCapacity,
+
+        capacityStatus:
+          capacity.length === 0
+            ? 'not_configured'
+            : capacity.some(
+                row =>
+                  Number(
+                    row.isUnlimited
+                  ) === 1
+              )
+            ? 'unlimited'
+            : finiteSeatCapacity >=
+                Number(
+                  request.passengerCount ||
+                  0
+                )
+            ? 'available'
+            : 'shortfall',
+
+        capacityShortfall: 0,
+        capacitySurplus: 0,
+
         capacity,
 
         requests: []
@@ -10004,6 +10100,54 @@ function getTransportPlanningCandidates() {
     group.requests.push(
       request
     );
+  }
+
+  for (const group of groups.values()) {
+    if (!group.capacityConfigured) {
+      group.capacityStatus =
+        'not_configured';
+
+      group.capacityShortfall = 0;
+      group.capacitySurplus = 0;
+      continue;
+    }
+
+    if (group.hasUnlimitedCapacity) {
+      group.capacityStatus =
+        'unlimited';
+
+      group.capacityShortfall = 0;
+      group.capacitySurplus = 0;
+      continue;
+    }
+
+    const difference =
+      Number(
+        group.finiteSeatCapacity || 0
+      ) -
+      Number(
+        group.passengerCount || 0
+      );
+
+    if (difference >= 0) {
+      group.capacityStatus =
+        'available';
+
+      group.capacitySurplus =
+        difference;
+
+      group.capacityShortfall = 0;
+    } else {
+      group.capacityStatus =
+        'shortfall';
+
+      group.capacitySurplus = 0;
+
+      group.capacityShortfall =
+        Math.abs(
+          difference
+        );
+    }
   }
 
   const result =
@@ -10065,6 +10209,8 @@ function getTransportPlanningCandidates() {
             !group.capacityConfigured
         ).length
     },
+
+    serviceWindows,
 
     groups: result
   };

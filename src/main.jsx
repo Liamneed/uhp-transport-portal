@@ -661,7 +661,9 @@ function App() {
           ) : active === 'nac-control' ? (
             <NacControlPage/>
           ) : active === 'nac-special-transport' ? (
-            <TransportOperationsPage/>
+            <TransportOperationsPage
+              currentUser={currentUser}
+            />
           ) : active === 'nac-bookings' ? (
             <NacBookingsPage/>
           ) : active === 'nac-exceptions' ? (
@@ -689,7 +691,9 @@ function App() {
 }
 
 
-function TransportOperationsPage() {
+function TransportOperationsPage({
+  currentUser
+}) {
   const [overview, setOverview] =
     useState(null);
 
@@ -714,6 +718,42 @@ function TransportOperationsPage() {
   const [
     transportPlanningError,
     setTransportPlanningError
+  ] =
+    useState('');
+
+  const transportOperationsIsNacAdmin =
+    currentUser?.roles?.some(
+      role =>
+        role.code === 'nac_admin'
+    ) ?? false;
+
+  const [
+    transportPlanningRefreshVersion,
+    setTransportPlanningRefreshVersion
+  ] =
+    useState(0);
+
+  const [
+    transportCapacityEditor,
+    setTransportCapacityEditor
+  ] =
+    useState(null);
+
+  const [
+    transportCapacitySaving,
+    setTransportCapacitySaving
+  ] =
+    useState(false);
+
+  const [
+    transportCapacitySaveError,
+    setTransportCapacitySaveError
+  ] =
+    useState('');
+
+  const [
+    transportCapacitySaveMessage,
+    setTransportCapacitySaveMessage
   ] =
     useState('');
 
@@ -908,7 +948,241 @@ function TransportOperationsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [
+    transportPlanningRefreshVersion
+  ]);
+
+
+  function openTransportCapacityCreate(
+    window
+  ) {
+    setTransportCapacitySaveError('');
+    setTransportCapacitySaveMessage('');
+
+    setTransportCapacityEditor({
+      mode: 'create',
+      windowId: window.id,
+      windowName: window.name,
+      capacityId: null,
+      vehicleType: '',
+      seatCapacity: '4',
+      quantity: '1',
+      isUnlimited: false,
+      notes: ''
+    });
+  }
+
+
+  function openTransportCapacityEdit(
+    window,
+    capacity
+  ) {
+    setTransportCapacitySaveError('');
+    setTransportCapacitySaveMessage('');
+
+    setTransportCapacityEditor({
+      mode: 'edit',
+      windowId: window.id,
+      windowName: window.name,
+      capacityId: capacity.id,
+      vehicleType:
+        capacity.vehicleType || '',
+      seatCapacity:
+        String(
+          capacity.seatCapacity ?? ''
+        ),
+      quantity:
+        Number(
+          capacity.isUnlimited
+        )
+          ? ''
+          : String(
+              capacity.quantity ?? ''
+            ),
+      isUnlimited:
+        Number(
+          capacity.isUnlimited
+        ) === 1,
+      notes:
+        capacity.notes || ''
+    });
+  }
+
+
+  function closeTransportCapacityEditor() {
+    if (transportCapacitySaving) {
+      return;
+    }
+
+    setTransportCapacityEditor(null);
+    setTransportCapacitySaveError('');
+  }
+
+
+  function updateTransportCapacityEditor(
+    field,
+    value
+  ) {
+    setTransportCapacityEditor(
+      current =>
+        current
+          ? {
+              ...current,
+              [field]: value
+            }
+          : current
+    );
+  }
+
+
+  async function saveTransportCapacity(
+    event
+  ) {
+    event.preventDefault();
+
+    if (
+      !transportOperationsIsNacAdmin ||
+      !transportCapacityEditor
+    ) {
+      return;
+    }
+
+    const vehicleType =
+      String(
+        transportCapacityEditor
+          .vehicleType || ''
+      ).trim();
+
+    const seatCapacity =
+      Number(
+        transportCapacityEditor
+          .seatCapacity
+      );
+
+    const quantity =
+      transportCapacityEditor
+        .isUnlimited
+        ? null
+        : Number(
+            transportCapacityEditor
+              .quantity
+          );
+
+    if (!vehicleType) {
+      setTransportCapacitySaveError(
+        'Vehicle type is required.'
+      );
+      return;
+    }
+
+    if (
+      !Number.isInteger(
+        seatCapacity
+      ) ||
+      seatCapacity < 1
+    ) {
+      setTransportCapacitySaveError(
+        'Seats per vehicle must be at least 1.'
+      );
+      return;
+    }
+
+    if (
+      !transportCapacityEditor
+        .isUnlimited &&
+      (
+        !Number.isInteger(
+          quantity
+        ) ||
+        quantity < 0
+      )
+    ) {
+      setTransportCapacitySaveError(
+        'Number of vehicles must be zero or more.'
+      );
+      return;
+    }
+
+    setTransportCapacitySaving(true);
+    setTransportCapacitySaveError('');
+    setTransportCapacitySaveMessage('');
+
+    try {
+      const isEdit =
+        transportCapacityEditor
+          .mode === 'edit';
+
+      const endpoint =
+        isEdit
+          ? `${API_BASE}/api/transport-programme-capacity/${transportCapacityEditor.capacityId}`
+          : `${API_BASE}/api/transport-programme-windows/${transportCapacityEditor.windowId}/capacity`;
+
+      const response =
+        await apiFetch(
+          endpoint,
+          {
+            method:
+              isEdit
+                ? 'PATCH'
+                : 'POST',
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify({
+                vehicleType,
+                seatCapacity,
+                quantity,
+                isUnlimited:
+                  transportCapacityEditor
+                    .isUnlimited,
+                notes:
+                  String(
+                    transportCapacityEditor
+                      .notes || ''
+                  ).trim()
+              })
+          }
+        );
+
+      const data =
+        await response.json()
+          .catch(
+            () => ({})
+          );
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to save vehicle capacity'
+        );
+      }
+
+      setTransportCapacityEditor(null);
+
+      setTransportCapacitySaveMessage(
+        isEdit
+          ? 'Vehicle capacity updated.'
+          : 'Vehicle capacity added.'
+      );
+
+      setTransportPlanningRefreshVersion(
+        value =>
+          value + 1
+      );
+    } catch (saveError) {
+      setTransportCapacitySaveError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Unable to save vehicle capacity'
+      );
+    } finally {
+      setTransportCapacitySaving(false);
+    }
+  }
 
 
   const transportOperationsFilteredRequests =
@@ -1934,6 +2208,401 @@ function TransportOperationsPage() {
       </section>
 
 
+      <section className="transport-capacity-config-section">
+        <div className="transport-analysis-title">
+          <div>
+            <small>
+              Fleet configuration
+            </small>
+
+            <h2>
+              Vehicle Capacity
+            </h2>
+
+            <p>
+              Vehicles available for each
+              active Special Transport
+              service window.
+            </p>
+          </div>
+
+          {transportOperationsIsNacAdmin && (
+            <span>
+              NAC Admin
+            </span>
+          )}
+        </div>
+
+        {transportPlanningLoading ? (
+          <div className="card state-panel">
+            Loading vehicle capacity...
+          </div>
+        ) : transportPlanningError ? (
+          <div className="card state-panel error">
+            {transportPlanningError}
+          </div>
+        ) : transportPlanningCandidates
+            ?.serviceWindows
+            ?.length ? (
+          <div className="transport-capacity-window-grid">
+            {transportPlanningCandidates
+              .serviceWindows
+              .map(
+                (window) => (
+                  <article
+                    className="card transport-capacity-window"
+                    key={window.id}
+                  >
+                    <div className="transport-capacity-window-heading">
+                      <div>
+                        <small>
+                          {window.programmeCode}
+                        </small>
+
+                        <h3>
+                          {window.name}
+                        </h3>
+
+                        <p>
+                          {window.programmeName}
+                        </p>
+                      </div>
+
+                      <span
+                        className={`transport-capacity-window-status ${
+                          !window.capacityConfigured
+                            ? 'missing'
+                            : window.hasUnlimitedCapacity
+                            ? 'unlimited'
+                            : 'configured'
+                        }`}
+                      >
+                        {!window.capacityConfigured
+                          ? 'Not configured'
+                          : window.hasUnlimitedCapacity
+                          ? 'Unlimited'
+                          : `${window.finiteSeatCapacity} seats`}
+                      </span>
+                    </div>
+
+                    {window.capacity?.length ? (
+                      <div className="transport-capacity-config-list">
+                        {window.capacity.map(
+                          (capacity) => (
+                            <div
+                              className="transport-capacity-config-row"
+                              key={capacity.id}
+                            >
+                              <div>
+                                <strong>
+                                  {capacity.vehicleType}
+                                </strong>
+
+                                {capacity.notes && (
+                                  <span>
+                                    {capacity.notes}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="transport-capacity-config-meta">
+                                <strong>
+                                  {capacity.seatCapacity}
+                                  {' '}
+                                  seats
+                                </strong>
+
+                                <span>
+                                  {Number(
+                                    capacity.isUnlimited
+                                  )
+                                    ? 'Unlimited vehicles'
+                                    : `${
+                                        capacity.quantity
+                                      } vehicle${
+                                        Number(
+                                          capacity.quantity
+                                        ) === 1
+                                          ? ''
+                                          : 's'
+                                      }`}
+                                </span>
+
+                                {transportOperationsIsNacAdmin && (
+                                  <button
+                                    type="button"
+                                    className="transport-capacity-text-button"
+                                    onClick={() =>
+                                      openTransportCapacityEdit(
+                                        window,
+                                        capacity
+                                      )
+                                    }
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    ) : (
+                      <div className="transport-capacity-config-empty">
+                        <AlertTriangle size={20}/>
+
+                        <div>
+                          <strong>
+                            Vehicle capacity has not been configured
+                          </strong>
+
+                          <span>
+                            Planning can continue for review,
+                            but final vehicle allocation needs
+                            a capacity configuration.
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {transportOperationsIsNacAdmin && (
+                      <div className="transport-capacity-admin">
+                        {transportCapacitySaveMessage &&
+                          !transportCapacityEditor && (
+                            <div className="transport-capacity-success">
+                              {transportCapacitySaveMessage}
+                            </div>
+                          )}
+
+                        {transportCapacityEditor
+                          ?.windowId === window.id ? (
+                          <form
+                            className="transport-capacity-editor"
+                            onSubmit={
+                              saveTransportCapacity
+                            }
+                          >
+                            <div className="transport-capacity-editor-heading">
+                              <div>
+                                <strong>
+                                  {transportCapacityEditor.mode ===
+                                  'edit'
+                                    ? 'Edit vehicle capacity'
+                                    : 'Add vehicle type'}
+                                </strong>
+
+                                <span>
+                                  {window.name}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="form-grid two">
+                              <label>
+                                Vehicle type
+
+                                <input
+                                  type="text"
+                                  value={
+                                    transportCapacityEditor
+                                      .vehicleType
+                                  }
+                                  onChange={
+                                    event =>
+                                      updateTransportCapacityEditor(
+                                        'vehicleType',
+                                        event.target.value
+                                      )
+                                  }
+                                  placeholder="e.g. Saloon"
+                                  disabled={
+                                    transportCapacitySaving
+                                  }
+                                />
+                              </label>
+
+                              <label>
+                                Seats per vehicle
+
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  value={
+                                    transportCapacityEditor
+                                      .seatCapacity
+                                  }
+                                  onChange={
+                                    event =>
+                                      updateTransportCapacityEditor(
+                                        'seatCapacity',
+                                        event.target.value
+                                      )
+                                  }
+                                  disabled={
+                                    transportCapacitySaving
+                                  }
+                                />
+                              </label>
+                            </div>
+
+                            <div className="form-grid two">
+                              <label>
+                                Number of vehicles
+
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={
+                                    transportCapacityEditor
+                                      .quantity
+                                  }
+                                  onChange={
+                                    event =>
+                                      updateTransportCapacityEditor(
+                                        'quantity',
+                                        event.target.value
+                                      )
+                                  }
+                                  disabled={
+                                    transportCapacitySaving ||
+                                    transportCapacityEditor
+                                      .isUnlimited
+                                  }
+                                />
+                              </label>
+
+                              <label className="transport-capacity-unlimited-option">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    transportCapacityEditor
+                                      .isUnlimited
+                                  }
+                                  onChange={
+                                    event =>
+                                      updateTransportCapacityEditor(
+                                        'isUnlimited',
+                                        event.target.checked
+                                      )
+                                  }
+                                  disabled={
+                                    transportCapacitySaving
+                                  }
+                                />
+
+                                <span>
+                                  <strong>
+                                    Unlimited vehicles
+                                  </strong>
+
+                                  <small>
+                                    Do not apply a fixed
+                                    vehicle quantity.
+                                  </small>
+                                </span>
+                              </label>
+                            </div>
+
+                            <label className="transport-capacity-notes-field">
+                              Notes
+                              <textarea
+                                rows="2"
+                                value={
+                                  transportCapacityEditor
+                                    .notes
+                                }
+                                onChange={
+                                  event =>
+                                    updateTransportCapacityEditor(
+                                      'notes',
+                                      event.target.value
+                                    )
+                                }
+                                placeholder="Optional operational notes"
+                                disabled={
+                                  transportCapacitySaving
+                                }
+                              />
+                            </label>
+
+                            {transportCapacitySaveError && (
+                              <div className="transport-capacity-form-error">
+                                {transportCapacitySaveError}
+                              </div>
+                            )}
+
+                            <div className="transport-capacity-editor-actions">
+                              <button
+                                type="button"
+                                className="transport-capacity-cancel-button"
+                                onClick={
+                                  closeTransportCapacityEditor
+                                }
+                                disabled={
+                                  transportCapacitySaving
+                                }
+                              >
+                                Cancel
+                              </button>
+
+                              <button
+                                type="submit"
+                                className="transport-capacity-save-button"
+                                disabled={
+                                  transportCapacitySaving
+                                }
+                              >
+                                {transportCapacitySaving
+                                  ? 'Saving...'
+                                  : transportCapacityEditor
+                                      .mode === 'edit'
+                                  ? 'Save changes'
+                                  : 'Add vehicle type'}
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
+                          <div className="transport-capacity-admin-actions">
+                            <button
+                              type="button"
+                              className="transport-capacity-add-button"
+                              onClick={() =>
+                                openTransportCapacityCreate(
+                                  window
+                                )
+                              }
+                            >
+                              <Plus size={16}/>
+                              Add vehicle type
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                )
+              )}
+          </div>
+        ) : (
+          <div className="card role-dashboard-empty">
+            <CalendarDays size={26}/>
+
+            <strong>
+              No active service windows
+            </strong>
+
+            <span>
+              Vehicle capacity will appear
+              here when a Special Transport
+              service window is active.
+            </span>
+          </div>
+        )}
+      </section>
+
+
       <section className="transport-planning-section">
         <div className="transport-analysis-title">
           <div>
@@ -2141,21 +2810,58 @@ function TransportOperationsPage() {
 
                             <div
                               className={`transport-capacity-state ${
-                                group.capacityConfigured
-                                  ? 'configured'
-                                  : 'missing'
+                                group.capacityStatus ||
+                                'not_configured'
                               }`}
                             >
-                              {group.capacityConfigured ? (
+                              {group.capacityStatus ===
+                              'unlimited' ? (
                                 <>
                                   <strong>
-                                    Vehicle capacity configured
+                                    Unlimited capacity
                                   </strong>
 
                                   <span>
-                                    {group.hasUnlimitedCapacity
-                                      ? 'Unlimited capacity available'
-                                      : `${group.finiteSeatCapacity} configured seats`}
+                                    This service window has an unlimited-capacity vehicle configuration.
+                                  </span>
+                                </>
+                              ) : group.capacityStatus ===
+                                'available' ? (
+                                <>
+                                  <strong>
+                                    Capacity available
+                                  </strong>
+
+                                  <span>
+                                    {group.finiteSeatCapacity}
+                                    {' '}
+                                    configured seats for
+                                    {' '}
+                                    {group.passengerCount}
+                                    {' '}
+                                    passengers
+                                    {group.capacitySurplus > 0
+                                      ? ` · ${group.capacitySurplus} spare`
+                                      : ''}
+                                  </span>
+                                </>
+                              ) : group.capacityStatus ===
+                                'shortfall' ? (
+                                <>
+                                  <strong>
+                                    Capacity shortfall
+                                  </strong>
+
+                                  <span>
+                                    {group.finiteSeatCapacity}
+                                    {' '}
+                                    configured seats for
+                                    {' '}
+                                    {group.passengerCount}
+                                    {' '}
+                                    passengers · short by
+                                    {' '}
+                                    {group.capacityShortfall}
                                   </span>
                                 </>
                               ) : (
@@ -2170,6 +2876,54 @@ function TransportOperationsPage() {
                                 </>
                               )}
                             </div>
+
+                            {group.capacity?.length > 0 && (
+                              <div className="transport-capacity-breakdown">
+                                <small>
+                                  Configured vehicles
+                                </small>
+
+                                {group.capacity.map(
+                                  (capacity) => (
+                                    <div
+                                      className="transport-capacity-vehicle"
+                                      key={capacity.id}
+                                    >
+                                      <strong>
+                                        {capacity.vehicleType}
+                                      </strong>
+
+                                      <span>
+                                        {capacity.seatCapacity}
+                                        {' '}
+                                        seats
+                                        {' · '}
+                                        {Number(
+                                          capacity.isUnlimited
+                                        )
+                                          ? 'Unlimited'
+                                          : `${
+                                              capacity.quantity
+                                            } vehicle${
+                                              Number(
+                                                capacity.quantity
+                                              ) === 1
+                                                ? ''
+                                                : 's'
+                                            }`}
+                                      </span>
+                                    </div>
+                                  )
+                                )}
+
+                                <p>
+                                  Capacity shown here is an
+                                  indicative group check. Final
+                                  vehicle allocation will account
+                                  for overlapping journeys.
+                                </p>
+                              </div>
+                            )}
 
                             <div className="transport-planning-passengers">
                               {
