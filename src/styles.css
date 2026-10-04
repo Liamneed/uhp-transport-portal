@@ -5271,3 +5271,165 @@ button:disabled {
     grid-column: auto;
   }
 }
+
+
+/* Special staff transport */
+
+.special-transport-layout {
+  display: block;
+  margin-bottom: 22px;
+}
+
+.special-transport-form-card,
+.special-transport-requests-card {
+  margin-bottom: 22px;
+}
+
+.special-transport-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.special-transport-section-heading h2 {
+  margin: 0;
+}
+
+.special-transport-section-heading p {
+  margin: 6px 0 0;
+  color: #6f7e91;
+}
+
+.special-transport-info {
+  margin-bottom: 20px;
+}
+
+.special-transport-service-summary {
+  padding: 14px 16px;
+  margin: 4px 0 20px;
+  border: 1px solid #dce4ec;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.special-transport-service-summary strong,
+.special-transport-service-summary span {
+  display: block;
+}
+
+.special-transport-service-summary span {
+  margin-top: 3px;
+  color: #5f6f82;
+  font-size: 0.9rem;
+}
+
+.special-transport-service-summary p {
+  margin: 8px 0 0;
+  color: #526274;
+}
+
+.special-transport-subheading {
+  margin: 24px 0 12px;
+  font-weight: 700;
+}
+
+.special-transport-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 22px;
+}
+
+.special-transport-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #eef3f8;
+  color: #40546a;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.special-transport-unavailable {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+
+.special-transport-unavailable span {
+  color: #6f7e91;
+}
+
+.special-transport-form-card textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.special-transport-requests-card td small {
+  display: block;
+  margin-top: 4px;
+  color: #6f7e91;
+}
+
+@media (max-width: 760px) {
+  .special-transport-section-heading {
+    flex-direction: column;
+  }
+
+  .special-transport-actions {
+    justify-content: stretch;
+  }
+
+  .special-transport-actions button {
+    width: 100%;
+  }
+}
+
+/* Special transport final UI polish */
+
+.special-transport-form-card {
+  max-width: 1280px;
+}
+
+.special-transport-actions button {
+  min-height: 42px;
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 8px;
+  background: #005eb8;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.special-transport-actions button:hover:not(:disabled) {
+  background: #004b93;
+}
+
+.special-transport-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.special-transport-form-card input,
+.special-transport-form-card select,
+.special-transport-form-card textarea {
+  min-height: 38px;
+}
+
+.special-transport-form-card textarea {
+  min-height: 74px;
+}
+
+.special-transport-service-summary {
+  line-height: 1.45;
+}
+
+.special-transport-requests-card {
+  overflow: hidden;
+}

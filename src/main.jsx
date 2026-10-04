@@ -67,6 +67,7 @@ const navDefinitions = {
   uhp_admin: [
     ['admin-dashboard', 'Dashboard', LayoutDashboard],
     ['book-transport', 'Book UHP Transport', CarFront],
+    ['special-transport', 'Special Transport', CalendarDays],
     ['uhp-bookings', 'All Bookings', CalendarDays],
     ['admin-users', 'Users', UserRoundCog],
     ['admin-budgets', 'Budgets', WalletCards],
@@ -79,12 +80,14 @@ const navDefinitions = {
   booker: [
     ['booker-dashboard', 'Dashboard', LayoutDashboard],
     ['book-transport', 'Book UHP Transport', CarFront],
+    ['special-transport', 'Special Transport', CalendarDays],
     ['my-bookings', 'My Bookings', CalendarDays]
   ],
 
   budget_holder: [
     ['holder-dashboard', 'Dashboard', LayoutDashboard],
     ['book-transport', 'Book UHP Transport', CarFront],
+    ['special-transport', 'Special Transport', CalendarDays],
     ['holder-bookings', 'Bookings', CalendarDays],
     ['holder-invoices', 'Invoices', WalletCards],
     ['holder-reports', 'Reports', BarChart3]
@@ -92,6 +95,7 @@ const navDefinitions = {
 
   department_manager: [
     ['manager-dashboard', 'Dashboard', LayoutDashboard],
+    ['special-transport', 'Special Transport', CalendarDays],
     ['manager-bookings', 'Bookings', CalendarDays],
     ['manager-reports', 'Reports', BarChart3]
   ],
@@ -626,6 +630,10 @@ function App() {
             />
           ) : active === 'holder-dashboard' ? (
             <BudgetHolderDashboard
+              currentUser={currentUser}
+            />
+          ) : active === 'special-transport' ? (
+            <SpecialTransportPage
               currentUser={currentUser}
             />
           ) : active === 'book-transport' ? (
@@ -12123,6 +12131,884 @@ function BookingPlanningMap({
           : 'Select every entered journey location to show the road route.'}
       </div>
     </div>
+  );
+}
+
+
+function createInitialSpecialTransportForm(
+  currentUser
+) {
+  return {
+    programmeWindowId: '',
+    passengerName:
+      [
+        currentUser?.firstName,
+        currentUser?.lastName
+      ]
+        .filter(Boolean)
+        .join(' '),
+    passengerMobile: '',
+    passengerEmail:
+      currentUser?.email || '',
+    direction: 'to_work',
+    shiftTime: '',
+    pickupAddress: '',
+    pickupPostcode: '',
+    destinationAddress: '',
+    destinationPostcode: '',
+    passengerCount: 1,
+    accessibilityNotes: '',
+    passengerNotes: ''
+  };
+}
+
+
+function formatSpecialTransportWindow(
+  value
+) {
+  if (!value) return '';
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return String(value);
+  }
+
+  return new Intl.DateTimeFormat(
+    'en-GB',
+    {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }
+  ).format(date);
+}
+
+
+function specialTransportStatusLabel(
+  status
+) {
+  const labels = {
+    submitted: 'Request received',
+    needs_information: 'More information needed',
+    ready_for_planning: 'Details checked',
+    planned: 'Route planning',
+    awaiting_confirmation: 'Itinerary ready',
+    confirmed: 'Confirmed',
+    locked: 'Transport locked',
+    booked: 'Transport booked',
+    change_requested: 'Change requested',
+    not_accommodated: 'Unable to accommodate',
+    cancelled: 'Cancelled'
+  };
+
+  return (
+    labels[status] ||
+    String(status || '')
+      .replaceAll('_', ' ')
+  );
+}
+
+
+function SpecialTransportPage({
+  currentUser
+}) {
+  const [
+    options,
+    setOptions
+  ] = useState([]);
+
+  const [
+    requests,
+    setRequests
+  ] = useState([]);
+
+  const [
+    form,
+    setForm
+  ] = useState(
+    () =>
+      createInitialSpecialTransportForm(
+        currentUser
+      )
+  );
+
+  const [
+    loading,
+    setLoading
+  ] = useState(true);
+
+  const [
+    saving,
+    setSaving
+  ] = useState(false);
+
+  const [
+    error,
+    setError
+  ] = useState('');
+
+  const [
+    success,
+    setSuccess
+  ] = useState('');
+
+  const isUhpAdmin =
+    (currentUser?.roles || [])
+      .some(
+        (role) =>
+          role.code ===
+            'uhp_admin'
+      );
+
+  async function loadSpecialTransport() {
+    setLoading(true);
+    setError('');
+
+    try {
+      const [
+        optionsResponse,
+        requestsResponse
+      ] =
+        await Promise.all([
+          apiFetch(
+            `${API_BASE}/api/transport-request-options`
+          ),
+          apiFetch(
+            `${API_BASE}/api/transport-requests`
+          )
+        ]);
+
+      if (!optionsResponse.ok) {
+        const data =
+          await optionsResponse.json()
+            .catch(() => ({}));
+
+        throw new Error(
+          data.error ||
+            'Unable to load available transport services'
+        );
+      }
+
+      if (!requestsResponse.ok) {
+        const data =
+          await requestsResponse.json()
+            .catch(() => ({}));
+
+        throw new Error(
+          data.error ||
+            'Unable to load transport requests'
+        );
+      }
+
+      const optionsData =
+        await optionsResponse.json();
+
+      const requestsData =
+        await requestsResponse.json();
+
+      const nextOptions =
+        optionsData.options || [];
+
+      setOptions(
+        nextOptions
+      );
+
+      setRequests(
+        requestsData.requests || []
+      );
+
+      setForm(
+        (current) => {
+          const stillValid =
+            nextOptions.some(
+              (option) =>
+                String(
+                  option.windowId
+                ) ===
+                  String(
+                    current.programmeWindowId
+                  )
+            );
+
+          if (
+            stillValid ||
+            nextOptions.length === 0
+          ) {
+            return current;
+          }
+
+          return {
+            ...current,
+            programmeWindowId:
+              String(
+                nextOptions[0].windowId
+              )
+          };
+        }
+      );
+    } catch (loadError) {
+      setError(
+        loadError.message ||
+          'Unable to load special transport'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSpecialTransport();
+  }, []);
+
+  function updateField(
+    field,
+    value
+  ) {
+    setForm(
+      (current) => ({
+        ...current,
+        [field]: value
+      })
+    );
+  }
+
+  const selectedOption =
+    options.find(
+      (option) =>
+        String(option.windowId) ===
+          String(
+            form.programmeWindowId
+          )
+    ) || null;
+
+  async function submitRequest(
+    event
+  ) {
+    event.preventDefault();
+
+    setError('');
+    setSuccess('');
+
+    if (!form.programmeWindowId) {
+      setError(
+        'Please select a transport service.'
+      );
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-requests`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({
+                programmeWindowId:
+                  Number(
+                    form.programmeWindowId
+                  ),
+                passengerName:
+                  form.passengerName,
+                passengerMobile:
+                  form.passengerMobile,
+                passengerEmail:
+                  form.passengerEmail,
+                direction:
+                  form.direction,
+                shiftTime:
+                  form.shiftTime,
+                pickupAddress:
+                  form.pickupAddress,
+                pickupPostcode:
+                  form.pickupPostcode,
+                destinationAddress:
+                  form.destinationAddress,
+                destinationPostcode:
+                  form.destinationPostcode,
+                passengerCount:
+                  Number(
+                    form.passengerCount
+                  ),
+                accessibilityNotes:
+                  form.accessibilityNotes,
+                passengerNotes:
+                  form.passengerNotes
+              })
+          }
+        );
+
+      const data =
+        await response.json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to submit transport request'
+        );
+      }
+
+      setSuccess(
+        'Request received — this is not yet a confirmed taxi booking. We will review the details and update you as planning progresses.'
+      );
+
+      setForm(
+        (current) => ({
+          ...createInitialSpecialTransportForm(
+            currentUser
+          ),
+          programmeWindowId:
+            current.programmeWindowId,
+          passengerMobile:
+            current.passengerMobile
+        })
+      );
+
+      await loadSpecialTransport();
+    } catch (submitError) {
+      setError(
+        submitError.message ||
+          'Unable to submit transport request'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading special transport…
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>Special Transport</h1>
+
+          <p>
+            Request staff transport for special
+            services and exceptional operating
+            periods.
+          </p>
+        </div>
+      </div>
+
+      {success && (
+        <div className="notice success">
+          {success}
+        </div>
+      )}
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      {options.length === 0 ? (
+        <section className="card special-transport-unavailable">
+          <CalendarDays size={30}/>
+
+          <strong>
+            No special transport services are
+            currently open for requests
+          </strong>
+
+          <span>
+            Available services will appear here
+            when requests open.
+          </span>
+        </section>
+      ) : (
+        <form
+          className="special-transport-layout"
+          onSubmit={submitRequest}
+        >
+          <section className="card special-transport-form-card">
+            <div className="special-transport-section-heading">
+              <div>
+                <h2>Request transport</h2>
+
+                <p>
+                  Tell us your shift details and
+                  journey requirements. Your final
+                  taxi pickup time will be arranged
+                  during route planning.
+                </p>
+              </div>
+            </div>
+
+            <div className="notice special-transport-info">
+              Submitting this form creates a
+              transport request only. It does not
+              create or guarantee a taxi booking.
+            </div>
+
+            <div className="form-grid two">
+              <label>
+                Transport service
+
+                <select
+                  value={
+                    form.programmeWindowId
+                  }
+                  onChange={(event) =>
+                    updateField(
+                      'programmeWindowId',
+                      event.target.value
+                    )
+                  }
+                  required
+                >
+                  <option value="">
+                    Select service
+                  </option>
+
+                  {options.map(
+                    (option) => (
+                      <option
+                        key={
+                          option.windowId
+                        }
+                        value={
+                          option.windowId
+                        }
+                      >
+                        {option.programmeName}
+                        {' — '}
+                        {option.windowName}
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+
+              <label>
+                Journey
+
+                <select
+                  value={form.direction}
+                  onChange={(event) =>
+                    updateField(
+                      'direction',
+                      event.target.value
+                    )
+                  }
+                >
+                  <option value="to_work">
+                    Travelling to work
+                  </option>
+
+                  <option value="from_work">
+                    Travelling home from work
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            {selectedOption && (
+              <div className="special-transport-service-summary">
+                <strong>
+                  {selectedOption.windowName}
+                </strong>
+
+                <span>
+                  {formatSpecialTransportWindow(
+                    selectedOption.startsAt
+                  )}
+                  {' – '}
+                  {formatSpecialTransportWindow(
+                    selectedOption.endsAt
+                  )}
+                </span>
+
+                {selectedOption.programmePublicNotes && (
+                  <p>
+                    {
+                      selectedOption.programmePublicNotes
+                    }
+                  </p>
+                )}
+
+                {selectedOption.windowPublicNotes && (
+                  <p>
+                    {
+                      selectedOption.windowPublicNotes
+                    }
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="form-grid two">
+              <label>
+                {form.direction ===
+                'to_work'
+                  ? 'Shift start date and time'
+                  : 'Shift finish date and time'}
+
+                <input
+                  type="datetime-local"
+                  value={form.shiftTime}
+                  onChange={(event) =>
+                    updateField(
+                      'shiftTime',
+                      event.target.value
+                    )
+                  }
+                  required
+                />
+              </label>
+
+              <label>
+                Number of passengers
+
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.passengerCount}
+                  onChange={(event) =>
+                    updateField(
+                      'passengerCount',
+                      event.target.value
+                    )
+                  }
+                  required
+                />
+              </label>
+            </div>
+
+            <div className="special-transport-subheading">
+              Passenger
+            </div>
+
+            <div className="form-grid two">
+              <label>
+                Passenger name
+
+                <input
+                  value={form.passengerName}
+                  onChange={(event) =>
+                    updateField(
+                      'passengerName',
+                      event.target.value
+                    )
+                  }
+                  required
+                />
+              </label>
+
+              <label>
+                Mobile number
+
+                <input
+                  type="tel"
+                  value={form.passengerMobile}
+                  onChange={(event) =>
+                    updateField(
+                      'passengerMobile',
+                      event.target.value
+                    )
+                  }
+                  required
+                />
+              </label>
+
+              <label>
+                Email
+
+                <input
+                  type="email"
+                  value={form.passengerEmail}
+                  onChange={(event) =>
+                    updateField(
+                      'passengerEmail',
+                      event.target.value
+                    )
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="special-transport-subheading">
+              Journey
+            </div>
+
+            <div className="form-grid two">
+              <label>
+                {form.direction ===
+                'to_work'
+                  ? 'Home / pickup address'
+                  : 'Work pickup address'}
+
+                <input
+                  value={form.pickupAddress}
+                  onChange={(event) =>
+                    updateField(
+                      'pickupAddress',
+                      event.target.value
+                    )
+                  }
+                  required
+                />
+              </label>
+
+              <label>
+                {form.direction ===
+                'to_work'
+                  ? 'Pickup postcode'
+                  : 'Work postcode'}
+
+                <input
+                  value={form.pickupPostcode}
+                  onChange={(event) =>
+                    updateField(
+                      'pickupPostcode',
+                      event.target.value
+                    )
+                  }
+                />
+              </label>
+
+              <label>
+                {form.direction ===
+                'to_work'
+                  ? 'Work destination'
+                  : 'Home / destination address'}
+
+                <input
+                  value={
+                    form.destinationAddress
+                  }
+                  onChange={(event) =>
+                    updateField(
+                      'destinationAddress',
+                      event.target.value
+                    )
+                  }
+                  required
+                />
+              </label>
+
+              <label>
+                {form.direction ===
+                'to_work'
+                  ? 'Work postcode'
+                  : 'Home postcode'}
+
+                <input
+                  value={
+                    form.destinationPostcode
+                  }
+                  onChange={(event) =>
+                    updateField(
+                      'destinationPostcode',
+                      event.target.value
+                    )
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="form-grid two">
+              <label>
+                Accessibility requirements
+
+                <textarea
+                  rows="3"
+                  value={
+                    form.accessibilityNotes
+                  }
+                  onChange={(event) =>
+                    updateField(
+                      'accessibilityNotes',
+                      event.target.value
+                    )
+                  }
+                  placeholder="Wheelchair, mobility or other requirements"
+                />
+              </label>
+
+              <label>
+                Anything else we should know?
+
+                <textarea
+                  rows="3"
+                  value={form.passengerNotes}
+                  onChange={(event) =>
+                    updateField(
+                      'passengerNotes',
+                      event.target.value
+                    )
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="special-transport-actions">
+              <button
+                type="submit"
+                disabled={saving}
+              >
+                {saving
+                  ? 'Sending request…'
+                  : 'Send transport request'}
+              </button>
+            </div>
+          </section>
+        </form>
+      )}
+
+      <section className="card special-transport-requests-card">
+        <div className="special-transport-section-heading">
+          <div>
+            <h2>
+              {isUhpAdmin
+                ? 'Transport Requests'
+                : 'My Transport Requests'}
+            </h2>
+
+            <p>
+              Follow each request from receipt
+              through planning and confirmation.
+            </p>
+          </div>
+        </div>
+
+        {requests.length === 0 ? (
+          <div className="empty-bookings">
+            <CalendarDays size={30}/>
+
+            <strong>
+              No transport requests yet
+            </strong>
+
+            <span>
+              Submitted special transport requests
+              will appear here.
+            </span>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="bookings-table booking-list-compact">
+              <thead>
+                <tr>
+                  <th>Service</th>
+                  {isUhpAdmin && (
+                    <th>Requested by</th>
+                  )}
+                  <th>Passenger</th>
+                  <th>Shift</th>
+                  <th>Journey</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {requests.map(
+                  (request) => (
+                    <tr key={request.id}>
+                      <td>
+                        <strong>
+                          {
+                            request.programmeWindowName
+                          }
+                        </strong>
+
+                        <small>
+                          {
+                            request.programmeName
+                          }
+                        </small>
+                      </td>
+
+                      {isUhpAdmin && (
+                        <td>
+                          {
+                            request.requestedByName ||
+                            '—'
+                          }
+                        </td>
+                      )}
+
+                      <td>
+                        {
+                          request.passengerName ||
+                          '—'
+                        }
+                      </td>
+
+                      <td>
+                        <strong>
+                          {formatSpecialTransportWindow(
+                            request.shiftTime
+                          )}
+                        </strong>
+
+                        <small>
+                          {request.direction ===
+                          'to_work'
+                            ? 'Shift starts'
+                            : 'Shift finishes'}
+                        </small>
+                      </td>
+
+                      <td>
+                        <strong>
+                          {
+                            request.pickupAddress ||
+                            '—'
+                          }
+                        </strong>
+
+                        <small>
+                          to{' '}
+                          {
+                            request.destinationAddress ||
+                            '—'
+                          }
+                        </small>
+                      </td>
+
+                      <td>
+                        <span className="special-transport-status">
+                          {
+                            specialTransportStatusLabel(
+                              request.status
+                            )
+                          }
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
   );
 }
 
