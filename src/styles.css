@@ -4485,3 +4485,38 @@ button:disabled {
 .booking-modal-title-row .amended-chip {
   margin-top: 0;
 }
+
+
+.booking-audit-changes {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.booking-audit-change {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f7f9fb;
+}
+
+.booking-audit-change > strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: #5c6b7a;
+}
+
+.booking-audit-change > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #28394c;
+}
+
+.booking-audit-change-arrow {
+  color: #8290a0;
+  font-weight: 700;
+}

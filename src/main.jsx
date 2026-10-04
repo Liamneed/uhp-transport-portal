@@ -2847,6 +2847,85 @@ function formatBookingAuditEvent(event) {
 }
 
 
+function bookingEventPayload(event) {
+  if (
+    !event?.rawPayload
+  ) {
+    return null;
+  }
+
+  if (
+    typeof event.rawPayload ===
+      'object'
+  ) {
+    return event.rawPayload;
+  }
+
+  try {
+    return JSON.parse(
+      event.rawPayload
+    );
+  } catch {
+    return null;
+  }
+}
+
+
+function bookingAmendmentChanges(event) {
+  if (
+    event?.eventType !==
+      'booking_amended'
+  ) {
+    return [];
+  }
+
+  const payload =
+    bookingEventPayload(event);
+
+  return Array.isArray(
+    payload?.changes
+  )
+    ? payload.changes
+        .filter(
+          (change) =>
+            change &&
+            change.label &&
+            (
+              change.before !==
+                undefined ||
+              change.after !==
+                undefined
+            )
+        )
+    : [];
+}
+
+
+function formatAmendmentHistoryValue(
+  change,
+  value
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    String(value).trim() === ''
+  ) {
+    return 'None';
+  }
+
+  if (
+    change?.valueType ===
+      'datetime'
+  ) {
+    return formatBookingDateTime(
+      value
+    );
+  }
+
+  return String(value);
+}
+
+
 function formatAuditSource(source) {
   const labels = {
     autocab: 'Autocab',
@@ -3804,6 +3883,11 @@ function BookingDetailModal({
                             event
                           );
 
+                    const amendmentChanges =
+                      bookingAmendmentChanges(
+                        event
+                      );
+
                     return (
                       <div
                         className="booking-audit-item"
@@ -3823,7 +3907,9 @@ function BookingDetailModal({
                           <span className="booking-audit-summary">
                             {actor}
 
-                            {event.oldStatus &&
+                            {event.eventType !==
+                              'booking_amended' &&
+                              event.oldStatus &&
                               event.newStatus &&
                               event.oldStatus !==
                                 event.newStatus && (
@@ -3847,7 +3933,53 @@ function BookingDetailModal({
                           </small>
                         </div>
 
-                        {event.notes && (
+                        {amendmentChanges.length > 0 && (
+                          <div className="booking-audit-changes">
+                            {amendmentChanges.map(
+                              (
+                                change,
+                                changeIndex
+                              ) => (
+                                <div
+                                  className="booking-audit-change"
+                                  key={
+                                    `${event.auditKey}-${change.field || changeIndex}`
+                                  }
+                                >
+                                  <strong>
+                                    {change.label}
+                                  </strong>
+
+                                  <div>
+                                    <span>
+                                      {formatAmendmentHistoryValue(
+                                        change,
+                                        change.before
+                                      )}
+                                    </span>
+
+                                    <span
+                                      className="booking-audit-change-arrow"
+                                      aria-hidden="true"
+                                    >
+                                      →
+                                    </span>
+
+                                    <span>
+                                      {formatAmendmentHistoryValue(
+                                        change,
+                                        change.after
+                                      )}
+                                    </span>
+                                  </div>
+                                </div>
+                              )
+                            )}
+                          </div>
+                        )}
+
+                        {event.notes &&
+                          amendmentChanges.length === 0 && (
                           <div className="booking-audit-notes">
                             {event.notes}
                           </div>

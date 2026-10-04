@@ -4059,7 +4059,8 @@ function listOperationalBookings() {
           u.first_name || ' ' || u.last_name
         )
       END AS actorName,
-      be.notes
+      be.notes,
+      be.raw_payload AS rawPayload
     FROM booking_events be
     LEFT JOIN users u
       ON u.id = be.user_id
@@ -12852,6 +12853,225 @@ function commitSuccessfulLiveModification({
         )
     };
 
+    const oldPickup =
+      oldState.stops?.find(
+        (stop) =>
+          stop.stopType === 'pickup'
+      ) || null;
+
+    const newPickup =
+      newState.stops?.find(
+        (stop) =>
+          stop.stopType === 'pickup'
+      ) || null;
+
+    const oldDestination =
+      oldState.stops?.find(
+        (stop) =>
+          stop.stopType === 'destination'
+      ) || null;
+
+    const newDestination =
+      newState.stops?.find(
+        (stop) =>
+          stop.stopType === 'destination'
+      ) || null;
+
+    const oldVias =
+      (oldState.stops || [])
+        .filter(
+          (stop) =>
+            stop.stopType === 'via'
+        );
+
+    const newVias =
+      (newState.stops || [])
+        .filter(
+          (stop) =>
+            stop.stopType === 'via'
+        );
+
+    const amendmentStopSummary =
+      (stop) =>
+        stop
+          ? [
+              stop.address,
+              stop.postcode
+            ]
+              .filter(Boolean)
+              .join(', ')
+          : '';
+
+    const amendmentViaSummary =
+      (stops) =>
+        stops.length
+          ? stops
+              .map(
+                amendmentStopSummary
+              )
+              .join(' → ')
+          : 'None';
+
+    const amendmentValue =
+      (value) =>
+        value === null ||
+        value === undefined
+          ? ''
+          : String(value).trim();
+
+    const amendmentChanges = [
+      {
+        field: 'requestedPickupAt',
+        label: 'Pickup date & time',
+        before:
+          oldState.requestedPickupAt,
+        after:
+          newState.requestedPickupAt,
+        valueType: 'datetime'
+      },
+      {
+        field: 'pickup',
+        label: 'Pickup',
+        before:
+          amendmentStopSummary(
+            oldPickup
+          ) ||
+          oldState.pickupAddress ||
+          '',
+        after:
+          amendmentStopSummary(
+            newPickup
+          ) ||
+          newState.pickupAddress ||
+          ''
+      },
+      {
+        field: 'vias',
+        label: 'Via points',
+        before:
+          amendmentViaSummary(
+            oldVias
+          ),
+        after:
+          amendmentViaSummary(
+            newVias
+          )
+      },
+      {
+        field: 'destination',
+        label: 'Destination',
+        before:
+          amendmentStopSummary(
+            oldDestination
+          ) ||
+          oldState.destinationAddress ||
+          '',
+        after:
+          amendmentStopSummary(
+            newDestination
+          ) ||
+          newState.destinationAddress ||
+          ''
+      },
+      {
+        field: 'passengerName',
+        label: 'Passenger name',
+        before:
+          oldState.passengerName,
+        after:
+          newState.passengerName
+      },
+      {
+        field: 'passengerMobile',
+        label: 'Contact number',
+        before:
+          oldState.passengerMobile,
+        after:
+          newState.passengerMobile
+      },
+      {
+        field: 'passengerCount',
+        label: 'Passenger count',
+        before:
+          oldState.passengerCount,
+        after:
+          newState.passengerCount
+      },
+      {
+        field: 'budget',
+        label: 'Budget',
+        before:
+          [
+            oldState.accountSnapshot
+              ?.budget_number,
+            oldState.accountSnapshot
+              ?.budget_name
+          ]
+            .filter(Boolean)
+            .join(' — ') ||
+          String(
+            oldState.budgetId || ''
+          ),
+        after:
+          [
+            budget.budgetNumber,
+            budget.name
+          ]
+            .filter(Boolean)
+            .join(' — ')
+      },
+      {
+        field: 'reasonCode',
+        label: 'Reason code',
+        before:
+          [
+            oldState.accountSnapshot
+              ?.reason_code,
+            oldState.accountSnapshot
+              ?.reason_description
+          ]
+            .filter(Boolean)
+            .join(' — ') ||
+          String(
+            oldState.reasonCodeId || ''
+          ),
+        after:
+          [
+            reasonCode.code,
+            reasonCode.description
+          ]
+            .filter(Boolean)
+            .join(' — ')
+      },
+      {
+        field: 'budgetHolder',
+        label: 'Budget holder',
+        before:
+          oldState.accountSnapshot
+            ?.budget_holder_name ||
+          '',
+        after:
+          `${budgetHolder.firstName} ${budgetHolder.lastName}`
+            .trim()
+      },
+      {
+        field: 'driverNotes',
+        label: 'Driver notes',
+        before:
+          oldState.driverNotes || '',
+        after:
+          newState.driverNotes || ''
+      }
+    ].filter(
+      (change) =>
+        amendmentValue(
+          change.before
+        ) !==
+        amendmentValue(
+          change.after
+        )
+    );
+
     writeAutocabModificationBookingEvent({
       bookingId,
       eventType:
@@ -12865,7 +13085,9 @@ function commitSuccessfulLiveModification({
         'UHP portal live booking amended',
       rawPayload: {
         autocabBookingId,
-        responseStatus
+        responseStatus,
+        changes:
+          amendmentChanges
       }
     });
 
