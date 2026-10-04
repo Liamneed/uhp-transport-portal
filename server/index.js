@@ -914,6 +914,28 @@ function enforceApiAccess(
   }
 
   if (
+    pathname === '/api/transport-programmes' ||
+    pathname.startsWith(
+      '/api/transport-programmes/'
+    )
+  ) {
+    if (req.method === 'GET') {
+      return requireAnyRole(
+        req,
+        [
+          'uhp_admin',
+          'nac_admin'
+        ]
+      );
+    }
+
+    return requireAnyRole(
+      req,
+      ['nac_admin']
+    );
+  }
+
+  if (
     pathname ===
       '/api/departments'
   ) {
@@ -3131,6 +3153,519 @@ function setReasonCodeStatus(reasonCodeId, nextStatus) {
   }
 }
 
+
+
+
+function normaliseOptionalDateTime(
+  value,
+  fieldName
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    String(value).trim() === ''
+  ) {
+    return null;
+  }
+
+  const normalised =
+    String(value).trim();
+
+  const parsed =
+    new Date(normalised);
+
+  if (
+    Number.isNaN(
+      parsed.getTime()
+    )
+  ) {
+    const error =
+      new Error(
+        `${fieldName} is not a valid date and time`
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return normalised;
+}
+
+
+function getTransportProgrammeById(
+  programmeId
+) {
+  return db.prepare(`
+    SELECT
+      id,
+      code,
+      name,
+      programme_type AS programmeType,
+      status,
+      request_opens_at AS requestOpensAt,
+      request_closes_at AS requestClosesAt,
+      confirmation_due_at AS confirmationDueAt,
+      route_lock_at AS routeLockAt,
+      autocab_account_type AS autocabAccountType,
+      public_notes AS publicNotes,
+      internal_notes AS internalNotes,
+      created_by_user_id AS createdByUserId,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM transport_programmes
+    WHERE id = ?
+  `).get(
+    programmeId
+  );
+}
+
+
+function listTransportProgrammes() {
+  return db.prepare(`
+    SELECT
+      id,
+      code,
+      name,
+      programme_type AS programmeType,
+      status,
+      request_opens_at AS requestOpensAt,
+      request_closes_at AS requestClosesAt,
+      confirmation_due_at AS confirmationDueAt,
+      route_lock_at AS routeLockAt,
+      autocab_account_type AS autocabAccountType,
+      public_notes AS publicNotes,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM transport_programmes
+    ORDER BY
+      COALESCE(
+        request_opens_at,
+        created_at
+      ) DESC,
+      id DESC
+  `).all();
+}
+
+
+function createTransportProgramme(
+  payload,
+  actorUserId
+) {
+  const code =
+    String(
+      payload.code || ''
+    )
+      .trim()
+      .toUpperCase();
+
+  const name =
+    String(
+      payload.name || ''
+    ).trim();
+
+  const programmeType =
+    String(
+      payload.programmeType ||
+        'special_transport'
+    ).trim();
+
+  const status =
+    String(
+      payload.status || 'draft'
+    ).trim();
+
+  const allowedStatuses = [
+    'draft',
+    'open',
+    'planning',
+    'confirmation',
+    'locked',
+    'active',
+    'completed',
+    'cancelled'
+  ];
+
+  if (!code || !name) {
+    const error =
+      new Error(
+        'Programme code and name are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !allowedStatuses.includes(
+      status
+    )
+  ) {
+    const error =
+      new Error(
+        'Invalid programme status'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const requestOpensAt =
+    normaliseOptionalDateTime(
+      payload.requestOpensAt,
+      'Request opening time'
+    );
+
+  const requestClosesAt =
+    normaliseOptionalDateTime(
+      payload.requestClosesAt,
+      'Request closing time'
+    );
+
+  const confirmationDueAt =
+    normaliseOptionalDateTime(
+      payload.confirmationDueAt,
+      'Confirmation deadline'
+    );
+
+  const routeLockAt =
+    normaliseOptionalDateTime(
+      payload.routeLockAt,
+      'Route lock time'
+    );
+
+  if (
+    requestOpensAt &&
+    requestClosesAt &&
+    new Date(requestClosesAt) <=
+      new Date(requestOpensAt)
+  ) {
+    const error =
+      new Error(
+        'Request closing time must be after the opening time'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const autocabAccountType =
+    String(
+      payload.autocabAccountType ||
+        'xmas_staff'
+    ).trim();
+
+  const publicNotes =
+    String(
+      payload.publicNotes || ''
+    ).trim() || null;
+
+  const internalNotes =
+    String(
+      payload.internalNotes || ''
+    ).trim() || null;
+
+  const duplicate =
+    db.prepare(`
+      SELECT id
+      FROM transport_programmes
+      WHERE code = ?
+    `).get(
+      code
+    );
+
+  if (duplicate) {
+    const error =
+      new Error(
+        'A transport programme with this code already exists'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    const result =
+      db.prepare(`
+        INSERT INTO transport_programmes
+        (
+          code,
+          name,
+          programme_type,
+          status,
+          request_opens_at,
+          request_closes_at,
+          confirmation_due_at,
+          route_lock_at,
+          autocab_account_type,
+          public_notes,
+          internal_notes,
+          created_by_user_id
+        )
+        VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+      `).run(
+        code,
+        name,
+        programmeType,
+        status,
+        requestOpensAt,
+        requestClosesAt,
+        confirmationDueAt,
+        routeLockAt,
+        autocabAccountType,
+        publicNotes,
+        internalNotes,
+        actorUserId
+      );
+
+    const programmeId =
+      Number(
+        result.lastInsertRowid
+      );
+
+    const programme =
+      getTransportProgrammeById(
+        programmeId
+      );
+
+    writeAudit({
+      action: 'CREATE',
+      entityType:
+        'transport_programme',
+      entityId:
+        programmeId,
+      newValue:
+        JSON.stringify(
+          programme
+        ),
+      source:
+        'nac_admin',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return programme;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function updateTransportProgramme(
+  programmeId,
+  payload,
+  actorUserId
+) {
+  const existing =
+    getTransportProgrammeById(
+      programmeId
+    );
+
+  if (!existing) {
+    const error =
+      new Error(
+        'Transport programme not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const name =
+    payload.name === undefined
+      ? existing.name
+      : String(
+          payload.name || ''
+        ).trim();
+
+  if (!name) {
+    const error =
+      new Error(
+        'Programme name is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const allowedStatuses = [
+    'draft',
+    'open',
+    'planning',
+    'confirmation',
+    'locked',
+    'active',
+    'completed',
+    'cancelled'
+  ];
+
+  const status =
+    payload.status === undefined
+      ? existing.status
+      : String(
+          payload.status
+        ).trim();
+
+  if (
+    !allowedStatuses.includes(
+      status
+    )
+  ) {
+    const error =
+      new Error(
+        'Invalid programme status'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const requestOpensAt =
+    payload.requestOpensAt === undefined
+      ? existing.requestOpensAt
+      : normaliseOptionalDateTime(
+          payload.requestOpensAt,
+          'Request opening time'
+        );
+
+  const requestClosesAt =
+    payload.requestClosesAt === undefined
+      ? existing.requestClosesAt
+      : normaliseOptionalDateTime(
+          payload.requestClosesAt,
+          'Request closing time'
+        );
+
+  const confirmationDueAt =
+    payload.confirmationDueAt === undefined
+      ? existing.confirmationDueAt
+      : normaliseOptionalDateTime(
+          payload.confirmationDueAt,
+          'Confirmation deadline'
+        );
+
+  const routeLockAt =
+    payload.routeLockAt === undefined
+      ? existing.routeLockAt
+      : normaliseOptionalDateTime(
+          payload.routeLockAt,
+          'Route lock time'
+        );
+
+  if (
+    requestOpensAt &&
+    requestClosesAt &&
+    new Date(requestClosesAt) <=
+      new Date(requestOpensAt)
+  ) {
+    const error =
+      new Error(
+        'Request closing time must be after the opening time'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const programmeType =
+    payload.programmeType === undefined
+      ? existing.programmeType
+      : String(
+          payload.programmeType ||
+            ''
+        ).trim();
+
+  const autocabAccountType =
+    payload.autocabAccountType === undefined
+      ? existing.autocabAccountType
+      : String(
+          payload.autocabAccountType ||
+            ''
+        ).trim();
+
+  const publicNotes =
+    payload.publicNotes === undefined
+      ? existing.publicNotes
+      : String(
+          payload.publicNotes || ''
+        ).trim() || null;
+
+  const internalNotes =
+    payload.internalNotes === undefined
+      ? existing.internalNotes
+      : String(
+          payload.internalNotes || ''
+        ).trim() || null;
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_programmes
+      SET
+        name = ?,
+        programme_type = ?,
+        status = ?,
+        request_opens_at = ?,
+        request_closes_at = ?,
+        confirmation_due_at = ?,
+        route_lock_at = ?,
+        autocab_account_type = ?,
+        public_notes = ?,
+        internal_notes = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      name,
+      programmeType,
+      status,
+      requestOpensAt,
+      requestClosesAt,
+      confirmationDueAt,
+      routeLockAt,
+      autocabAccountType,
+      publicNotes,
+      internalNotes,
+      programmeId
+    );
+
+    const updated =
+      getTransportProgrammeById(
+        programmeId
+      );
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType:
+        'transport_programme',
+      entityId:
+        programmeId,
+      oldValue:
+        JSON.stringify(
+          existing
+        ),
+      newValue:
+        JSON.stringify(
+          updated
+        ),
+      source:
+        'nac_admin',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return updated;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 
 function getBookingOptions(userId) {
@@ -15929,6 +16464,122 @@ const server = http.createServer(async (req, res) => {
       is authenticated and role checked.
     */
     enforceApiAccess(req, url);
+
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/transport-programmes'
+    ) {
+      return sendJson(
+        res,
+        200,
+        {
+          programmes:
+            listTransportProgrammes()
+        }
+      );
+    }
+
+
+    const transportProgrammeMatch =
+      url.pathname.match(
+        /^\/api\/transport-programmes\/(\d+)$/
+      );
+
+
+    if (
+      req.method === 'GET' &&
+      transportProgrammeMatch
+    ) {
+      const programme =
+        getTransportProgrammeById(
+          Number(
+            transportProgrammeMatch[1]
+          )
+        );
+
+      if (!programme) {
+        const error =
+          new Error(
+            'Transport programme not found'
+          );
+
+        error.statusCode = 404;
+        throw error;
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          programme
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/transport-programmes'
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['nac_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const programme =
+        createTransportProgramme(
+          payload,
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        201,
+        {
+          programme
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'PATCH' &&
+      transportProgrammeMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['nac_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const programme =
+        updateTransportProgramme(
+          Number(
+            transportProgrammeMatch[1]
+          ),
+          payload,
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          programme
+        }
+      );
+    }
+
 
     if (req.method === 'GET' && url.pathname === '/api/users') {
       return sendJson(res, 200, {
