@@ -65,6 +65,25 @@ const MAPTILER_GEOCODING_API_KEY =
     ''
   ).trim();
 
+const STAFF_TRANSPORT_ALLOWED_EMAIL_DOMAINS =
+  String(
+    process.env
+      .STAFF_TRANSPORT_ALLOWED_EMAIL_DOMAINS ||
+    ''
+  )
+    .split(',')
+    .map(
+      (value) =>
+        value
+          .trim()
+          .toLowerCase()
+          .replace(/^@/, '')
+    )
+    .filter(Boolean);
+
+const STAFF_TRANSPORT_SESSION_COOKIE =
+  'uhp_staff_transport_session';
+
 const AUTOCAB_BOOKING_API_URL =
   String(
     process.env.AUTOCAB_BOOKING_API_URL ||
@@ -1438,6 +1457,772 @@ function verifyLoginCode(
     user: getAuthUserById(user.id)
   };
 }
+
+function normaliseStaffTransportEmail(
+  value
+) {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+
+
+function staffTransportEmailDomain(
+  email
+) {
+  const cleanEmail =
+    normaliseStaffTransportEmail(
+      email
+    );
+
+  const atIndex =
+    cleanEmail.lastIndexOf('@');
+
+  if (
+    atIndex < 1 ||
+    atIndex === cleanEmail.length - 1
+  ) {
+    return '';
+  }
+
+  return cleanEmail.slice(
+    atIndex + 1
+  );
+}
+
+
+function staffTransportEmailAllowed(
+  email
+) {
+  if (
+    STAFF_TRANSPORT_ALLOWED_EMAIL_DOMAINS
+      .length === 0
+  ) {
+    return !IS_PRODUCTION;
+  }
+
+  const domain =
+    staffTransportEmailDomain(
+      email
+    );
+
+  return (
+    Boolean(domain) &&
+    STAFF_TRANSPORT_ALLOWED_EMAIL_DOMAINS
+      .includes(domain)
+  );
+}
+
+
+function buildStaffTransportSessionCookie(
+  token
+) {
+  const maxAgeSeconds =
+    8 * 60 * 60;
+
+  return [
+    `${STAFF_TRANSPORT_SESSION_COOKIE}=${token}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${maxAgeSeconds}`,
+    ...(IS_PRODUCTION
+      ? ['Secure']
+      : [])
+  ].join('; ');
+}
+
+
+function buildExpiredStaffTransportSessionCookie() {
+  return [
+    `${STAFF_TRANSPORT_SESSION_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=0',
+    ...(IS_PRODUCTION
+      ? ['Secure']
+      : [])
+  ].join('; ');
+}
+
+
+function getStaffTransportIdentityById(
+  identityId
+) {
+  return db.prepare(`
+    SELECT
+      id,
+
+      first_name
+        AS firstName,
+
+      last_name
+        AS lastName,
+
+      email,
+
+      mobile,
+
+      status,
+
+      email_verified_at
+        AS emailVerifiedAt,
+
+      mobile_verified_at
+        AS mobileVerifiedAt,
+
+      last_login_at
+        AS lastLoginAt,
+
+      created_at
+        AS createdAt,
+
+      updated_at
+        AS updatedAt
+
+    FROM transport_staff_identities
+    WHERE id = ?
+    LIMIT 1
+  `).get(
+    Number(identityId)
+  );
+}
+
+
+function getStaffTransportIdentityByEmail(
+  email
+) {
+  return db.prepare(`
+    SELECT
+      id,
+
+      first_name
+        AS firstName,
+
+      last_name
+        AS lastName,
+
+      email,
+
+      mobile,
+
+      status,
+
+      email_verified_at
+        AS emailVerifiedAt,
+
+      mobile_verified_at
+        AS mobileVerifiedAt,
+
+      last_login_at
+        AS lastLoginAt,
+
+      created_at
+        AS createdAt,
+
+      updated_at
+        AS updatedAt
+
+    FROM transport_staff_identities
+    WHERE email = ?
+    COLLATE NOCASE
+    LIMIT 1
+  `).get(
+    normaliseStaffTransportEmail(
+      email
+    )
+  );
+}
+
+
+function ensureStaffTransportIdentityForEmail(
+  email
+) {
+  const cleanEmail =
+    normaliseStaffTransportEmail(
+      email
+    );
+
+  if (
+    !cleanEmail ||
+    !cleanEmail.includes('@')
+  ) {
+    const error =
+      new Error(
+        'Enter a valid work email address'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !staffTransportEmailAllowed(
+      cleanEmail
+    )
+  ) {
+    const error =
+      new Error(
+        'This email address is not eligible for staff transport self-service'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  let identity =
+    getStaffTransportIdentityByEmail(
+      cleanEmail
+    );
+
+  if (identity) {
+    if (
+      ['suspended', 'archived']
+        .includes(
+          identity.status
+        )
+    ) {
+      const error =
+        new Error(
+          'This staff transport account cannot sign in'
+        );
+
+      error.statusCode = 403;
+      throw error;
+    }
+
+    return identity;
+  }
+
+  const result =
+    db.prepare(`
+      INSERT INTO transport_staff_identities (
+        email,
+        status
+      )
+      VALUES (
+        ?,
+        'pending'
+      )
+    `).run(
+      cleanEmail
+    );
+
+  identity =
+    getStaffTransportIdentityById(
+      result.lastInsertRowid
+    );
+
+  return identity;
+}
+
+
+function requestStaffTransportEmailCode(
+  email,
+  req
+) {
+  const identity =
+    ensureStaffTransportIdentityForEmail(
+      email
+    );
+
+  db.prepare(`
+    UPDATE transport_staff_login_challenges
+    SET consumed_at = CURRENT_TIMESTAMP
+    WHERE staff_identity_id = ?
+      AND channel = 'email'
+      AND purpose = 'verify_email'
+      AND consumed_at IS NULL
+  `).run(identity.id);
+
+  const challengeId =
+    randomBytes(24).toString('hex');
+
+  const code =
+    String(
+      randomInt(
+        0,
+        1000000
+      )
+    ).padStart(6, '0');
+
+  const salt =
+    randomBytes(16).toString('hex');
+
+  const codeHash =
+    hashOtp(
+      code,
+      salt
+    );
+
+  db.prepare(`
+    INSERT INTO transport_staff_login_challenges (
+      id,
+      staff_identity_id,
+      channel,
+      purpose,
+      destination,
+      code_hash,
+      code_salt,
+      attempts,
+      max_attempts,
+      expires_at
+    )
+    VALUES (
+      ?,
+      ?,
+      'email',
+      'verify_email',
+      ?,
+      ?,
+      ?,
+      0,
+      5,
+      datetime(
+        'now',
+        '+10 minutes'
+      )
+    )
+  `).run(
+    challengeId,
+    identity.id,
+    identity.email,
+    codeHash,
+    salt
+  );
+
+  /*
+    Development delivery only.
+
+    The OTP is deliberately NOT returned
+    through the HTTP API.
+
+    Production email delivery will replace
+    this log before public launch.
+  */
+  console.log(
+    `[STAFF TRANSPORT DEV] Email OTP for ${identity.email}: ${code} challenge=${challengeId} ip=${getRequestIp(req) || 'unknown'}`
+  );
+
+  return {
+    challengeId,
+    email:
+      identity.email,
+    expiresInSeconds: 600
+  };
+}
+
+
+function verifyStaffTransportEmailCode(
+  challengeId,
+  code,
+  req
+) {
+  const cleanChallengeId =
+    String(
+      challengeId || ''
+    ).trim();
+
+  const cleanCode =
+    String(code || '')
+      .replace(/\D/g, '');
+
+  if (
+    !cleanChallengeId ||
+    cleanCode.length !== 6
+  ) {
+    const error =
+      new Error(
+        'Enter the 6-digit verification code'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const challenge =
+    db.prepare(`
+      SELECT
+        id,
+
+        staff_identity_id
+          AS staffIdentityId,
+
+        destination,
+
+        code_hash
+          AS codeHash,
+
+        code_salt
+          AS codeSalt,
+
+        attempts,
+
+        max_attempts
+          AS maxAttempts,
+
+        expires_at
+          AS expiresAt,
+
+        consumed_at
+          AS consumedAt
+
+      FROM transport_staff_login_challenges
+      WHERE id = ?
+        AND channel = 'email'
+        AND purpose = 'verify_email'
+      LIMIT 1
+    `).get(
+      cleanChallengeId
+    );
+
+  if (
+    !challenge ||
+    challenge.consumedAt
+  ) {
+    const error =
+      new Error(
+        'This verification code is no longer valid'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const expiryCheck =
+    db.prepare(`
+      SELECT
+        CASE
+          WHEN ? > CURRENT_TIMESTAMP
+          THEN 1
+          ELSE 0
+        END AS valid
+    `).get(
+      challenge.expiresAt
+    );
+
+  if (
+    !expiryCheck?.valid
+  ) {
+    db.prepare(`
+      UPDATE transport_staff_login_challenges
+      SET consumed_at =
+        CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      challenge.id
+    );
+
+    const error =
+      new Error(
+        'This verification code has expired'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    challenge.attempts >=
+      challenge.maxAttempts
+  ) {
+    const error =
+      new Error(
+        'Too many incorrect attempts'
+      );
+
+    error.statusCode = 429;
+    throw error;
+  }
+
+  const suppliedHash =
+    hashOtp(
+      cleanCode,
+      challenge.codeSalt
+    );
+
+  if (
+    !safeHashEqual(
+      challenge.codeHash,
+      suppliedHash
+    )
+  ) {
+    const nextAttempts =
+      challenge.attempts + 1;
+
+    db.prepare(`
+      UPDATE transport_staff_login_challenges
+      SET
+        attempts = ?,
+
+        consumed_at = CASE
+          WHEN ? >= max_attempts
+          THEN CURRENT_TIMESTAMP
+          ELSE consumed_at
+        END
+
+      WHERE id = ?
+    `).run(
+      nextAttempts,
+      nextAttempts,
+      challenge.id
+    );
+
+    const error =
+      new Error(
+        nextAttempts >=
+          challenge.maxAttempts
+          ? 'Too many incorrect attempts'
+          : 'The verification code is incorrect'
+      );
+
+    error.statusCode =
+      nextAttempts >=
+        challenge.maxAttempts
+        ? 429
+        : 400;
+
+    throw error;
+  }
+
+  const identity =
+    getStaffTransportIdentityById(
+      challenge.staffIdentityId
+    );
+
+  if (!identity) {
+    const error =
+      new Error(
+        'Staff transport account not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    ['suspended', 'archived']
+      .includes(identity.status)
+  ) {
+    const error =
+      new Error(
+        'This staff transport account cannot sign in'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const rawSessionToken =
+    randomBytes(32)
+      .toString('hex');
+
+  const sessionHash =
+    hashSessionToken(
+      rawSessionToken
+    );
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_staff_login_challenges
+      SET consumed_at =
+        CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      challenge.id
+    );
+
+    db.prepare(`
+      UPDATE transport_staff_identities
+      SET
+        email_verified_at =
+          COALESCE(
+            email_verified_at,
+            CURRENT_TIMESTAMP
+          ),
+
+        updated_at =
+          CURRENT_TIMESTAMP
+
+      WHERE id = ?
+    `).run(
+      identity.id
+    );
+
+    db.prepare(`
+      INSERT INTO transport_staff_sessions (
+        session_hash,
+        staff_identity_id,
+        expires_at,
+        last_seen_at,
+        ip_address,
+        user_agent
+      )
+      VALUES (
+        ?,
+        ?,
+        datetime(
+          'now',
+          '+8 hours'
+        ),
+        CURRENT_TIMESTAMP,
+        ?,
+        ?
+      )
+    `).run(
+      sessionHash,
+      identity.id,
+      getRequestIp(req),
+      String(
+        req.headers['user-agent'] ||
+        ''
+      ) || null
+    );
+
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+
+  return {
+    token:
+      rawSessionToken,
+
+    staff:
+      getStaffTransportIdentityById(
+        identity.id
+      )
+  };
+}
+
+
+function getStaffTransportAuthSession(
+  req
+) {
+  const cookies =
+    parseCookies(req);
+
+  const token =
+    cookies[
+      STAFF_TRANSPORT_SESSION_COOKIE
+    ];
+
+  if (!token) {
+    return null;
+  }
+
+  const sessionHash =
+    hashSessionToken(token);
+
+  const session =
+    db.prepare(`
+      SELECT
+        id,
+
+        staff_identity_id
+          AS staffIdentityId,
+
+        expires_at
+          AS expiresAt
+
+      FROM transport_staff_sessions
+      WHERE session_hash = ?
+        AND revoked_at IS NULL
+        AND expires_at >
+          CURRENT_TIMESTAMP
+      LIMIT 1
+    `).get(
+      sessionHash
+    );
+
+  if (!session) {
+    return null;
+  }
+
+  const staff =
+    getStaffTransportIdentityById(
+      session.staffIdentityId
+    );
+
+  if (
+    !staff ||
+    ['suspended', 'archived']
+      .includes(staff.status)
+  ) {
+    return null;
+  }
+
+  db.prepare(`
+    UPDATE transport_staff_sessions
+    SET last_seen_at =
+      CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(
+    session.id
+  );
+
+  return {
+    sessionId:
+      session.id,
+    staff
+  };
+}
+
+
+function requireStaffTransportAuth(
+  req
+) {
+  const auth =
+    getStaffTransportAuthSession(
+      req
+    );
+
+  if (!auth) {
+    const error =
+      new Error(
+        'Staff transport authentication required'
+      );
+
+    error.statusCode = 401;
+    throw error;
+  }
+
+  return auth;
+}
+
+
+function logoutStaffTransportSession(
+  req
+) {
+  const cookies =
+    parseCookies(req);
+
+  const token =
+    cookies[
+      STAFF_TRANSPORT_SESSION_COOKIE
+    ];
+
+  if (!token) {
+    return;
+  }
+
+  const sessionHash =
+    hashSessionToken(token);
+
+  db.prepare(`
+    UPDATE transport_staff_sessions
+    SET revoked_at =
+      CURRENT_TIMESTAMP
+    WHERE session_hash = ?
+  `).run(
+    sessionHash
+  );
+}
+
 
 function logoutAuthSession(req) {
   const cookies = parseCookies(req);
@@ -18686,6 +19471,115 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
 
   try {
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/staff-transport/auth/request-email-code'
+    ) {
+      const payload =
+        await readJson(req);
+
+      const challenge =
+        requestStaffTransportEmailCode(
+          payload.email,
+          req
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          ok: true,
+
+          challengeId:
+            challenge.challengeId,
+
+          email:
+            challenge.email,
+
+          expiresInSeconds:
+            challenge.expiresInSeconds
+        }
+      );
+    }
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/staff-transport/auth/verify-email-code'
+    ) {
+      const payload =
+        await readJson(req);
+
+      const result =
+        verifyStaffTransportEmailCode(
+          payload.challengeId,
+          payload.code,
+          req
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          authenticated: true,
+          verificationStage:
+            'email_verified',
+          staff:
+            result.staff
+        },
+        {
+          'Set-Cookie':
+            buildStaffTransportSessionCookie(
+              result.token
+            )
+        }
+      );
+    }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/staff-transport/auth/me'
+    ) {
+      const auth =
+        requireStaffTransportAuth(
+          req
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          authenticated: true,
+          staff:
+            auth.staff
+        }
+      );
+    }
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/staff-transport/auth/logout'
+    ) {
+      logoutStaffTransportSession(
+        req
+      );
+
+      return sendJson(
+        res,
+        200,
+        {
+          authenticated: false
+        },
+        {
+          'Set-Cookie':
+            buildExpiredStaffTransportSessionCookie()
+        }
+      );
+    }
+
     if (
       req.method === 'POST' &&
       url.pathname === '/api/auth/request-code'
