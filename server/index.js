@@ -7863,6 +7863,691 @@ function createTransportRequestImportPreview(
 }
 
 
+function confirmTransportRequestImport(
+  batchId,
+  payload,
+  authUser
+) {
+  if (
+    !userHasAnyRole(
+      authUser,
+      ['uhp_admin']
+    )
+  ) {
+    const error =
+      new Error(
+        'You do not have permission to import transport requests'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const batch =
+    getTransportRequestImportBatch(
+      batchId
+    );
+
+  if (!batch) {
+    const error =
+      new Error(
+        'Transport request import batch not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    batch.status ===
+    'imported'
+  ) {
+    const error =
+      new Error(
+        'This CSV batch has already been imported'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (
+    batch.status !==
+    'ready'
+  ) {
+    const error =
+      new Error(
+        'This CSV batch is not ready to import'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (
+    Number(
+      batch.errorCount
+    ) > 0
+  ) {
+    const error =
+      new Error(
+        'CSV batches containing errors cannot be imported'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const confirmWarnings =
+    payload?.confirmWarnings === true;
+
+  if (
+    Number(
+      batch.warningCount
+    ) > 0 &&
+    !confirmWarnings
+  ) {
+    const error =
+      new Error(
+        'This CSV contains possible duplicates or warnings. Confirm the warnings before importing.'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (
+    !Array.isArray(
+      batch.rows
+    ) ||
+    batch.rows.length === 0
+  ) {
+    const error =
+      new Error(
+        'This CSV batch contains no rows to import'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  /*
+    Revalidate every staged row immediately before import.
+    Preview data may be several minutes old and budgets,
+    service windows or duplicate state may have changed.
+  */
+  const preparedRows = [];
+
+  for (
+    const row
+    of batch.rows
+  ) {
+    if (
+      ![
+        'ready',
+        'warning'
+      ].includes(
+        row.status
+      )
+    ) {
+      const error =
+        new Error(
+          `CSV row ${row.rowNumber} is not ready to import`
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (
+      !row.normalised
+    ) {
+      const error =
+        new Error(
+          `CSV row ${row.rowNumber} has no validated data`
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const request =
+      row.normalised;
+
+    const window =
+      getTransportRequestWindowForSubmission(
+        Number(
+          request.programmeWindowId
+        )
+      );
+
+    if (!window) {
+      const error =
+        new Error(
+          `CSV row ${row.rowNumber}: service window no longer exists`
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (
+      Number(
+        window.isActive
+      ) !== 1 ||
+      window.programmeStatus !==
+        'open'
+    ) {
+      const error =
+        new Error(
+          `CSV row ${row.rowNumber}: service is no longer available`
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const now =
+      new Date();
+
+    if (
+      window.requestOpensAt &&
+      now <
+        new Date(
+          window.requestOpensAt
+        )
+    ) {
+      const error =
+        new Error(
+          `CSV row ${row.rowNumber}: requests for this service are not open yet`
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (
+      window.requestClosesAt &&
+      now >
+        new Date(
+          window.requestClosesAt
+        )
+    ) {
+      const error =
+        new Error(
+          `CSV row ${row.rowNumber}: requests for this service are closed`
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    /*
+      Resolve coding again rather than trusting the preview
+      snapshot. This confirms budget/reason/holder are still
+      valid at the moment the live request is created.
+    */
+    const coding =
+      resolveStaffTransportRequestCoding({
+        budgetId:
+          request.budgetId,
+
+        reasonCodeId:
+          request.reasonCodeId
+      });
+
+    const currentDuplicate =
+      findExistingTransportCsvDuplicate({
+        programmeWindowId:
+          Number(
+            request.programmeWindowId
+          ),
+
+        direction:
+          request.direction,
+
+        passengerName:
+          request.passengerName,
+
+        mobile:
+          request.passengerMobile,
+
+        email:
+          request.passengerEmail,
+
+        shiftTime:
+          request.shiftTime,
+
+        pickupAddress:
+          request.pickupAddress
+      });
+
+    if (
+      currentDuplicate &&
+      !confirmWarnings
+    ) {
+      const error =
+        new Error(
+          `CSV row ${row.rowNumber} may duplicate transport request #${currentDuplicate.requestId}. Confirm warnings before importing.`
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    preparedRows.push({
+      row,
+      request,
+      coding,
+      currentDuplicate
+    });
+  }
+
+  db.exec(
+    'BEGIN IMMEDIATE'
+  );
+
+  try {
+    /*
+      Lock the batch state inside the transaction so a second
+      confirmation cannot import the same staged batch.
+    */
+    const lockResult =
+      db.prepare(`
+        UPDATE transport_request_import_batches
+
+        SET
+          status = 'importing',
+          updated_at =
+            CURRENT_TIMESTAMP
+
+        WHERE id = ?
+          AND status = 'ready'
+      `).run(
+        Number(batchId)
+      );
+
+    if (
+      Number(
+        lockResult.changes
+      ) !== 1
+    ) {
+      const error =
+        new Error(
+          'This CSV batch can no longer be imported'
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const insertRequest =
+      db.prepare(`
+        INSERT INTO transport_requests
+        (
+          programme_window_id,
+
+          requested_by_user_id,
+          requested_by_staff_identity_id,
+          entered_by_user_id,
+          source,
+
+          passenger_name,
+          passenger_mobile,
+          passenger_email,
+
+          direction,
+          shift_time,
+
+          pickup_address,
+          pickup_postcode,
+          pickup_latitude,
+          pickup_longitude,
+
+          destination_address,
+          destination_postcode,
+          destination_latitude,
+          destination_longitude,
+
+          passenger_count,
+
+          accessibility_notes,
+          passenger_notes,
+
+          department_id,
+          budget_id,
+          reason_code_id,
+          budget_holder_user_id,
+
+          status
+        )
+        VALUES (
+          ?,
+
+          NULL,
+          NULL,
+          ?,
+          'department_csv',
+
+          ?, ?, ?,
+
+          ?, ?,
+
+          ?, ?, ?, ?,
+
+          ?, ?, ?, ?,
+
+          1,
+
+          NULL,
+          ?,
+
+          ?, ?, ?, ?,
+
+          'submitted'
+        )
+      `);
+
+    const insertEvent =
+      db.prepare(`
+        INSERT INTO transport_request_events
+        (
+          transport_request_id,
+          event_type,
+
+          actor_user_id,
+          actor_staff_identity_id,
+
+          old_status,
+          new_status,
+
+          notes
+        )
+        VALUES (
+          ?,
+          'submitted',
+
+          ?,
+          NULL,
+
+          NULL,
+          'submitted',
+
+          'Transport request imported from department CSV'
+        )
+      `);
+
+    const updateImportRow =
+      db.prepare(`
+        UPDATE transport_request_import_rows
+
+        SET
+          status = 'imported',
+
+          imported_transport_request_id = ?,
+
+          updated_at =
+            CURRENT_TIMESTAMP
+
+        WHERE id = ?
+          AND batch_id = ?
+          AND status IN (
+            'ready',
+            'warning'
+          )
+          AND imported_transport_request_id IS NULL
+      `);
+
+    let importedCount = 0;
+
+    for (
+      const prepared
+      of preparedRows
+    ) {
+      const {
+        row,
+        request,
+        coding,
+        currentDuplicate
+      } = prepared;
+
+      const result =
+        insertRequest.run(
+          Number(
+            request.programmeWindowId
+          ),
+
+          authUser.id,
+
+          request.passengerName,
+          request.passengerMobile,
+          request.passengerEmail ||
+            null,
+
+          request.direction,
+          request.shiftTime,
+
+          request.pickupAddress,
+          request.pickupPostcode ||
+            null,
+          null,
+          null,
+
+          request.destinationAddress,
+          request.destinationPostcode ||
+            null,
+          null,
+          null,
+
+          request.passengerNotes ||
+            null,
+
+          coding.departmentId,
+          coding.budgetId,
+          coding.reasonCodeId,
+          coding.budgetHolderUserId
+        );
+
+      const requestId =
+        Number(
+          result.lastInsertRowid
+        );
+
+      insertEvent.run(
+        requestId,
+        authUser.id
+      );
+
+      writeAudit({
+        action:
+          'CREATE',
+
+        entityType:
+          'transport_request',
+
+        entityId:
+          requestId,
+
+        newValue:
+          JSON.stringify({
+            programmeWindowId:
+              Number(
+                request.programmeWindowId
+              ),
+
+            requestedByUserId:
+              null,
+
+            requestedByStaffIdentityId:
+              null,
+
+            enteredByUserId:
+              authUser.id,
+
+            source:
+              'department_csv',
+
+            importBatchId:
+              Number(
+                batchId
+              ),
+
+            importRowNumber:
+              Number(
+                row.rowNumber
+              ),
+
+            passengerName:
+              request.passengerName,
+
+            direction:
+              request.direction,
+
+            shiftTime:
+              request.shiftTime,
+
+            departmentId:
+              coding.departmentId,
+
+            budgetId:
+              coding.budgetId,
+
+            reasonCodeId:
+              coding.reasonCodeId,
+
+            budgetHolderUserId:
+              coding.budgetHolderUserId,
+
+            duplicateOverride:
+              Boolean(
+                currentDuplicate ||
+                (
+                  Array.isArray(
+                    row.warnings
+                  ) &&
+                  row.warnings.length > 0
+                )
+              ),
+
+            duplicateTransportRequestId:
+              currentDuplicate
+                ?.requestId ||
+              row
+                .duplicateTransportRequestId ||
+              null,
+
+            status:
+              'submitted'
+          }),
+
+        source:
+          'department_csv',
+
+        actorUserId:
+          authUser.id
+      });
+
+      const rowUpdate =
+        updateImportRow.run(
+          requestId,
+          row.id,
+          Number(
+            batchId
+          )
+        );
+
+      if (
+        Number(
+          rowUpdate.changes
+        ) !== 1
+      ) {
+        const error =
+          new Error(
+            `CSV row ${row.rowNumber} could not be marked imported`
+          );
+
+        error.statusCode = 409;
+        throw error;
+      }
+
+      importedCount += 1;
+    }
+
+    db.prepare(`
+      UPDATE transport_request_import_batches
+
+      SET
+        status = 'imported',
+
+        imported_count = ?,
+
+        imported_at =
+          CURRENT_TIMESTAMP,
+
+        updated_at =
+          CURRENT_TIMESTAMP
+
+      WHERE id = ?
+        AND status = 'importing'
+    `).run(
+      importedCount,
+      Number(
+        batchId
+      )
+    );
+
+    writeAudit({
+      action:
+        'UPDATE',
+
+      entityType:
+        'transport_request_import_batch',
+
+      entityId:
+        Number(
+          batchId
+        ),
+
+      fieldName:
+        'status',
+
+      oldValue:
+        JSON.stringify({
+          status:
+            'ready'
+        }),
+
+      newValue:
+        JSON.stringify({
+          status:
+            'imported',
+
+          importedCount,
+
+          confirmWarnings
+        }),
+
+      source:
+        'department_csv',
+
+      actorUserId:
+        authUser.id
+    });
+
+    db.exec('COMMIT');
+
+    return getTransportRequestImportBatch(
+      Number(
+        batchId
+      )
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
 function listTransportRequestOptions(
   authUser
 ) {
@@ -24881,6 +25566,44 @@ const server = http.createServer(async (req, res) => {
       return sendJson(
         res,
         201,
+        {
+          batch
+        }
+      );
+    }
+
+
+    const transportRequestImportConfirmMatch =
+      url.pathname.match(
+        /^\/api\/transport-request-imports\/(\d+)\/confirm$/
+      );
+
+
+    if (
+      req.method === 'POST' &&
+      transportRequestImportConfirmMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['uhp_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const batch =
+        confirmTransportRequestImport(
+          Number(
+            transportRequestImportConfirmMatch[1]
+          ),
+          payload,
+          auth.user
+        );
+
+      return sendJson(
+        res,
+        200,
         {
           batch
         }
