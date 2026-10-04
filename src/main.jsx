@@ -108,6 +108,7 @@ const navDefinitions = {
 
   nac_controller: [
     ['nac-control', 'Control', LayoutDashboard],
+    ['nac-special-transport', 'Special Transport', UsersRound],
     ['nac-bookings', 'Bookings', CalendarDays],
     ['nac-exceptions', 'Exceptions', AlertTriangle],
     ['nac-christmas', 'Christmas', CarFront]
@@ -115,6 +116,7 @@ const navDefinitions = {
 
   nac_admin: [
     ['nac-control', 'Control', LayoutDashboard],
+    ['nac-special-transport', 'Special Transport', UsersRound],
     ['nac-bookings', 'Bookings', CalendarDays],
     ['nac-exceptions', 'Exceptions', AlertTriangle],
     ['coding-review', 'Coding Review', AlertTriangle],
@@ -658,6 +660,8 @@ function App() {
             <BudgetInvoicesPage/>
           ) : active === 'nac-control' ? (
             <NacControlPage/>
+          ) : active === 'nac-special-transport' ? (
+            <TransportOperationsPage/>
           ) : active === 'nac-bookings' ? (
             <NacBookingsPage/>
           ) : active === 'nac-exceptions' ? (
@@ -683,6 +687,1353 @@ function App() {
     </div>
   );
 }
+
+
+function TransportOperationsPage() {
+  const [overview, setOverview] =
+    useState(null);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState('');
+
+  const [search, setSearch] =
+    useState('');
+
+  const [statusFilter, setStatusFilter] =
+    useState('all');
+
+  const [dayFilter, setDayFilter] =
+    useState('all');
+
+  const [directionFilter, setDirectionFilter] =
+    useState('all');
+
+  const [pickupAreaFilter, setPickupAreaFilter] =
+    useState('all');
+
+  const [
+    destinationAreaFilter,
+    setDestinationAreaFilter
+  ] =
+    useState('all');
+
+  const [attentionOnly, setAttentionOnly] =
+    useState(false);
+
+  const [sortBy, setSortBy] =
+    useState('shift_asc');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOverview() {
+      setLoading(true);
+      setError('');
+
+      try {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/transport-operations/overview`
+          );
+
+        const data =
+          await response.json()
+            .catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              'Unable to load Special Transport operations'
+          );
+        }
+
+        if (!cancelled) {
+          setOverview(data);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : 'Unable to load Special Transport operations'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadOverview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function requestStatusLabel(
+    status
+  ) {
+    const labels = {
+      submitted:
+        'Submitted',
+      needs_information:
+        'Needs Information',
+      ready_for_planning:
+        'Ready for Planning',
+      planned:
+        'Planned',
+      confirmed:
+        'Confirmed',
+      cancelled:
+        'Cancelled',
+      completed:
+        'Completed'
+    };
+
+    return (
+      labels[status] ||
+      String(
+        status || 'Unknown'
+      )
+        .replaceAll('_', ' ')
+        .replace(
+          /\b\w/g,
+          (character) =>
+            character.toUpperCase()
+        )
+    );
+  }
+
+  function directionLabel(
+    direction
+  ) {
+    if (
+      direction === 'to_work'
+    ) {
+      return 'To work';
+    }
+
+    if (
+      direction === 'from_work'
+    ) {
+      return 'From work';
+    }
+
+    return (
+      String(
+        direction || 'Unknown'
+      )
+        .replaceAll('_', ' ')
+        .replace(
+          /\b\w/g,
+          (character) =>
+            character.toUpperCase()
+        )
+    );
+  }
+
+  const transportOperationsFilteredRequests =
+    useMemo(() => {
+      const source =
+        overview?.requests || [];
+
+      const needle =
+        search
+          .trim()
+          .toLowerCase();
+
+      const filtered =
+        source.filter(
+          (request) => {
+            if (
+              statusFilter !== 'all' &&
+              request.status !== statusFilter
+            ) {
+              return false;
+            }
+
+            if (
+              dayFilter !== 'all' &&
+              request.shiftDate !== dayFilter
+            ) {
+              return false;
+            }
+
+            if (
+              directionFilter !== 'all' &&
+              request.direction !==
+                directionFilter
+            ) {
+              return false;
+            }
+
+            if (
+              pickupAreaFilter !== 'all' &&
+              request.pickupArea !==
+                pickupAreaFilter
+            ) {
+              return false;
+            }
+
+            if (
+              destinationAreaFilter !==
+                'all' &&
+              request.destinationArea !==
+                destinationAreaFilter
+            ) {
+              return false;
+            }
+
+            if (
+              attentionOnly &&
+              !request.needsAttention
+            ) {
+              return false;
+            }
+
+            if (!needle) {
+              return true;
+            }
+
+            const searchable = [
+              request.passengerName,
+              request.passengerMobile,
+              request.passengerEmail,
+              request.pickupAddress,
+              request.pickupPostcode,
+              request.destinationAddress,
+              request.destinationPostcode,
+              request.programmeName,
+              request.programmeWindowName,
+              request.department,
+              request.budgetNumber,
+              request.status,
+              request.direction
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .toLowerCase();
+
+            return searchable.includes(
+              needle
+            );
+          }
+        );
+
+      return [
+        ...filtered
+      ].sort(
+        (a, b) => {
+          if (
+            sortBy ===
+            'shift_desc'
+          ) {
+            return String(
+              b.shiftTime || ''
+            ).localeCompare(
+              String(
+                a.shiftTime || ''
+              )
+            );
+          }
+
+          if (
+            sortBy ===
+            'passenger_asc'
+          ) {
+            return String(
+              a.passengerName || ''
+            ).localeCompare(
+              String(
+                b.passengerName || ''
+              ),
+              undefined,
+              {
+                sensitivity: 'base'
+              }
+            );
+          }
+
+          if (
+            sortBy ===
+            'passenger_desc'
+          ) {
+            return String(
+              b.passengerName || ''
+            ).localeCompare(
+              String(
+                a.passengerName || ''
+              ),
+              undefined,
+              {
+                sensitivity: 'base'
+              }
+            );
+          }
+
+          if (
+            sortBy ===
+            'status'
+          ) {
+            return String(
+              a.status || ''
+            ).localeCompare(
+              String(
+                b.status || ''
+              )
+            );
+          }
+
+          if (
+            sortBy ===
+            'area'
+          ) {
+            return String(
+              a.pickupArea || ''
+            ).localeCompare(
+              String(
+                b.pickupArea || ''
+              )
+            );
+          }
+
+          return String(
+            a.shiftTime || ''
+          ).localeCompare(
+            String(
+              b.shiftTime || ''
+            )
+          );
+        }
+      );
+    }, [
+      overview,
+      search,
+      statusFilter,
+      dayFilter,
+      directionFilter,
+      pickupAreaFilter,
+      destinationAreaFilter,
+      attentionOnly,
+      sortBy
+    ]);
+
+  const transportOperationsFilterOptions =
+    useMemo(() => {
+      const requests =
+        overview?.requests || [];
+
+      function uniqueValues(
+        key
+      ) {
+        return Array.from(
+          new Set(
+            requests
+              .map(
+                (request) =>
+                  request[key]
+              )
+              .filter(Boolean)
+          )
+        ).sort();
+      }
+
+      return {
+        statuses:
+          uniqueValues('status'),
+
+        days:
+          uniqueValues(
+            'shiftDate'
+          ),
+
+        directions:
+          uniqueValues(
+            'direction'
+          ),
+
+        pickupAreas:
+          uniqueValues(
+            'pickupArea'
+          ),
+
+        destinationAreas:
+          uniqueValues(
+            'destinationArea'
+          )
+      };
+    }, [overview]);
+
+  const transportOperationsFilteredAttention =
+    useMemo(
+      () =>
+        transportOperationsFilteredRequests
+          .filter(
+            (request) =>
+              request.needsAttention
+          ),
+      [
+        transportOperationsFilteredRequests
+      ]
+    );
+
+  const transportOperationsAnalysis =
+    useMemo(() => {
+      const requests =
+        transportOperationsFilteredRequests;
+
+      function groupBy(
+        getKey,
+        getLabel
+      ) {
+        const grouped =
+          new Map();
+
+        requests.forEach(
+          (request) => {
+            const key =
+              getKey(request) ||
+              'Unknown';
+
+            const label =
+              getLabel
+                ? getLabel(
+                    request,
+                    key
+                  )
+                : key;
+
+            const current =
+              grouped.get(key) || {
+                key,
+                label,
+                requests: 0,
+                passengers: 0
+              };
+
+            current.requests += 1;
+            current.passengers +=
+              Number(
+                request.passengerCount ||
+                0
+              );
+
+            grouped.set(
+              key,
+              current
+            );
+          }
+        );
+
+        return Array.from(
+          grouped.values()
+        );
+      }
+
+      const days =
+        groupBy(
+          (request) =>
+            request.shiftDate,
+          (request, key) =>
+            key === 'Unknown'
+              ? 'Unknown'
+              : `${
+                  request.shiftDay ||
+                  ''
+                } ${key}`.trim()
+        ).sort(
+          (a, b) => {
+            if (
+              a.key === 'Unknown'
+            ) {
+              return 1;
+            }
+
+            if (
+              b.key === 'Unknown'
+            ) {
+              return -1;
+            }
+
+            return String(
+              a.key
+            ).localeCompare(
+              String(b.key)
+            );
+          }
+        );
+
+      const hours =
+        groupBy(
+          (request) =>
+            request.shiftHour
+        ).sort(
+          (a, b) => {
+            if (
+              a.key === 'Unknown'
+            ) {
+              return 1;
+            }
+
+            if (
+              b.key === 'Unknown'
+            ) {
+              return -1;
+            }
+
+            return String(
+              a.key
+            ).localeCompare(
+              String(b.key)
+            );
+          }
+        );
+
+      function busiestFirst(
+        rows
+      ) {
+        return rows.sort(
+          (a, b) =>
+            b.requests -
+              a.requests ||
+            b.passengers -
+              a.passengers ||
+            String(
+              a.label
+            ).localeCompare(
+              String(b.label)
+            )
+        );
+      }
+
+      return {
+        days,
+
+        hours,
+
+        statuses:
+          busiestFirst(
+            groupBy(
+              (request) =>
+                request.status
+            )
+          ),
+
+        directions:
+          busiestFirst(
+            groupBy(
+              (request) =>
+                request.direction
+            )
+          ),
+
+        pickupAreas:
+          busiestFirst(
+            groupBy(
+              (request) =>
+                request.pickupArea
+            )
+          ),
+
+        destinationAreas:
+          busiestFirst(
+            groupBy(
+              (request) =>
+                request.destinationArea
+            )
+          )
+      };
+    }, [
+      transportOperationsFilteredRequests
+    ]);
+
+
+  const transportOperationsHasFilters =
+    Boolean(
+      search ||
+      statusFilter !== 'all' ||
+      dayFilter !== 'all' ||
+      directionFilter !== 'all' ||
+      pickupAreaFilter !== 'all' ||
+      destinationAreaFilter !== 'all' ||
+      attentionOnly ||
+      sortBy !== 'shift_asc'
+    );
+
+  function clearTransportOperationsFilters() {
+    setSearch('');
+    setStatusFilter('all');
+    setDayFilter('all');
+    setDirectionFilter('all');
+    setPickupAreaFilter('all');
+    setDestinationAreaFilter('all');
+    setAttentionOnly(false);
+    setSortBy('shift_asc');
+  }
+
+
+  function transportAnalysisPanel(
+    title,
+    subtitle,
+    rows,
+    labelFormatter = null
+  ) {
+    const highest =
+      Math.max(
+        1,
+        ...rows.map(
+          (row) =>
+            Number(
+              row.requests || 0
+            )
+        )
+      );
+
+    return (
+      <section className="card transport-analysis-panel">
+        <div className="transport-analysis-heading">
+          <div>
+            <small>
+              Demand analysis
+            </small>
+
+            <h2>
+              {title}
+            </h2>
+
+            <p>
+              {subtitle}
+            </p>
+          </div>
+        </div>
+
+        {rows.length ? (
+          <div className="transport-analysis-list">
+            {rows.map(
+              (row) => {
+                const label =
+                  labelFormatter
+                    ? labelFormatter(
+                        row.label,
+                        row
+                      )
+                    : row.label;
+
+                const width =
+                  Math.max(
+                    6,
+                    Math.round(
+                      (
+                        Number(
+                          row.requests ||
+                          0
+                        ) /
+                        highest
+                      ) *
+                        100
+                    )
+                  );
+
+                return (
+                  <div
+                    className="transport-analysis-row"
+                    key={row.key}
+                  >
+                    <div className="transport-analysis-row-top">
+                      <strong>
+                        {label}
+                      </strong>
+
+                      <span>
+                        {row.requests}
+                        {' '}
+                        {row.requests === 1
+                          ? 'request'
+                          : 'requests'}
+                        {' · '}
+                        {row.passengers}
+                        {' '}
+                        {row.passengers === 1
+                          ? 'passenger'
+                          : 'passengers'}
+                      </span>
+                    </div>
+
+                    <div className="transport-analysis-bar">
+                      <span
+                        style={{
+                          width:
+                            `${width}%`
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              }
+            )}
+          </div>
+        ) : (
+          <div className="role-dashboard-empty">
+            <BarChart3 size={26}/>
+
+            <strong>
+              No matching data
+            </strong>
+
+            <span>
+              Change or clear the filters
+              to see this analysis.
+            </span>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+
+  if (loading) {
+    return (
+      <div className="card state-panel">
+        Loading Special Transport operations...
+      </div>
+    );
+  }
+
+  const summary =
+    overview?.summary || {
+      totalRequests: 0,
+      totalPassengers: 0,
+      attentionCount: 0,
+      activeCount: 0,
+      cancelledCount: 0
+    };
+
+  const attention =
+    transportOperationsFilteredAttention;
+
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>
+            Special Transport Operations
+          </h1>
+
+          <p>
+            Need-A-Cab operational view of
+            Special Transport requests before
+            booking and route planning.
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <div className="overview-kpi-grid">
+        <div className="card overview-kpi">
+          <small>Requests</small>
+
+          <strong>
+            {summary.totalRequests}
+          </strong>
+
+          <span>all requests</span>
+        </div>
+
+        <div className="card overview-kpi">
+          <small>Passengers</small>
+
+          <strong>
+            {summary.totalPassengers}
+          </strong>
+
+          <span>people travelling</span>
+        </div>
+
+        <div className="card overview-kpi">
+          <small>Active</small>
+
+          <strong>
+            {summary.activeCount}
+          </strong>
+
+          <span>open requests</span>
+        </div>
+
+        <div className="card overview-kpi">
+          <small>Cancelled</small>
+
+          <strong>
+            {summary.cancelledCount}
+          </strong>
+
+          <span>requests</span>
+        </div>
+
+        <div className="card overview-kpi attention">
+          <small>Needs Attention</small>
+
+          <strong>
+            {summary.attentionCount}
+          </strong>
+
+          <span>action required</span>
+        </div>
+      </div>
+
+      <section className="card nac-bookings-card transport-operations-filters">
+        <div className="overview-panel-heading">
+          <div>
+            <small>
+              Request search
+            </small>
+
+            <h2>
+              All Special Transport Requests
+            </h2>
+
+            <p>
+              Search, filter and sort the
+              current operational request
+              list.
+            </p>
+          </div>
+        </div>
+
+        <div className="nac-filter-grid">
+          <label>
+            Search
+
+            <input
+              type="search"
+              value={search}
+              placeholder="Passenger, address, postcode, budget..."
+              onChange={(event) =>
+                setSearch(
+                  event.target.value
+                )
+              }
+            />
+          </label>
+
+          <label>
+            Status
+
+            <select
+              value={statusFilter}
+              onChange={(event) =>
+                setStatusFilter(
+                  event.target.value
+                )
+              }
+            >
+              <option value="all">
+                All statuses
+              </option>
+
+              {transportOperationsFilterOptions
+                .statuses
+                .map(
+                  (status) => (
+                    <option
+                      key={status}
+                      value={status}
+                    >
+                      {requestStatusLabel(
+                        status
+                      )}
+                    </option>
+                  )
+                )}
+            </select>
+          </label>
+
+          <label>
+            Service day
+
+            <select
+              value={dayFilter}
+              onChange={(event) =>
+                setDayFilter(
+                  event.target.value
+                )
+              }
+            >
+              <option value="all">
+                All days
+              </option>
+
+              {transportOperationsFilterOptions
+                .days
+                .map(
+                  (day) => (
+                    <option
+                      key={day}
+                      value={day}
+                    >
+                      {day}
+                    </option>
+                  )
+                )}
+            </select>
+          </label>
+
+          <label>
+            Direction
+
+            <select
+              value={directionFilter}
+              onChange={(event) =>
+                setDirectionFilter(
+                  event.target.value
+                )
+              }
+            >
+              <option value="all">
+                All directions
+              </option>
+
+              {transportOperationsFilterOptions
+                .directions
+                .map(
+                  (direction) => (
+                    <option
+                      key={direction}
+                      value={direction}
+                    >
+                      {directionLabel(
+                        direction
+                      )}
+                    </option>
+                  )
+                )}
+            </select>
+          </label>
+
+          <label>
+            Pickup area
+
+            <select
+              value={pickupAreaFilter}
+              onChange={(event) =>
+                setPickupAreaFilter(
+                  event.target.value
+                )
+              }
+            >
+              <option value="all">
+                All pickup areas
+              </option>
+
+              {transportOperationsFilterOptions
+                .pickupAreas
+                .map(
+                  (area) => (
+                    <option
+                      key={area}
+                      value={area}
+                    >
+                      {area}
+                    </option>
+                  )
+                )}
+            </select>
+          </label>
+
+          <label>
+            Destination area
+
+            <select
+              value={
+                destinationAreaFilter
+              }
+              onChange={(event) =>
+                setDestinationAreaFilter(
+                  event.target.value
+                )
+              }
+            >
+              <option value="all">
+                All destination areas
+              </option>
+
+              {transportOperationsFilterOptions
+                .destinationAreas
+                .map(
+                  (area) => (
+                    <option
+                      key={area}
+                      value={area}
+                    >
+                      {area}
+                    </option>
+                  )
+                )}
+            </select>
+          </label>
+
+          <label>
+            Sort by
+
+            <select
+              value={sortBy}
+              onChange={(event) =>
+                setSortBy(
+                  event.target.value
+                )
+              }
+            >
+              <option value="shift_asc">
+                Shift — earliest first
+              </option>
+
+              <option value="shift_desc">
+                Shift — latest first
+              </option>
+
+              <option value="passenger_asc">
+                Passenger — A to Z
+              </option>
+
+              <option value="passenger_desc">
+                Passenger — Z to A
+              </option>
+
+              <option value="status">
+                Status
+              </option>
+
+              <option value="area">
+                Pickup area
+              </option>
+            </select>
+          </label>
+
+          <label>
+            Attention
+
+            <select
+              value={
+                attentionOnly
+                  ? 'attention'
+                  : 'all'
+              }
+              onChange={(event) =>
+                setAttentionOnly(
+                  event.target.value ===
+                    'attention'
+                )
+              }
+            >
+              <option value="all">
+                All requests
+              </option>
+
+              <option value="attention">
+                Needs attention only
+              </option>
+            </select>
+          </label>
+        </div>
+
+        <div className="nac-results-summary">
+          <div>
+            <strong>
+              {
+                transportOperationsFilteredRequests
+                  .length
+              }
+            </strong>
+            {' '}
+            of
+            {' '}
+            <strong>
+              {overview?.requests?.length || 0}
+            </strong>
+            {' '}
+            requests shown
+          </div>
+
+          {transportOperationsHasFilters && (
+            <button
+              type="button"
+              className="nac-filter-reset"
+              onClick={
+                clearTransportOperationsFilters
+              }
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </section>
+
+
+      <section className="transport-analysis-section">
+        <div className="transport-analysis-title">
+          <div>
+            <small>
+              Planning view
+            </small>
+
+            <h2>
+              Demand Analysis
+            </h2>
+
+            <p>
+              Analysis updates automatically
+              with the filters above.
+            </p>
+          </div>
+
+          <span>
+            {
+              transportOperationsFilteredRequests
+                .length
+            }
+            {' '}
+            matching
+            {' '}
+            {
+              transportOperationsFilteredRequests
+                .length === 1
+                ? 'request'
+                : 'requests'
+            }
+          </span>
+        </div>
+
+        <div className="transport-analysis-grid">
+          {transportAnalysisPanel(
+            'By Service Day',
+            'Requests and passengers by date.',
+            transportOperationsAnalysis.days
+          )}
+
+          {transportAnalysisPanel(
+            'By Shift Hour',
+            'Demand by staff shift time.',
+            transportOperationsAnalysis.hours
+          )}
+
+          {transportAnalysisPanel(
+            'By Status',
+            'Current request workflow position.',
+            transportOperationsAnalysis.statuses,
+            (label) =>
+              requestStatusLabel(
+                label
+              )
+          )}
+
+          {transportAnalysisPanel(
+            'By Direction',
+            'To-work and from-work demand.',
+            transportOperationsAnalysis.directions,
+            (label) =>
+              directionLabel(
+                label
+              )
+          )}
+
+          {transportAnalysisPanel(
+            'Pickup Areas',
+            'Demand grouped by pickup postcode area.',
+            transportOperationsAnalysis.pickupAreas
+          )}
+
+          {transportAnalysisPanel(
+            'Destination Areas',
+            'Demand grouped by destination postcode area.',
+            transportOperationsAnalysis.destinationAreas
+          )}
+        </div>
+      </section>
+
+
+      <div className="overview-dashboard-grid nac-overview-grid">
+        <section className="card overview-panel overview-panel-wide">
+          <div className="overview-panel-heading">
+            <div>
+              <small>
+                Operations
+              </small>
+
+              <h2>
+                Request Overview
+              </h2>
+
+              <p>
+                Current Special Transport
+                demand held locally in the
+                portal.
+              </p>
+            </div>
+          </div>
+
+          {transportOperationsFilteredRequests.length ? (
+            <div className="overview-booking-list">
+              {transportOperationsFilteredRequests
+                .map(
+                  (request) => (
+                    <div
+                      className="overview-booking-row"
+                      key={request.id}
+                    >
+                      <div className="overview-booking-time">
+                        <strong>
+                          {request.shiftDate}
+                        </strong>
+
+                        <small>
+                          {request.shiftHour}
+                        </small>
+                      </div>
+
+                      <div className="overview-booking-main">
+                        <strong>
+                          {request.passengerName ||
+                            'Passenger'}
+                        </strong>
+
+                        <small>
+                          {request.pickupArea ||
+                            '—'}
+                          {' → '}
+                          {request.destinationArea ||
+                            '—'}
+                          {' · '}
+                          {directionLabel(
+                            request.direction
+                          )}
+                        </small>
+                      </div>
+
+                      <div className="overview-booking-meta">
+                        <span className="badge">
+                          {requestStatusLabel(
+                            request.status
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                )}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty">
+              <CalendarDays size={28}/>
+
+              <strong>
+                {overview?.requests?.length
+                  ? 'No matching requests'
+                  : 'No requests yet'}
+              </strong>
+
+              <span>
+                {overview?.requests?.length
+                  ? 'Change or clear the filters to see more requests.'
+                  : 'Special Transport requests will appear here.'}
+              </span>
+            </div>
+          )}
+        </section>
+
+        <section className="card overview-panel">
+          <div className="overview-panel-heading">
+            <div>
+              <small>
+                Attention queue
+              </small>
+
+              <h2>
+                Needs Attention
+              </h2>
+
+              <p>
+                Requests requiring an
+                operational check before
+                planning.
+              </p>
+            </div>
+
+            <strong className="overview-panel-count">
+              {attention.length}
+            </strong>
+          </div>
+
+          {attention.length ? (
+            <div className="overview-booking-list">
+              {attention
+                .map(
+                  (request) => (
+                    <div
+                      className="overview-booking-row"
+                      key={request.id}
+                    >
+                      <div className="overview-booking-time">
+                        <strong>
+                          {request.shiftDate}
+                        </strong>
+
+                        <small>
+                          {request.shiftHour}
+                        </small>
+                      </div>
+
+                      <div className="overview-booking-main">
+                        <strong>
+                          {request.passengerName ||
+                            'Passenger'}
+                        </strong>
+
+                        <small>
+                          {(
+                            request
+                              .attentionReasons ||
+                            []
+                          ).join(' · ')}
+                        </small>
+                      </div>
+
+                      <div className="overview-booking-meta">
+                        <span className="status-attention-chip">
+                          Needs Attention
+                        </span>
+                      </div>
+                    </div>
+                  )
+                )}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty success">
+              <CheckCircle2 size={28}/>
+
+              <strong>
+                Nothing needs attention
+              </strong>
+
+              <span>
+                All current requests are
+                ready for their next stage.
+              </span>
+            </div>
+          )}
+        </section>
+      </div>
+    </>
+  );
+}
+
 
 
 function BookerDashboard({

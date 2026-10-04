@@ -7339,3 +7339,201 @@ button:disabled {
     width: 100%;
   }
 }
+
+
+/* Stage 1 Special Transport operations filters */
+
+.transport-operations-filters {
+  margin-bottom: 0;
+}
+
+.transport-operations-filters .nac-filter-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(240px, 1.8fr)
+    repeat(3, minmax(145px, 1fr));
+  gap: 14px 16px;
+  align-items: end;
+  margin-top: 18px;
+}
+
+.transport-operations-filters
+  .nac-filter-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.transport-operations-filters
+  .nac-filter-grid label:first-child {
+  grid-column: span 1;
+}
+
+.transport-operations-filters
+  .nac-filter-grid input,
+.transport-operations-filters
+  .nac-filter-grid select {
+  width: 100%;
+  min-width: 0;
+}
+
+.transport-operations-filters
+  .nac-results-summary {
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+@media (max-width: 1200px) {
+  .transport-operations-filters
+    .nac-filter-grid {
+    grid-template-columns:
+      repeat(2, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .transport-operations-filters
+    .nac-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .transport-operations-filters
+    .nac-filter-grid label:first-child {
+    grid-column: span 1;
+  }
+}
+
+
+/* Stage 1 Special Transport demand analysis */
+
+.transport-analysis-section {
+  margin-top: 18px;
+}
+
+.transport-analysis-title {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 12px;
+}
+
+.transport-analysis-title small,
+.transport-analysis-heading small {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.transport-analysis-title h2,
+.transport-analysis-heading h2 {
+  margin: 0;
+}
+
+.transport-analysis-title p,
+.transport-analysis-heading p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.transport-analysis-title > span {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.transport-analysis-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.transport-analysis-panel {
+  min-width: 0;
+  padding: 16px;
+}
+
+.transport-analysis-heading {
+  margin-bottom: 14px;
+}
+
+.transport-analysis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.transport-analysis-row {
+  min-width: 0;
+}
+
+.transport-analysis-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.transport-analysis-row-top strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.transport-analysis-row-top span {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.transport-analysis-bar {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 45, 75, 0.08);
+}
+
+.transport-analysis-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  color: #1e6fa8;
+  opacity: 0.78;
+}
+
+@media (max-width: 1200px) {
+  .transport-analysis-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .transport-analysis-title {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .transport-analysis-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .transport-analysis-row-top {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}

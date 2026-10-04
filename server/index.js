@@ -878,6 +878,21 @@ function enforceApiAccess(
       ]
     );
   }
+  if (
+    pathname.startsWith(
+      '/api/transport-operations/'
+    )
+  ) {
+    return requireAnyRole(
+      req,
+      [
+        'nac_controller',
+        'nac_admin'
+      ]
+    );
+  }
+
+
 
   if (
     pathname.startsWith(
@@ -9379,6 +9394,473 @@ function listAllTransportRequests() {
       tr.id DESC
   `).all();
 }
+
+
+function transportOperationsPostcodeArea(
+  postcode
+) {
+  const normalised =
+    String(
+      postcode || ''
+    )
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, ' ');
+
+  if (!normalised) {
+    return 'Unknown';
+  }
+
+  return (
+    normalised.split(' ')[0] ||
+    'Unknown'
+  );
+}
+
+
+function transportOperationsShiftParts(
+  shiftTime
+) {
+  const value =
+    String(
+      shiftTime || ''
+    ).trim();
+
+  const match =
+    value.match(
+      /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/
+    );
+
+  if (!match) {
+    return {
+      valid: false,
+      date: 'Unknown',
+      day: 'Unknown',
+      hour: 'Unknown'
+    };
+  }
+
+  const [
+    ,
+    year,
+    month,
+    dayOfMonth,
+    hour
+  ] = match;
+
+  const date =
+    `${year}-${month}-${dayOfMonth}`;
+
+  const dateValue =
+    new Date(
+      Date.UTC(
+        Number(year),
+        Number(month) - 1,
+        Number(dayOfMonth)
+      )
+    );
+
+  if (
+    Number.isNaN(
+      dateValue.getTime()
+    )
+  ) {
+    return {
+      valid: false,
+      date: 'Unknown',
+      day: 'Unknown',
+      hour: 'Unknown'
+    };
+  }
+
+  const dayNames = [
+    'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday'
+  ];
+
+  return {
+    valid: true,
+    date,
+    day:
+      dayNames[
+        dateValue.getUTCDay()
+      ],
+    hour:
+      `${hour}:00`
+  };
+}
+
+
+function getTransportOperationsOverview() {
+  /*
+    Stage 1 operational overview.
+
+    Intentionally local-data only:
+    - no Autocab calls
+    - no booking creation
+    - no transport-request updates
+    - no schema changes
+  */
+  const sourceRequests =
+    listAllTransportRequests();
+
+  const statusMap = new Map();
+  const dayMap = new Map();
+  const hourMap = new Map();
+  const directionMap = new Map();
+  const pickupAreaMap = new Map();
+  const destinationAreaMap = new Map();
+
+  let totalPassengers = 0;
+  let activeCount = 0;
+  let cancelledCount = 0;
+
+  function addCount(
+    map,
+    key,
+    passengers,
+    extra = {}
+  ) {
+    const current =
+      map.get(key) || {
+        ...extra,
+        requests: 0,
+        passengers: 0
+      };
+
+    current.requests += 1;
+    current.passengers += passengers;
+
+    map.set(
+      key,
+      current
+    );
+  }
+
+  const requests =
+    sourceRequests.map(
+      (request) => {
+        const passengerCount =
+          Math.max(
+            0,
+            Number(
+              request.passengerCount ||
+              0
+            ) || 0
+          );
+
+        totalPassengers +=
+          passengerCount;
+
+        const status =
+          String(
+            request.status || ''
+          ).trim() ||
+          'unknown';
+
+        if (
+          status === 'cancelled'
+        ) {
+          cancelledCount += 1;
+        } else if (
+          status !== 'completed'
+        ) {
+          activeCount += 1;
+        }
+
+        const shift =
+          transportOperationsShiftParts(
+            request.shiftTime
+          );
+
+        const pickupArea =
+          transportOperationsPostcodeArea(
+            request.pickupPostcode
+          );
+
+        const destinationArea =
+          transportOperationsPostcodeArea(
+            request.destinationPostcode
+          );
+
+        const direction =
+          String(
+            request.direction || ''
+          ).trim() ||
+          'Unknown';
+
+        addCount(
+          statusMap,
+          status,
+          passengerCount,
+          {
+            status
+          }
+        );
+
+        addCount(
+          dayMap,
+          shift.date,
+          passengerCount,
+          {
+            date: shift.date,
+            day: shift.day
+          }
+        );
+
+        addCount(
+          hourMap,
+          shift.hour,
+          passengerCount,
+          {
+            hour: shift.hour
+          }
+        );
+
+        addCount(
+          directionMap,
+          direction,
+          passengerCount,
+          {
+            direction
+          }
+        );
+
+        addCount(
+          pickupAreaMap,
+          pickupArea,
+          passengerCount,
+          {
+            area: pickupArea
+          }
+        );
+
+        addCount(
+          destinationAreaMap,
+          destinationArea,
+          passengerCount,
+          {
+            area:
+              destinationArea
+          }
+        );
+
+        const attentionReasons = [];
+
+        if (
+          status ===
+          'needs_information'
+        ) {
+          attentionReasons.push(
+            'Needs information'
+          );
+        }
+
+        if (
+          !String(
+            request.pickupPostcode ||
+            ''
+          ).trim()
+        ) {
+          attentionReasons.push(
+            'Missing pickup postcode'
+          );
+        }
+
+        if (
+          !String(
+            request.destinationPostcode ||
+            ''
+          ).trim()
+        ) {
+          attentionReasons.push(
+            'Missing destination postcode'
+          );
+        }
+
+        if (!shift.valid) {
+          attentionReasons.push(
+            'Missing or invalid shift time'
+          );
+        }
+
+        const operationalFlags = [];
+
+        if (
+          passengerCount > 1
+        ) {
+          operationalFlags.push(
+            `${passengerCount} passengers`
+          );
+        }
+
+        return {
+          ...request,
+
+          passengerCount,
+
+          shiftDate:
+            shift.date,
+
+          shiftDay:
+            shift.day,
+
+          shiftHour:
+            shift.hour,
+
+          pickupArea,
+
+          destinationArea,
+
+          needsAttention:
+            attentionReasons.length > 0,
+
+          attentionReasons,
+
+          operationalFlags
+        };
+      }
+    );
+
+  const attention =
+    requests.filter(
+      (request) =>
+        request.needsAttention
+    );
+
+  const status =
+    Array.from(
+      statusMap.values()
+    ).sort(
+      (a, b) =>
+        b.requests -
+        a.requests ||
+        String(a.status)
+          .localeCompare(
+            String(b.status)
+          )
+    );
+
+  const days =
+    Array.from(
+      dayMap.values()
+    ).sort(
+      (a, b) => {
+        if (
+          a.date === 'Unknown'
+        ) {
+          return 1;
+        }
+
+        if (
+          b.date === 'Unknown'
+        ) {
+          return -1;
+        }
+
+        return String(
+          a.date
+        ).localeCompare(
+          String(b.date)
+        );
+      }
+    );
+
+  const hours =
+    Array.from(
+      hourMap.values()
+    ).sort(
+      (a, b) => {
+        if (
+          a.hour === 'Unknown'
+        ) {
+          return 1;
+        }
+
+        if (
+          b.hour === 'Unknown'
+        ) {
+          return -1;
+        }
+
+        return String(
+          a.hour
+        ).localeCompare(
+          String(b.hour)
+        );
+      }
+    );
+
+  const directions =
+    Array.from(
+      directionMap.values()
+    ).sort(
+      (a, b) =>
+        b.requests -
+        a.requests ||
+        String(a.direction)
+          .localeCompare(
+            String(b.direction)
+          )
+    );
+
+  const pickupAreas =
+    Array.from(
+      pickupAreaMap.values()
+    ).sort(
+      (a, b) =>
+        b.requests -
+        a.requests ||
+        String(a.area)
+          .localeCompare(
+            String(b.area)
+          )
+    );
+
+  const destinationAreas =
+    Array.from(
+      destinationAreaMap.values()
+    ).sort(
+      (a, b) =>
+        b.requests -
+        a.requests ||
+        String(a.area)
+          .localeCompare(
+            String(b.area)
+          )
+    );
+
+  return {
+    summary: {
+      totalRequests:
+        requests.length,
+
+      totalPassengers,
+
+      attentionCount:
+        attention.length,
+
+      activeCount,
+
+      cancelledCount
+    },
+
+    status,
+    days,
+    hours,
+    directions,
+    pickupAreas,
+    destinationAreas,
+    attention,
+    requests
+  };
+}
+
 
 
 function listTransportRequestEvents(
@@ -26879,6 +27361,19 @@ const server = http.createServer(async (req, res) => {
         res,
         200,
         result
+      );
+    }
+
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/transport-operations/overview'
+    ) {
+      return sendJson(
+        res,
+        200,
+        getTransportOperationsOverview()
       );
     }
 
