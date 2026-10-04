@@ -3026,6 +3026,7 @@ function BookingDetailModal({
     new Set([
       'booking_imported',
       'booking_created',
+      'booking_amended',
       'autocab_submission_started',
       'autocab_booking_created',
       'booking_dispatch_accepted',
@@ -3228,7 +3229,14 @@ function BookingDetailModal({
                 )}
               </span>
 
-              {booking.hasBeenAmended && (
+              {(
+                booking.hasBeenAmended ||
+                booking.events?.some(
+                  (event) =>
+                    event.eventType ===
+                      'booking_amended'
+                )
+              ) && (
                 <span className="amended-chip">
                   Amended
                 </span>
@@ -3321,6 +3329,15 @@ function BookingDetailModal({
                 <small>Booking Source</small>
                 <strong>
                   {bookingDisplaySource(booking)}
+                </strong>
+              </div>
+
+              <div>
+                <small>Pickup Date & Time</small>
+                <strong>
+                  {formatBookingDateTime(
+                    booking.requestedPickupAt
+                  )}
                 </strong>
               </div>
 
@@ -7533,6 +7550,19 @@ function MyBookingsPage({
                                 booking.operationalStatus
                               )}
                             </span>
+
+                            {(
+                              booking.hasBeenAmended ||
+                              booking.events?.some(
+                                (event) =>
+                                  event.eventType ===
+                                    'booking_amended'
+                              )
+                            ) && (
+                              <span className="amended-chip">
+                                Amended
+                              </span>
+                            )}
 
                             {bookingIsStale(
                               booking
