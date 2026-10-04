@@ -4859,6 +4859,7 @@ function getControlSummary() {
       'draft',
       'submitting',
       'cancelling',
+      'modifying',
       'booked',
       'confirmed',
       'requires_review'
@@ -6521,7 +6522,8 @@ function amendPortalBooking(
       entityId: bookingId,
       oldValue: JSON.stringify(oldState),
       newValue: JSON.stringify(newState),
-      source: 'portal'
+      source: 'portal',
+      actorUserId: userId
     });
 
     db.exec('COMMIT');
@@ -7841,6 +7843,7 @@ const AUTOCAB_OPERATIONAL_STATUS_RANK = {
   draft: 0,
   submitting: 0,
   cancelling: 1,
+  modifying: 1,
   booked: 1,
   confirmed: 1,
   requires_review: 1,
@@ -11613,6 +11616,1510 @@ function createAutocabOutboundEvent({
 }
 
 
+function getOwnedLiveModifiableBooking(
+  bookingId,
+  userId
+) {
+  const booking =
+    db.prepare(`
+      SELECT
+        *
+      FROM bookings
+      WHERE id = ?
+        AND created_by_user_id = ?
+    `).get(
+      bookingId,
+      userId
+    );
+
+  if (!booking) {
+    const error =
+      new Error(
+        'Booking not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const modifiableStatuses =
+    new Set([
+      'booked',
+      'confirmed'
+    ]);
+
+  if (
+    !modifiableStatuses.has(
+      booking.operational_status
+    )
+  ) {
+    const error =
+      new Error(
+        `Booking cannot be amended from status ${booking.operational_status}`
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const autocabBookingId =
+    String(
+      booking.autocab_booking_id ||
+      ''
+    ).trim();
+
+  if (
+    !/^\d+$/.test(
+      autocabBookingId
+    ) ||
+    autocabBookingId === '0'
+  ) {
+    const error =
+      new Error(
+        'This live booking has no valid Autocab booking ID and requires manual review'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return {
+    booking,
+    autocabBookingId
+  };
+}
+
+
+function validateLiveModificationPayload(
+  userId,
+  payload
+) {
+  const requestedPickupAt =
+    String(
+      payload?.requestedPickupAt || ''
+    ).trim();
+
+  const passengerName =
+    String(
+      payload?.passengerName || ''
+    ).trim();
+
+  const passengerMobile =
+    String(
+      payload?.passengerMobile || ''
+    ).trim();
+
+  const passengerCount =
+    parseRequiredPositiveInteger(
+      payload?.passengerCount ?? 1,
+      'Passenger count'
+    );
+
+  const pickup =
+    resolveBookingStop(
+      payload?.pickup
+    );
+
+  const destination =
+    resolveBookingStop(
+      payload?.destination
+    );
+
+  const vias =
+    Array.isArray(
+      payload?.vias
+    )
+      ? payload.vias
+          .map(
+            resolveBookingStop
+          )
+          .filter(
+            (stop) =>
+              stop.address
+          )
+      : [];
+
+  const driverNotes =
+    String(
+      payload?.driverNotes || ''
+    ).trim();
+
+  const budgetId =
+    Number(
+      payload?.budgetId
+    );
+
+  const reasonCodeId =
+    Number(
+      payload?.reasonCodeId
+    );
+
+  if (!requestedPickupAt) {
+    const error =
+      new Error(
+        'Pickup date and time are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  /*
+    Use the same Europe/London-aware
+    normalisation that will be used for the
+    Autocab payload. This catches invalid and
+    ambiguous local pickup times before any
+    modification lock is taken.
+  */
+  normaliseUhpPickupTime(
+    requestedPickupAt
+  );
+
+  if (!passengerName) {
+    const error =
+      new Error(
+        'Passenger name is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!passengerMobile) {
+    const error =
+      new Error(
+        'Passenger contact number is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!pickup.address) {
+    const error =
+      new Error(
+        'Pickup address is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!destination.address) {
+    const error =
+      new Error(
+        'Destination address is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(
+      budgetId
+    ) ||
+    budgetId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid UHP budget is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(
+      reasonCodeId
+    ) ||
+    reasonCodeId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid reason code is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const coding =
+    validateBookingCoding({
+      userId,
+      budgetId,
+      reasonCodeId
+    });
+
+  /*
+    Live Autocab modification requires
+    coordinates for every route point.
+    Validate them before taking the local
+    modification lock.
+  */
+  buildAutocabRoutePoint(
+    pickup,
+    'Pickup'
+  );
+
+  for (const via of vias) {
+    buildAutocabRoutePoint(
+      via,
+      'Via'
+    );
+  }
+
+  buildAutocabRoutePoint(
+    destination,
+    'Destination'
+  );
+
+  return {
+    requestedPickupAt,
+    passengerName,
+    passengerMobile,
+    passengerCount,
+    pickup,
+    destination,
+    vias,
+    driverNotes,
+    budgetId,
+    reasonCodeId,
+    ...coding
+  };
+}
+
+
+function writeAutocabModificationBookingEvent({
+  bookingId,
+  eventType,
+  oldStatus,
+  newStatus,
+  userId,
+  notes,
+  rawPayload = null
+}) {
+  db.prepare(`
+    INSERT INTO booking_events
+      (
+        booking_id,
+        event_type,
+        event_source,
+        old_status,
+        new_status,
+        user_id,
+        notes,
+        raw_payload
+      )
+    VALUES (
+      ?,
+      ?,
+      'portal',
+      ?,
+      ?,
+      ?,
+      ?,
+      ?
+    )
+  `).run(
+    bookingId,
+    eventType,
+    oldStatus,
+    newStatus,
+    userId,
+    notes,
+    rawPayload
+      ? JSON.stringify(
+          rawPayload
+        )
+      : null
+  );
+}
+
+
+function lockLiveBookingForModification({
+  bookingId,
+  userId,
+  autocabBookingId,
+  previousStatus,
+  rowVersion
+}) {
+  db.exec('BEGIN');
+
+  try {
+    const update =
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status =
+            'modifying',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND created_by_user_id = ?
+          AND operational_status = ?
+          AND autocab_booking_id = ?
+      `).run(
+        bookingId,
+        userId,
+        previousStatus,
+        autocabBookingId
+      );
+
+    if (update.changes !== 1) {
+      const error =
+        new Error(
+          'Booking state changed before modification started'
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    writeAutocabModificationBookingEvent({
+      bookingId,
+      eventType:
+        'autocab_modification_started',
+      oldStatus:
+        previousStatus,
+      newStatus:
+        'modifying',
+      userId,
+      notes:
+        'Live Autocab booking modification started',
+      rawPayload: {
+        autocabBookingId,
+        rowVersion
+      }
+    });
+
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function restoreLiveBookingAfterModificationRejection({
+  bookingId,
+  userId,
+  previousStatus,
+  autocabBookingId,
+  responseStatus = null
+}) {
+  db.exec('BEGIN');
+
+  try {
+    const transition =
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status = ?,
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND operational_status =
+            'modifying'
+      `).run(
+        previousStatus,
+        bookingId
+      );
+
+    if (transition.changes === 1) {
+      writeAutocabModificationBookingEvent({
+        bookingId,
+        eventType:
+          'autocab_modification_rejected',
+        oldStatus:
+          'modifying',
+        newStatus:
+          previousStatus,
+        userId,
+        notes:
+          responseStatus === null
+            ? 'Autocab rejected live booking modification'
+            : `Autocab rejected live booking modification with HTTP ${responseStatus}`,
+        rawPayload: {
+          autocabBookingId,
+          responseStatus
+        }
+      });
+    }
+
+    db.exec('COMMIT');
+
+    return (
+      transition.changes === 1
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function markLiveBookingModificationUncertain({
+  bookingId,
+  userId,
+  autocabBookingId,
+  reason,
+  responseStatus = null
+}) {
+  db.exec('BEGIN');
+
+  try {
+    const transition =
+      db.prepare(`
+        UPDATE bookings
+        SET
+          operational_status =
+            'requires_review',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND operational_status =
+            'modifying'
+      `).run(
+        bookingId
+      );
+
+    if (transition.changes === 1) {
+      writeAutocabModificationBookingEvent({
+        bookingId,
+        eventType:
+          'autocab_modification_uncertain',
+        oldStatus:
+          'modifying',
+        newStatus:
+          'requires_review',
+        userId,
+        notes:
+          reason ||
+          'Autocab modification result is uncertain and requires manual review',
+        rawPayload: {
+          autocabBookingId,
+          responseStatus
+        }
+      });
+    } else {
+      /*
+        A webhook may legitimately advance the
+        booking while the modification request is
+        in flight. Preserve that newer operational
+        state, but still leave a booking-level
+        reconciliation warning.
+      */
+      const current =
+        db.prepare(`
+          SELECT operational_status
+            AS operationalStatus
+          FROM bookings
+          WHERE id = ?
+        `).get(
+          bookingId
+        );
+
+      if (current) {
+        writeAutocabModificationBookingEvent({
+          bookingId,
+          eventType:
+            'autocab_modification_reconciliation_required',
+          oldStatus:
+            current.operationalStatus,
+          newStatus:
+            current.operationalStatus,
+          userId,
+          notes:
+            reason ||
+            'Autocab modification result requires manual reconciliation',
+          rawPayload: {
+            autocabBookingId,
+            responseStatus,
+            operationalStatusPreserved:
+              current.operationalStatus
+          }
+        });
+      }
+    }
+
+    db.exec('COMMIT');
+
+    return (
+      transition.changes === 1
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function verifyAutocabModificationResult({
+  beforeBooking,
+  expectedPayload,
+  afterBooking
+}) {
+  if (
+    !beforeBooking ||
+    typeof beforeBooking !== 'object' ||
+    !expectedPayload ||
+    typeof expectedPayload !== 'object' ||
+    !afterBooking ||
+    typeof afterBooking !== 'object'
+  ) {
+    const error =
+      new Error(
+        'Autocab modification verification data is invalid'
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const beforeRowVersion =
+    Number(
+      beforeBooking.rowVersion
+    );
+
+  const afterRowVersion =
+    Number(
+      afterBooking.rowVersion
+    );
+
+  if (
+    !Number.isFinite(
+      beforeRowVersion
+    ) ||
+    !Number.isFinite(
+      afterRowVersion
+    ) ||
+    afterRowVersion <=
+      beforeRowVersion
+  ) {
+    const error =
+      new Error(
+        'Autocab modification could not be verified because the row version did not advance'
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const scalar =
+    (value) =>
+      String(
+        value ?? ''
+      ).trim();
+
+  const sameInstant =
+    (left, right) => {
+      const leftTime =
+        Date.parse(
+          String(
+            left || ''
+          )
+        );
+
+      const rightTime =
+        Date.parse(
+          String(
+            right || ''
+          )
+        );
+
+      return (
+        Number.isFinite(
+          leftTime
+        ) &&
+        Number.isFinite(
+          rightTime
+        ) &&
+        leftTime === rightTime
+      );
+    };
+
+  const sameCoordinate =
+    (left, right) => {
+      const leftNumber =
+        Number(left);
+
+      const rightNumber =
+        Number(right);
+
+      return (
+        Number.isFinite(
+          leftNumber
+        ) &&
+        Number.isFinite(
+          rightNumber
+        ) &&
+        Math.abs(
+          leftNumber -
+          rightNumber
+        ) < 0.000001
+      );
+    };
+
+  const sameRoutePoint =
+    (expected, actual) => {
+      if (
+        !expected ||
+        !actual
+      ) {
+        return false;
+      }
+
+      return (
+        scalar(
+          expected?.address?.text
+        ) ===
+          scalar(
+            actual?.address?.text
+          ) &&
+        scalar(
+          expected?.address?.postCode
+        ).toUpperCase() ===
+          scalar(
+            actual?.address?.postCode
+          ).toUpperCase() &&
+        sameCoordinate(
+          expected?.address
+            ?.coordinate
+            ?.latitude,
+          actual?.address
+            ?.coordinate
+            ?.latitude
+        ) &&
+        sameCoordinate(
+          expected?.address
+            ?.coordinate
+            ?.longitude,
+          actual?.address
+            ?.coordinate
+            ?.longitude
+        ) &&
+        scalar(
+          expected?.note
+        ) ===
+          scalar(
+            actual?.note
+          ) &&
+        scalar(
+          expected?.type
+        ).toLowerCase() ===
+          scalar(
+            actual?.type
+          ).toLowerCase()
+      );
+    };
+
+  const expectedVias =
+    Array.isArray(
+      expectedPayload.vias
+    )
+      ? expectedPayload.vias
+      : [];
+
+  const actualVias =
+    Array.isArray(
+      afterBooking.vias
+    )
+      ? afterBooking.vias
+      : [];
+
+  const scalarFieldsMatch =
+    scalar(
+      afterBooking.driverNote
+    ) ===
+      scalar(
+        expectedPayload.driverNote
+      ) &&
+    scalar(
+      afterBooking.officeNote
+    ) ===
+      scalar(
+        expectedPayload.officeNote
+      ) &&
+    scalar(
+      afterBooking.name
+    ) ===
+      scalar(
+        expectedPayload.name
+      ) &&
+    scalar(
+      afterBooking.passengers
+    ) ===
+      scalar(
+        expectedPayload.passengers
+      ) &&
+    scalar(
+      afterBooking.telephoneNumber
+    ) ===
+      scalar(
+        expectedPayload.telephoneNumber
+      ) &&
+    scalar(
+      afterBooking.ourReference
+    ) ===
+      scalar(
+        expectedPayload.ourReference
+      ) &&
+    scalar(
+      afterBooking
+        ?.yourReferences
+        ?.yourReference1
+    ) ===
+      scalar(
+        expectedPayload
+          ?.yourReferences
+          ?.yourReference1
+      ) &&
+    scalar(
+      afterBooking
+        ?.yourReferences
+        ?.yourReference2
+    ) ===
+      scalar(
+        expectedPayload
+          ?.yourReferences
+          ?.yourReference2
+      );
+
+  const routeMatches =
+    sameRoutePoint(
+      expectedPayload.pickup,
+      afterBooking.pickup
+    ) &&
+    sameRoutePoint(
+      expectedPayload.destination,
+      afterBooking.destination
+    ) &&
+    expectedVias.length ===
+      actualVias.length &&
+    expectedVias.every(
+      (expectedVia, index) =>
+        sameRoutePoint(
+          expectedVia,
+          actualVias[index]
+        )
+    );
+
+  const pickupTimeMatches =
+    sameInstant(
+      expectedPayload.pickupDueTimeUtc,
+      afterBooking.pickupDueTimeUtc
+    );
+
+  if (
+    !scalarFieldsMatch ||
+    !routeMatches ||
+    !pickupTimeMatches
+  ) {
+    const error =
+      new Error(
+        'Autocab accepted the modification but the updated booking could not be verified'
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return {
+    rowVersion:
+      afterRowVersion
+  };
+}
+
+
+function commitSuccessfulLiveModification({
+  bookingId,
+  userId,
+  autocabBookingId,
+  previousStatus,
+  validated,
+  oldState,
+  verifiedRowVersion
+}) {
+  const {
+    requestedPickupAt,
+    passengerName,
+    passengerMobile,
+    passengerCount,
+    pickup,
+    destination,
+    vias,
+    driverNotes,
+    budgetId,
+    reasonCodeId,
+    budget,
+    reasonCode,
+    budgetHolder
+  } = validated;
+
+  db.exec('BEGIN');
+
+  try {
+    /*
+      Restore the pre-modification status only
+      when the booking is still in our temporary
+      'modifying' state.
+
+      If an Autocab webhook advanced the booking
+      while the POST was in flight, preserve that
+      newer operational state.
+    */
+    const update =
+      db.prepare(`
+        UPDATE bookings
+        SET
+          requested_pickup_at = ?,
+          passenger_name = ?,
+          passenger_mobile = ?,
+          passenger_count = ?,
+          pickup_address = ?,
+          pickup_postcode = ?,
+          destination_address = ?,
+          destination_postcode = ?,
+          driver_notes = ?,
+          budget_id = ?,
+          reason_code_id = ?,
+          budget_holder_user_id = ?,
+          department_id = ?,
+          operational_status =
+            CASE
+              WHEN operational_status =
+                'modifying'
+              THEN ?
+              ELSE operational_status
+            END,
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND autocab_booking_id = ?
+      `).run(
+        requestedPickupAt,
+        passengerName,
+        passengerMobile,
+        passengerCount,
+        pickup.address,
+        pickup.postcode || null,
+        destination.address,
+        destination.postcode || null,
+        driverNotes || null,
+        budgetId,
+        reasonCodeId,
+        budgetHolder.id,
+        budget.departmentId || null,
+        previousStatus,
+        bookingId,
+        autocabBookingId
+      );
+
+    if (update.changes !== 1) {
+      const error =
+        new Error(
+          'Live booking changed before the confirmed modification could be stored locally'
+        );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    db.prepare(`
+      DELETE FROM booking_stops
+      WHERE booking_id = ?
+    `).run(
+      bookingId
+    );
+
+    const insertStop =
+      db.prepare(`
+        INSERT INTO booking_stops
+          (
+            booking_id,
+            sequence_number,
+            stop_type,
+            address,
+            postcode,
+            notes,
+            latitude,
+            longitude,
+            saved_location_id,
+            location_name,
+            pickup_instructions
+          )
+        VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+      `);
+
+    let sequenceNumber = 0;
+
+    insertStop.run(
+      bookingId,
+      sequenceNumber++,
+      'pickup',
+      pickup.address,
+      pickup.postcode || null,
+      pickup.notes || null,
+      pickup.latitude,
+      pickup.longitude,
+      pickup.savedLocationId,
+      pickup.locationName,
+      pickup.pickupInstructions
+    );
+
+    for (const via of vias) {
+      insertStop.run(
+        bookingId,
+        sequenceNumber++,
+        'via',
+        via.address,
+        via.postcode || null,
+        via.notes || null,
+        via.latitude,
+        via.longitude,
+        via.savedLocationId,
+        via.locationName,
+        via.pickupInstructions
+      );
+    }
+
+    insertStop.run(
+      bookingId,
+      sequenceNumber,
+      'destination',
+      destination.address,
+      destination.postcode || null,
+      destination.notes || null,
+      destination.latitude,
+      destination.longitude,
+      destination.savedLocationId,
+      destination.locationName,
+      destination.pickupInstructions
+    );
+
+    const snapshotUpdate =
+      db.prepare(`
+        UPDATE booking_account_snapshot
+        SET
+          budget_id = ?,
+          budget_number = ?,
+          budget_name = ?,
+          reason_code_id = ?,
+          reason_code = ?,
+          reason_description = ?,
+          budget_holder_user_id = ?,
+          budget_holder_name = ?,
+          department_id = ?,
+          department_name = ?,
+          captured_at =
+            CURRENT_TIMESTAMP
+        WHERE booking_id = ?
+      `).run(
+        budget.id,
+        budget.budgetNumber,
+        budget.name,
+        reasonCode.id,
+        reasonCode.code,
+        reasonCode.description,
+        budgetHolder.id,
+        `${budgetHolder.firstName} ${budgetHolder.lastName}`,
+        budget.departmentId || null,
+        budget.departmentName || null,
+        bookingId
+      );
+
+    if (snapshotUpdate.changes !== 1) {
+      const error =
+        new Error(
+          'Live booking account snapshot could not be updated'
+        );
+
+      error.statusCode = 500;
+      throw error;
+    }
+
+    const current =
+      db.prepare(`
+        SELECT
+          operational_status
+            AS operationalStatus
+        FROM bookings
+        WHERE id = ?
+      `).get(
+        bookingId
+      );
+
+    const newState = {
+      requestedPickupAt,
+      passengerName,
+      passengerMobile,
+      passengerCount,
+      pickupAddress:
+        pickup.address,
+      destinationAddress:
+        destination.address,
+      driverNotes:
+        driverNotes || null,
+      budgetId,
+      reasonCodeId,
+      budgetHolderUserId:
+        budgetHolder.id,
+      operationalStatus:
+        current?.operationalStatus ||
+        previousStatus,
+      stops:
+        getBookingStops(
+          bookingId
+        )
+    };
+
+    writeAutocabModificationBookingEvent({
+      bookingId,
+      eventType:
+        'booking_amended_live',
+      oldStatus:
+        'modifying',
+      newStatus:
+        newState.operationalStatus,
+      userId,
+      notes:
+        'Live booking amendment confirmed by Autocab',
+      rawPayload: {
+        autocabBookingId,
+        verifiedRowVersion
+      }
+    });
+
+    writeAudit({
+      action:
+        'UPDATE',
+      entityType:
+        'booking',
+      entityId:
+        bookingId,
+      oldValue:
+        JSON.stringify(
+          oldState
+        ),
+      newValue:
+        JSON.stringify(
+          newState
+        ),
+      source:
+        'portal',
+      actorUserId:
+        userId
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      ...getBookingById(
+        bookingId
+      ),
+      stops:
+        getBookingStops(
+          bookingId
+        )
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function buildAutocabModificationPayload({
+  currentBooking,
+  publicReference,
+  bookedBy,
+  requestedPickupAt,
+  passengerName,
+  passengerMobile,
+  passengerCount,
+  driverNotes,
+  pickup,
+  vias,
+  destination,
+  budgetNumber,
+  reasonCode,
+  budgetHolder
+}) {
+  if (
+    !currentBooking ||
+    typeof currentBooking !== 'object' ||
+    Array.isArray(currentBooking)
+  ) {
+    const error =
+      new Error(
+        'Current Autocab booking is invalid'
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  if (
+    !Number.isFinite(
+      Number(
+        currentBooking.rowVersion
+      )
+    )
+  ) {
+    const error =
+      new Error(
+        'Current Autocab booking has no valid row version'
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const pickupTime =
+    normaliseUhpPickupTime(
+      requestedPickupAt
+    );
+
+  const ourReference =
+    [
+      reasonCode,
+      budgetNumber,
+      budgetHolder
+    ]
+      .filter(Boolean)
+      .join('/');
+
+  /*
+    Start with the complete authoritative
+    Autocab booking returned by GET.
+
+    Only fields controlled by the UHP portal
+    are replaced. All other Autocab-managed
+    fields, including rowVersion, pricing,
+    allocation and booking metadata, remain
+    untouched.
+  */
+  const modified = {
+    ...currentBooking,
+
+    driverNote:
+      driverNotes || '',
+
+    officeNote:
+      [
+        'UHP Portal',
+        publicReference,
+        bookedBy
+          ? `Booked by ${bookedBy}`
+          : null,
+        budgetNumber
+          ? `Budget ${budgetNumber}`
+          : null,
+        reasonCode
+          ? `Reason ${reasonCode}`
+          : null
+      ]
+        .filter(Boolean)
+        .join(' - '),
+
+    name:
+      passengerName,
+
+    passengers:
+      String(
+        passengerCount || 1
+      ),
+
+    telephoneNumber:
+      passengerMobile,
+
+    ourReference,
+
+    pickup:
+      buildAutocabRoutePoint(
+        pickup,
+        'Pickup'
+      ),
+
+    vias:
+      (Array.isArray(vias)
+        ? vias
+        : []
+      ).map(
+        (via) =>
+          buildAutocabRoutePoint(
+            via,
+            'Via'
+          )
+      ),
+
+    destination:
+      buildAutocabRoutePoint(
+        destination,
+        'Destination'
+      ),
+
+    pickupDueTime:
+      pickupTime.local,
+
+    pickupDueTimeUtc:
+      pickupTime.utc,
+
+    yourReferences: {
+      ...(
+        currentBooking.yourReferences &&
+        typeof currentBooking.yourReferences ===
+          'object'
+          ? currentBooking.yourReferences
+          : {}
+      ),
+
+      yourReference1:
+        publicReference,
+
+      yourReference2:
+        ourReference
+    }
+  };
+
+  return modified;
+}
+
+
+function createAutocabModificationOutboundEvent({
+  bookingId,
+  autocabBookingId,
+  autocabReference,
+  payload
+}) {
+  const result =
+    db.prepare(`
+      INSERT INTO integration_events
+        (
+          provider,
+          direction,
+          event_type,
+          route_suffix,
+          category,
+          booking_id,
+          autocab_booking_id,
+          autocab_reference,
+          payload_json,
+          processing_status
+        )
+      VALUES (
+        'autocab',
+        'outbound',
+        'booking_modify',
+        'booking',
+        'booking',
+        ?,
+        ?,
+        ?,
+        ?,
+        'received'
+      )
+    `).run(
+      bookingId,
+      autocabBookingId,
+      autocabReference,
+      JSON.stringify({
+        request: {
+          method: 'POST',
+          bookingId:
+            autocabBookingId,
+          body: payload
+        }
+      })
+    );
+
+  return Number(
+    result.lastInsertRowid
+  );
+}
+
+
+async function getAutocabBookingForModification(
+  autocabBookingId
+) {
+  if (!AUTOCAB_SUBSCRIPTION_KEY) {
+    const error =
+      new Error(
+        'Autocab booking modification is not configured'
+      );
+
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const response =
+    await fetch(
+      `${AUTOCAB_BOOKING_API_URL}/booking/v1/booking/${encodeURIComponent(
+        autocabBookingId
+      )}`,
+      {
+        method: 'GET',
+
+        headers: {
+          'Cache-Control':
+            'no-cache',
+
+          'Ocp-Apim-Subscription-Key':
+            AUTOCAB_SUBSCRIPTION_KEY
+        },
+
+        signal:
+          AbortSignal.timeout(
+            15000
+          )
+      }
+    );
+
+  const responseText =
+    await response.text();
+
+  if (!response.ok) {
+    const error =
+      new Error(
+        `Autocab booking lookup failed with status ${response.status}`
+      );
+
+    error.statusCode = 502;
+    error.autocabStatus =
+      response.status;
+    error.autocabResponse =
+      responseText;
+
+    throw error;
+  }
+
+  let payload;
+
+  try {
+    payload =
+      JSON.parse(
+        responseText
+      );
+  } catch {
+    const error =
+      new Error(
+        'Autocab booking lookup returned invalid JSON'
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload)
+  ) {
+    const error =
+      new Error(
+        'Autocab booking lookup returned an invalid booking'
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  if (
+    !Number.isFinite(
+      Number(
+        payload.rowVersion
+      )
+    )
+  ) {
+    const error =
+      new Error(
+        'Autocab booking does not contain a valid row version'
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return payload;
+}
+
+
+async function postAutocabBookingModification(
+  autocabBookingId,
+  payload
+) {
+  if (!AUTOCAB_SUBSCRIPTION_KEY) {
+    const error =
+      new Error(
+        'Autocab booking modification is not configured'
+      );
+
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const response =
+    await fetch(
+      `${AUTOCAB_BOOKING_API_URL}/booking/v1/booking/${encodeURIComponent(
+        autocabBookingId
+      )}`,
+      {
+        method: 'POST',
+
+        headers: {
+          'Content-Type':
+            'application/json',
+
+          'Cache-Control':
+            'no-cache',
+
+          'Ocp-Apim-Subscription-Key':
+            AUTOCAB_SUBSCRIPTION_KEY
+        },
+
+        body:
+          JSON.stringify(
+            payload
+          ),
+
+        signal:
+          AbortSignal.timeout(
+            15000
+          )
+      }
+    );
+
+  const responseText =
+    await response.text();
+
+  let responsePayload = null;
+
+  if (responseText) {
+    try {
+      responsePayload =
+        JSON.parse(
+          responseText
+        );
+    } catch {
+      responsePayload = null;
+    }
+  }
+
+  return {
+    status:
+      response.status,
+    ok:
+      response.ok,
+    responseText,
+    responsePayload
+  };
+}
+
+
 function updateAutocabOutboundEvent(
   eventId,
   {
@@ -11693,6 +13200,536 @@ function writeAutocabSubmissionBookingEvent({
       ? JSON.stringify(rawPayload)
       : null
   );
+}
+
+
+async function modifyLivePortalBooking(
+  bookingId,
+  userId,
+  payload
+) {
+  /*
+    1. Confirm ownership/current state.
+    2. Fully validate the proposed UHP data.
+    3. GET the authoritative Autocab booking.
+    4. Build a full-object modification using
+       Autocab's current rowVersion.
+    5. Create the outbound integration record.
+    6. CAS-lock the local booking as modifying.
+    7. POST the modification.
+    8. GET again and verify the remote result.
+    9. Only then commit the new data locally.
+  */
+  const {
+    booking,
+    autocabBookingId
+  } =
+    getOwnedLiveModifiableBooking(
+      bookingId,
+      userId
+    );
+
+  const previousStatus =
+    booking.operational_status;
+
+  const validated =
+    validateLiveModificationPayload(
+      userId,
+      payload
+    );
+
+  const bookingDetails =
+    getBookingById(
+      bookingId
+    );
+
+  if (!bookingDetails) {
+    const error =
+      new Error(
+        'Booking not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const oldStops =
+    getBookingStops(
+      bookingId
+    );
+
+  const previousSnapshot =
+    db.prepare(`
+      SELECT *
+      FROM booking_account_snapshot
+      WHERE booking_id = ?
+    `).get(
+      bookingId
+    );
+
+  const oldState = {
+    requestedPickupAt:
+      bookingDetails.requestedPickupAt,
+    passengerName:
+      bookingDetails.passengerName,
+    passengerMobile:
+      bookingDetails.passengerMobile,
+    passengerCount:
+      bookingDetails.passengerCount,
+    pickupAddress:
+      bookingDetails.pickupAddress,
+    destinationAddress:
+      bookingDetails.destinationAddress,
+    driverNotes:
+      bookingDetails.driverNotes,
+    budgetId:
+      bookingDetails.budgetId,
+    reasonCodeId:
+      bookingDetails.reasonCodeId,
+    budgetHolderUserId:
+      bookingDetails.budgetHolderUserId,
+    operationalStatus:
+      bookingDetails.operationalStatus,
+    stops:
+      oldStops,
+    accountSnapshot:
+      previousSnapshot || null
+  };
+
+  /*
+    This GET happens before the local lock so a
+    slow/unavailable Autocab service does not
+    leave the booking unnecessarily blocked.
+  */
+  const beforeBooking =
+    await getAutocabBookingForModification(
+      autocabBookingId
+    );
+
+  const modificationPayload =
+    buildAutocabModificationPayload({
+      currentBooking:
+        beforeBooking,
+      publicReference:
+        bookingDetails.publicReference,
+      bookedBy:
+        bookingDetails.createdBy,
+      requestedPickupAt:
+        validated.requestedPickupAt,
+      passengerName:
+        validated.passengerName,
+      passengerMobile:
+        validated.passengerMobile,
+      passengerCount:
+        validated.passengerCount,
+      driverNotes:
+        validated.driverNotes,
+      pickup:
+        validated.pickup,
+      vias:
+        validated.vias,
+      destination:
+        validated.destination,
+      budgetNumber:
+        validated.budget.budgetNumber,
+      reasonCode:
+        validated.reasonCode.code,
+      budgetHolder:
+        `${validated.budgetHolder.firstName} ${validated.budgetHolder.lastName}`
+    });
+
+  const eventId =
+    createAutocabModificationOutboundEvent({
+      bookingId,
+      autocabBookingId,
+      autocabReference:
+        booking.autocab_reference,
+      payload:
+        modificationPayload
+    });
+
+  try {
+    lockLiveBookingForModification({
+      bookingId,
+      userId,
+      autocabBookingId,
+      previousStatus,
+      rowVersion:
+        beforeBooking.rowVersion
+    });
+  } catch (error) {
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+        autocabBookingId,
+        autocabReference:
+          booking.autocab_reference,
+        processingError:
+          String(
+            error?.message ||
+            'Modification state update failed'
+          )
+      }
+    );
+
+    throw error;
+  }
+
+  let response;
+
+  try {
+    response =
+      await postAutocabBookingModification(
+        autocabBookingId,
+        modificationPayload
+      );
+  } catch (error) {
+    /*
+      Network/timeout is ambiguous. Autocab may
+      have processed the POST before the response
+      was lost. Never retry automatically.
+    */
+    markLiveBookingModificationUncertain({
+      bookingId,
+      userId,
+      autocabBookingId,
+      reason:
+        'Autocab modification result is uncertain after a network or timeout error'
+    });
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+        autocabBookingId,
+        autocabReference:
+          booking.autocab_reference,
+        payload: {
+          request: {
+            method:
+              'POST',
+            bookingId:
+              autocabBookingId,
+            body:
+              modificationPayload
+          },
+          networkError:
+            String(
+              error?.message ||
+              'Network error'
+            )
+        },
+        processingError:
+          'Autocab modification result is uncertain'
+      }
+    );
+
+    const uncertainError =
+      new Error(
+        'Autocab modification result is uncertain. Check Autocab before retrying.'
+      );
+
+    uncertainError.statusCode = 502;
+    throw uncertainError;
+  }
+
+  /*
+    A 4xx response is a definitive rejection of
+    this exact POST. Restore the previous local
+    state only if no webhook changed it meanwhile.
+  */
+  if (
+    !response.ok &&
+    response.status >= 400 &&
+    response.status < 500
+  ) {
+    restoreLiveBookingAfterModificationRejection({
+      bookingId,
+      userId,
+      previousStatus,
+      autocabBookingId,
+      responseStatus:
+        response.status
+    });
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+        autocabBookingId,
+        autocabReference:
+          booking.autocab_reference,
+        payload: {
+          request: {
+            method:
+              'POST',
+            bookingId:
+              autocabBookingId,
+            body:
+              modificationPayload
+          },
+          responseStatus:
+            response.status,
+          response:
+            response.responsePayload
+        },
+        processingError:
+          `Autocab rejected modification with HTTP ${response.status}`
+      }
+    );
+
+    const error =
+      new Error(
+        `Autocab rejected the booking amendment with HTTP ${response.status}`
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  /*
+    5xx and any other non-success response are
+    ambiguous. Do not retry automatically.
+  */
+  if (!response.ok) {
+    markLiveBookingModificationUncertain({
+      bookingId,
+      userId,
+      autocabBookingId,
+      reason:
+        'Autocab returned an uncertain booking modification result',
+      responseStatus:
+        response.status
+    });
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+        autocabBookingId,
+        autocabReference:
+          booking.autocab_reference,
+        payload: {
+          request: {
+            method:
+              'POST',
+            bookingId:
+              autocabBookingId,
+            body:
+              modificationPayload
+          },
+          responseStatus:
+            response.status,
+          response:
+            response.responsePayload
+        },
+        processingError:
+          'Autocab modification requires manual review'
+      }
+    );
+
+    const error =
+      new Error(
+        'Autocab booking amendment requires manual review before retrying'
+      );
+
+    error.statusCode = 502;
+    throw error;
+  }
+
+  /*
+    POST success is not enough. Read the booking
+    back from Autocab and verify all portal-owned
+    values plus an advanced rowVersion.
+  */
+  let afterBooking;
+  let verification;
+
+  try {
+    afterBooking =
+      await getAutocabBookingForModification(
+        autocabBookingId
+      );
+
+    verification =
+      verifyAutocabModificationResult({
+        beforeBooking,
+        expectedPayload:
+          modificationPayload,
+        afterBooking
+      });
+  } catch (error) {
+    markLiveBookingModificationUncertain({
+      bookingId,
+      userId,
+      autocabBookingId,
+      reason:
+        'Autocab accepted the booking amendment but the final state could not be verified',
+      responseStatus:
+        response.status
+    });
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+        autocabBookingId,
+        autocabReference:
+          booking.autocab_reference,
+        payload: {
+          request: {
+            method:
+              'POST',
+            bookingId:
+              autocabBookingId,
+            body:
+              modificationPayload
+          },
+          responseStatus:
+            response.status,
+          response:
+            response.responsePayload,
+          verificationError:
+            String(
+              error?.message ||
+              'Verification failed'
+            )
+        },
+        processingError:
+          'Autocab modification could not be verified'
+      }
+    );
+
+    const verificationError =
+      new Error(
+        'Autocab accepted the booking amendment but its final state could not be verified. Check Autocab before retrying.'
+      );
+
+    verificationError.statusCode =
+      502;
+
+    throw verificationError;
+  }
+
+  let amendedBooking;
+
+  try {
+    amendedBooking =
+      commitSuccessfulLiveModification({
+        bookingId,
+        userId,
+        autocabBookingId,
+        previousStatus,
+        validated,
+        oldState,
+        verifiedRowVersion:
+          verification.rowVersion
+      });
+  } catch (error) {
+    /*
+      Remote modification has now been verified.
+      A local persistence failure therefore means
+      UHP and Autocab may differ and requires
+      reconciliation rather than rollback/retry.
+    */
+    markLiveBookingModificationUncertain({
+      bookingId,
+      userId,
+      autocabBookingId,
+      reason:
+        'Autocab modification succeeded but the confirmed amendment could not be stored locally',
+      responseStatus:
+        response.status
+    });
+
+    updateAutocabOutboundEvent(
+      eventId,
+      {
+        processingStatus:
+          'failed',
+        autocabBookingId,
+        autocabReference:
+          booking.autocab_reference,
+        payload: {
+          request: {
+            method:
+              'POST',
+            bookingId:
+              autocabBookingId,
+            body:
+              modificationPayload
+          },
+          responseStatus:
+            response.status,
+          response:
+            response.responsePayload,
+          verifiedRowVersion:
+            verification.rowVersion,
+          persistenceError:
+            String(
+              error?.message ||
+              'Local persistence failed'
+            )
+        },
+        processingError:
+          'Autocab amendment succeeded but local reconciliation failed'
+      }
+    );
+
+    const persistenceError =
+      new Error(
+        'The booking was amended in Autocab but the portal could not store the confirmed amendment. Manual reconciliation is required.'
+      );
+
+    persistenceError.statusCode =
+      500;
+
+    throw persistenceError;
+  }
+
+  updateAutocabOutboundEvent(
+    eventId,
+    {
+      processingStatus:
+        'processed',
+      autocabBookingId,
+      autocabReference:
+        booking.autocab_reference,
+      payload: {
+        request: {
+          method:
+            'POST',
+          bookingId:
+            autocabBookingId,
+          body:
+            modificationPayload
+        },
+        responseStatus:
+          response.status,
+        response:
+          response.responsePayload,
+        verifiedRowVersion:
+          verification.rowVersion
+      },
+      processingError:
+        null
+    }
+  );
+
+  return {
+    booking:
+      amendedBooking,
+    modified:
+      true,
+    verifiedRowVersion:
+      verification.rowVersion
+  };
 }
 
 
@@ -14210,12 +16247,59 @@ const server = http.createServer(async (req, res) => {
       const auth =
         requireAuth(req);
 
-      const booking =
-        amendPortalBooking(
+      /*
+        Resolve ownership and current status
+        before selecting the amendment path.
+
+        Draft bookings retain the existing
+        local-only amendment behaviour.
+
+        Only booked/confirmed live bookings are
+        allowed into the Autocab modification
+        workflow.
+      */
+      const existing =
+        getOwnedBookingDetails(
           bookingId,
-          auth.user.id,
-          payload
+          auth.user.id
         );
+
+      let booking;
+
+      if (
+        existing.operationalStatus ===
+          'draft'
+      ) {
+        booking =
+          amendPortalBooking(
+            bookingId,
+            auth.user.id,
+            payload
+          );
+      } else if (
+        existing.operationalStatus ===
+          'booked' ||
+        existing.operationalStatus ===
+          'confirmed'
+      ) {
+        const result =
+          await modifyLivePortalBooking(
+            bookingId,
+            auth.user.id,
+            payload
+          );
+
+        booking =
+          result.booking;
+      } else {
+        const error =
+          new Error(
+            `Booking cannot be amended from status ${existing.operationalStatus}`
+          );
+
+        error.statusCode = 409;
+        throw error;
+      }
 
       return sendJson(res, 200, {
         booking

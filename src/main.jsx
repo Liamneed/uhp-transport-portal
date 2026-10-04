@@ -6094,6 +6094,11 @@ function MyBookingsPage({
   ] = useState([]);
 
   const [savingEdit, setSavingEdit] = useState(false);
+  const [editReview, setEditReview] = useState(null);
+  const [
+    editFailureMode,
+    setEditFailureMode
+  ] = useState(null);
 
   const [cancelBooking, setCancelBooking] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
@@ -6327,6 +6332,7 @@ function MyBookingsPage({
       draft: 'Request Recorded',
       submitting: 'Sending to Dispatch',
       cancelling: 'Cancelling',
+      modifying: 'Updating Booking',
       booked: 'Booked',
       confirmed: 'Confirmed',
       driver_allocated: 'Driver Allocated',
@@ -6381,7 +6387,15 @@ function MyBookingsPage({
 
       const booking = bookingData.booking;
 
-      if (booking.operationalStatus !== 'draft') {
+      if (
+        ![
+          'draft',
+          'booked',
+          'confirmed'
+        ].includes(
+          booking.operationalStatus
+        )
+      ) {
         throw new Error(
           'This booking can no longer be amended'
         );
@@ -6570,11 +6584,301 @@ function MyBookingsPage({
     setEditForm(null);
     setEditVias([]);
     setEditSavedLocations([]);
+    setEditReview(null);
+    setEditFailureMode(null);
+    setError('');
   }
 
-  async function submitAmendment(event) {
+  function amendmentReviewValue(value) {
+    const normalised =
+      String(value ?? '').trim();
+
+    return normalised || '—';
+  }
+
+  function amendmentRouteSummary(stops) {
+    return (
+      Array.isArray(stops)
+        ? stops
+            .filter(
+              (stop) =>
+                stop?.address
+            )
+            .map(
+              (stop) =>
+                [
+                  stop.address,
+                  stop.postcode
+                ]
+                  .filter(Boolean)
+                  .join(', ')
+            )
+            .join(' → ')
+        : ''
+    );
+  }
+
+  function reviewAmendment(event) {
     event.preventDefault();
 
+    if (!editingBooking || !editForm) {
+      return;
+    }
+
+    setError('');
+    setNotice('');
+    setEditFailureMode(null);
+
+    const originalPickup =
+      editingBooking.stops?.find(
+        (stop) =>
+          stop.stopType === 'pickup'
+      ) ?? {};
+
+    const originalDestination =
+      editingBooking.stops?.find(
+        (stop) =>
+          stop.stopType === 'destination'
+      ) ?? {};
+
+    const originalVias =
+      (
+        Array.isArray(
+          editingBooking.stops
+        )
+          ? editingBooking.stops
+          : []
+      ).filter(
+        (stop) =>
+          stop.stopType === 'via'
+      );
+
+    const proposedVias =
+      editVias.filter(
+        (via) =>
+          via.address.trim()
+      );
+
+    const originalBudget =
+      editOptions.budgets.find(
+        (budget) =>
+          Number(budget.id) ===
+          Number(editingBooking.budgetId)
+      );
+
+    const proposedBudget =
+      editOptions.budgets.find(
+        (budget) =>
+          Number(budget.id) ===
+          Number(editForm.budgetId)
+      );
+
+    const originalReason =
+      editOptions.reasonCodes.find(
+        (reason) =>
+          Number(reason.id) ===
+          Number(editingBooking.reasonCodeId)
+      );
+
+    const proposedReason =
+      editOptions.reasonCodes.find(
+        (reason) =>
+          Number(reason.id) ===
+          Number(editForm.reasonCodeId)
+      );
+
+    const rows = [
+      {
+        label:
+          'Pickup date & time',
+
+        before:
+          String(
+            editingBooking.requestedPickupAt ||
+            ''
+          )
+            .replace('T', ' ')
+            .slice(0, 16),
+
+        after:
+          `${editForm.pickupDate} ${editForm.pickupTime}`
+      },
+
+      {
+        label:
+          'Pickup',
+
+        before:
+          [
+            originalPickup.address ||
+              editingBooking.pickupAddress,
+            originalPickup.postcode ||
+              editingBooking.pickupPostcode
+          ]
+            .filter(Boolean)
+            .join(', '),
+
+        after:
+          [
+            editForm.pickupAddress,
+            editForm.pickupPostcode
+          ]
+            .filter(Boolean)
+            .join(', ')
+      },
+
+      {
+        label:
+          'Via points',
+
+        before:
+          amendmentRouteSummary(
+            originalVias
+          ),
+
+        after:
+          amendmentRouteSummary(
+            proposedVias
+          )
+      },
+
+      {
+        label:
+          'Destination',
+
+        before:
+          [
+            originalDestination.address ||
+              editingBooking.destinationAddress,
+            originalDestination.postcode ||
+              editingBooking.destinationPostcode
+          ]
+            .filter(Boolean)
+            .join(', '),
+
+        after:
+          [
+            editForm.destinationAddress,
+            editForm.destinationPostcode
+          ]
+            .filter(Boolean)
+            .join(', ')
+      },
+
+      {
+        label:
+          'Passenger name',
+
+        before:
+          editingBooking.passengerName,
+
+        after:
+          editForm.passengerName
+      },
+
+      {
+        label:
+          'Contact number',
+
+        before:
+          editingBooking.passengerMobile,
+
+        after:
+          editForm.passengerMobile
+      },
+
+      {
+        label:
+          'Passenger count',
+
+        before:
+          editingBooking.passengerCount,
+
+        after:
+          editForm.passengerCount
+      },
+
+      {
+        label:
+          'Budget',
+
+        before:
+          originalBudget
+            ? `${originalBudget.budgetNumber} — ${originalBudget.name}`
+            : editingBooking.budgetNumber,
+
+        after:
+          proposedBudget
+            ? `${proposedBudget.budgetNumber} — ${proposedBudget.name}`
+            : editForm.budgetId
+      },
+
+      {
+        label:
+          'Reason code',
+
+        before:
+          originalReason
+            ? `${originalReason.code} — ${originalReason.description}`
+            : editingBooking.reasonCode,
+
+        after:
+          proposedReason
+            ? `${proposedReason.code} — ${proposedReason.description}`
+            : editForm.reasonCodeId
+      },
+
+      {
+        label:
+          'Driver notes',
+
+        before:
+          editingBooking.driverNotes,
+
+        after:
+          editForm.driverNotes
+      }
+    ];
+
+    const changes =
+      rows
+        .map((row) => ({
+          ...row,
+
+          before:
+            amendmentReviewValue(
+              row.before
+            ),
+
+          after:
+            amendmentReviewValue(
+              row.after
+            )
+        }))
+        .filter(
+          (row) =>
+            row.before !== row.after
+        );
+
+    if (changes.length === 0) {
+      setError(
+        'No changes have been made to this booking.'
+      );
+      return;
+    }
+
+    setEditReview({
+      changes,
+
+      isLive:
+        editingBooking.operationalStatus ===
+          'booked' ||
+        editingBooking.operationalStatus ===
+          'confirmed'
+    });
+  }
+
+  async function submitAmendment() {
     if (!editingBooking || !editForm) return;
 
     setSavingEdit(true);
@@ -6687,10 +6991,35 @@ function MyBookingsPage({
         `${bookingNoticeReference(data.booking)} has been amended successfully.`
       );
     } catch (err) {
-      setError(
+      const message =
         err instanceof Error
           ? err.message
-          : 'Unable to amend booking'
+          : 'Unable to amend booking';
+
+      const requiresManualReview =
+        message.includes(
+          'result is uncertain'
+        ) ||
+        message.includes(
+          'requires manual review'
+        ) ||
+        message.includes(
+          'could not be verified'
+        ) ||
+        message.includes(
+          'Manual reconciliation is required'
+        );
+
+      if (requiresManualReview) {
+        await loadBookings();
+      }
+
+      setError(message);
+
+      setEditFailureMode(
+        requiresManualReview
+          ? 'manual_review'
+          : 'rejected'
       );
     } finally {
       setSavingEdit(false);
@@ -7223,8 +7552,13 @@ function MyBookingsPage({
             selectedBookingOwnedByCurrentUser
               ? (
                 <>
-                  {selectedBooking.operationalStatus ===
-                    'draft' && (
+                  {[
+                    'draft',
+                    'booked',
+                    'confirmed'
+                  ].includes(
+                    selectedBooking.operationalStatus
+                  ) && (
                     <button
                       type="button"
                       className="secondary"
@@ -7423,7 +7757,9 @@ function MyBookingsPage({
         </div>
       )}
 
-      {editingBooking && editForm && (
+      {editingBooking &&
+        editForm &&
+        !editReview && (
         <div className="modal-backdrop">
           <div className="modal-card booking-edit-modal">
             <div className="modal-header">
@@ -7445,7 +7781,7 @@ function MyBookingsPage({
               </button>
             </div>
 
-            <form onSubmit={submitAmendment}>
+            <form onSubmit={reviewAmendment}>
               <div className="form-grid two">
                 <label>
                   Pickup Date
@@ -7956,12 +8292,170 @@ function MyBookingsPage({
                   className="primary"
                   disabled={savingEdit}
                 >
-                  {savingEdit
-                    ? 'Saving Changes...'
-                    : 'Save Changes'}
+                  Review Changes
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {editingBooking &&
+        editForm &&
+        editReview && (
+        <div className="modal-backdrop">
+          <div className="modal-card booking-edit-modal">
+            <div className="modal-header">
+              <div>
+                <h2>Review Changes</h2>
+
+                <p>
+                  {autocabBookingPrimary(
+                    editingBooking
+                  )}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() =>
+                  setEditReview(null)
+                }
+                disabled={savingEdit}
+              >
+                ×
+              </button>
+            </div>
+
+            {editReview.isLive && (
+              <div className="managed-booking-note">
+                This is a live booking. Confirming these
+                changes will update the booking in
+                Autocab dispatch.
+              </div>
+            )}
+
+            <div className="amendment-review-list">
+              {editReview.changes.map(
+                (change) => (
+                  <div
+                    className="amendment-review-item"
+                    key={change.label}
+                  >
+                    <div className="amendment-review-label">
+                      {change.label}
+                    </div>
+
+                    <div className="amendment-review-comparison">
+                      <div className="amendment-review-value">
+                        <small>
+                          Existing
+                        </small>
+
+                        <span>
+                          {change.before}
+                        </span>
+                      </div>
+
+                      <div
+                        className="amendment-review-arrow"
+                        aria-hidden="true"
+                      >
+                        →
+                      </div>
+
+                      <div className="amendment-review-value amendment-review-new">
+                        <small>
+                          New
+                        </small>
+
+                        <span>
+                          {change.after}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
+
+            {error && (
+              <div
+                className={
+                  editFailureMode ===
+                  'manual_review'
+                    ? 'amendment-review-warning'
+                    : 'amendment-review-error'
+                }
+              >
+                <strong>
+                  {editFailureMode ===
+                  'manual_review'
+                    ? 'Booking requires review'
+                    : 'Amendment not applied'}
+                </strong>
+
+                <span>
+                  {error}
+                </span>
+
+                {editFailureMode ===
+                  'manual_review' && (
+                  <span>
+                    Do not retry this amendment until
+                    the booking has been checked in
+                    Autocab.
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  if (
+                    editFailureMode ===
+                    'manual_review'
+                  ) {
+                    closeAmend();
+                    return;
+                  }
+
+                  setError('');
+                  setEditFailureMode(null);
+                  setEditReview(null);
+                }}
+                disabled={savingEdit}
+              >
+                {editFailureMode ===
+                'manual_review'
+                  ? 'Close'
+                  : 'Back to Edit'}
+              </button>
+
+              <button
+                type="button"
+                className="primary"
+                onClick={submitAmendment}
+                disabled={
+                  savingEdit ||
+                  editFailureMode ===
+                    'manual_review'
+                }
+              >
+                {savingEdit
+                  ? 'Updating Booking...'
+                  : editFailureMode ===
+                      'manual_review'
+                    ? 'Review Required'
+                    : editReview.isLive
+                      ? 'Confirm & Update Booking'
+                      : 'Confirm Changes'}
+              </button>
+            </div>
           </div>
         </div>
       )}
