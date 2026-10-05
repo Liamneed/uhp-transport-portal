@@ -65,6 +65,62 @@ const MAPTILER_GEOCODING_API_KEY =
     ''
   ).trim();
 
+const STAFF_TRANSPORT_LIVE_BOOTSTRAP =
+  String(
+    process.env.STAFF_TRANSPORT_LIVE_BOOTSTRAP ||
+    ''
+  )
+    .trim()
+    .toLowerCase() === 'true';
+
+const STAFF_TRANSPORT_PROGRAMME_CODE =
+  String(
+    process.env.STAFF_TRANSPORT_PROGRAMME_CODE ||
+    'XMAS-2026-27'
+  ).trim();
+
+const STAFF_TRANSPORT_PROGRAMME_NAME =
+  String(
+    process.env.STAFF_TRANSPORT_PROGRAMME_NAME ||
+    'Christmas & New Year Staff Transport 2026/27'
+  ).trim();
+
+const STAFF_TRANSPORT_REQUEST_OPENS_AT =
+  String(
+    process.env.STAFF_TRANSPORT_REQUEST_OPENS_AT ||
+    '2026-10-01T00:00:00.000Z'
+  ).trim();
+
+const STAFF_TRANSPORT_REQUEST_CLOSES_AT =
+  String(
+    process.env.STAFF_TRANSPORT_REQUEST_CLOSES_AT ||
+    '2026-12-24T23:59:59.000Z'
+  ).trim();
+
+const STAFF_TRANSPORT_WINDOW_NAME =
+  String(
+    process.env.STAFF_TRANSPORT_WINDOW_NAME ||
+    'Christmas Day Staff Transport'
+  ).trim();
+
+const STAFF_TRANSPORT_WINDOW_STARTS_AT =
+  String(
+    process.env.STAFF_TRANSPORT_WINDOW_STARTS_AT ||
+    '2026-12-25T00:00:00.000Z'
+  ).trim();
+
+const STAFF_TRANSPORT_WINDOW_ENDS_AT =
+  String(
+    process.env.STAFF_TRANSPORT_WINDOW_ENDS_AT ||
+    '2026-12-25T23:59:59.000Z'
+  ).trim();
+
+const STAFF_TRANSPORT_ACCESS_CODE =
+  String(
+    process.env.STAFF_TRANSPORT_ACCESS_CODE ||
+    ''
+  ).trim();
+
 const SENDGRID_API_KEY =
   String(
     process.env.SENDGRID_API_KEY ||
@@ -29516,6 +29572,160 @@ const server = http.createServer(async (req, res) => {
     );
   }
 });
+
+function bootstrapLiveStaffTransportProgramme() {
+  if (!STAFF_TRANSPORT_LIVE_BOOTSTRAP) {
+    return;
+  }
+
+  console.log(
+    'Staff Transport live bootstrap enabled'
+  );
+
+  let programme =
+    db.prepare(`
+      SELECT id
+      FROM transport_programmes
+      WHERE code = ?
+      LIMIT 1
+    `).get(
+      STAFF_TRANSPORT_PROGRAMME_CODE
+        .toUpperCase()
+    );
+
+  if (!programme) {
+    const created =
+      createTransportProgramme(
+        {
+          code:
+            STAFF_TRANSPORT_PROGRAMME_CODE,
+
+          name:
+            STAFF_TRANSPORT_PROGRAMME_NAME,
+
+          programmeType:
+            'special_transport',
+
+          status:
+            'open',
+
+          requestOpensAt:
+            STAFF_TRANSPORT_REQUEST_OPENS_AT,
+
+          requestClosesAt:
+            STAFF_TRANSPORT_REQUEST_CLOSES_AT,
+
+          autocabAccountType:
+            'xmas_staff',
+
+          publicNotes:
+            'UHP Christmas Day staff transport',
+
+          internalNotes:
+            'Created automatically from live Staff Transport configuration'
+        },
+        null
+      );
+
+    programme = {
+      id: created.id
+    };
+
+    console.log(
+      `Created Staff Transport programme ${created.code}`
+    );
+  } else {
+    console.log(
+      `Staff Transport programme already exists: ${STAFF_TRANSPORT_PROGRAMME_CODE}`
+    );
+  }
+
+  const existingWindow =
+    db.prepare(`
+      SELECT id
+      FROM transport_programme_windows
+      WHERE programme_id = ?
+        AND name = ?
+        AND starts_at = ?
+        AND ends_at = ?
+      LIMIT 1
+    `).get(
+      programme.id,
+      STAFF_TRANSPORT_WINDOW_NAME,
+      STAFF_TRANSPORT_WINDOW_STARTS_AT,
+      STAFF_TRANSPORT_WINDOW_ENDS_AT
+    );
+
+  if (!existingWindow) {
+    const window =
+      createTransportProgrammeWindow(
+        programme.id,
+        {
+          name:
+            STAFF_TRANSPORT_WINDOW_NAME,
+
+          startsAt:
+            STAFF_TRANSPORT_WINDOW_STARTS_AT,
+
+          endsAt:
+            STAFF_TRANSPORT_WINDOW_ENDS_AT,
+
+          displayOrder: 1,
+          isActive: true,
+
+          publicNotes:
+            'Christmas Day staff transport',
+
+          internalNotes:
+            'Created automatically from live Staff Transport configuration'
+        },
+        null
+      );
+
+    console.log(
+      `Created Staff Transport window ${window.name}`
+    );
+  } else {
+    console.log(
+      `Staff Transport window already exists: ${STAFF_TRANSPORT_WINDOW_NAME}`
+    );
+  }
+
+  if (STAFF_TRANSPORT_ACCESS_CODE) {
+    const existingAccessCode =
+      getTransportProgrammeAccessCode(
+        programme.id
+      );
+
+    if (!existingAccessCode) {
+      configureTransportProgrammeAccessCode(
+        programme.id,
+        {
+          code:
+            STAFF_TRANSPORT_ACCESS_CODE,
+          isActive: true
+        },
+        null
+      );
+
+      console.log(
+        'Configured Staff Transport access code'
+      );
+    } else {
+      console.log(
+        'Staff Transport access code already configured'
+      );
+    }
+  } else {
+    console.log(
+      'Staff Transport access code not supplied; existing configuration unchanged'
+    );
+  }
+}
+
+
+bootstrapLiveStaffTransportProgramme();
+
 
 const PORT =
   Number(
