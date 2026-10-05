@@ -856,6 +856,29 @@ function TransportOperationsPage({
   const [sortBy, setSortBy] =
     useState('shift_asc');
 
+  const [
+    transportOperationsFiltersOpen,
+    setTransportOperationsFiltersOpen
+  ] =
+    useState(false);
+
+  const [
+    transportAnalysisOpen,
+    setTransportAnalysisOpen
+  ] =
+    useState(false);
+
+  const transportOperationsActiveFilterCount =
+    [
+      statusFilter !== 'all',
+      dayFilter !== 'all',
+      directionFilter !== 'all',
+      pickupAreaFilter !== 'all',
+      destinationAreaFilter !== 'all',
+      attentionOnly,
+      sortBy !== 'shift_asc'
+    ].filter(Boolean).length;
+
   useEffect(() => {
     let cancelled = false;
 
@@ -2623,295 +2646,317 @@ function TransportOperationsPage({
         </div>
       </div>
 
-      <section className="card nac-bookings-card transport-operations-filters">
-        <div className="overview-panel-heading">
+      <section className="card nac-bookings-card transport-operations-filters transport-operations-filters-compact">
+        <div className="transport-request-toolbar">
           <div>
             <small>
-              Request search
+              Requests
             </small>
 
-            <h2>
-              All Special Transport Requests
-            </h2>
+            <div className="transport-request-title-row">
+              <h2>
+                Special Transport Requests
+              </h2>
 
-            <p>
-              Search, filter and sort the
-              current operational request
-              list.
-            </p>
-          </div>
-        </div>
-
-        <div className="nac-filter-grid">
-          <label>
-            Search
-
-            <input
-              type="search"
-              value={search}
-              placeholder="Passenger, address, postcode, budget..."
-              onChange={(event) =>
-                setSearch(
-                  event.target.value
-                )
-              }
-            />
-          </label>
-
-          <label>
-            Status
-
-            <select
-              value={statusFilter}
-              onChange={(event) =>
-                setStatusFilter(
-                  event.target.value
-                )
-              }
-            >
-              <option value="all">
-                All statuses
-              </option>
-
-              {transportOperationsFilterOptions
-                .statuses
-                .map(
-                  (status) => (
-                    <option
-                      key={status}
-                      value={status}
-                    >
-                      {requestStatusLabel(
-                        status
-                      )}
-                    </option>
-                  )
-                )}
-            </select>
-          </label>
-
-          <label>
-            Service day
-
-            <select
-              value={dayFilter}
-              onChange={(event) =>
-                setDayFilter(
-                  event.target.value
-                )
-              }
-            >
-              <option value="all">
-                All days
-              </option>
-
-              {transportOperationsFilterOptions
-                .days
-                .map(
-                  (day) => (
-                    <option
-                      key={day}
-                      value={day}
-                    >
-                      {day}
-                    </option>
-                  )
-                )}
-            </select>
-          </label>
-
-          <label>
-            Direction
-
-            <select
-              value={directionFilter}
-              onChange={(event) =>
-                setDirectionFilter(
-                  event.target.value
-                )
-              }
-            >
-              <option value="all">
-                All directions
-              </option>
-
-              {transportOperationsFilterOptions
-                .directions
-                .map(
-                  (direction) => (
-                    <option
-                      key={direction}
-                      value={direction}
-                    >
-                      {directionLabel(
-                        direction
-                      )}
-                    </option>
-                  )
-                )}
-            </select>
-          </label>
-
-          <label>
-            Pickup area
-
-            <select
-              value={pickupAreaFilter}
-              onChange={(event) =>
-                setPickupAreaFilter(
-                  event.target.value
-                )
-              }
-            >
-              <option value="all">
-                All pickup areas
-              </option>
-
-              {transportOperationsFilterOptions
-                .pickupAreas
-                .map(
-                  (area) => (
-                    <option
-                      key={area}
-                      value={area}
-                    >
-                      {area}
-                    </option>
-                  )
-                )}
-            </select>
-          </label>
-
-          <label>
-            Destination area
-
-            <select
-              value={
-                destinationAreaFilter
-              }
-              onChange={(event) =>
-                setDestinationAreaFilter(
-                  event.target.value
-                )
-              }
-            >
-              <option value="all">
-                All destination areas
-              </option>
-
-              {transportOperationsFilterOptions
-                .destinationAreas
-                .map(
-                  (area) => (
-                    <option
-                      key={area}
-                      value={area}
-                    >
-                      {area}
-                    </option>
-                  )
-                )}
-            </select>
-          </label>
-
-          <label>
-            Sort by
-
-            <select
-              value={sortBy}
-              onChange={(event) =>
-                setSortBy(
-                  event.target.value
-                )
-              }
-            >
-              <option value="shift_asc">
-                Shift — earliest first
-              </option>
-
-              <option value="shift_desc">
-                Shift — latest first
-              </option>
-
-              <option value="passenger_asc">
-                Passenger — A to Z
-              </option>
-
-              <option value="passenger_desc">
-                Passenger — Z to A
-              </option>
-
-              <option value="status">
-                Status
-              </option>
-
-              <option value="area">
-                Pickup area
-              </option>
-            </select>
-          </label>
-
-          <label>
-            Attention
-
-            <select
-              value={
-                attentionOnly
-                  ? 'attention'
-                  : 'all'
-              }
-              onChange={(event) =>
-                setAttentionOnly(
-                  event.target.value ===
-                    'attention'
-                )
-              }
-            >
-              <option value="all">
-                All requests
-              </option>
-
-              <option value="attention">
-                Needs attention only
-              </option>
-            </select>
-          </label>
-        </div>
-
-        <div className="nac-results-summary">
-          <div>
-            <strong>
-              {
-                transportOperationsFilteredRequests
-                  .length
-              }
-            </strong>
-            {' '}
-            of
-            {' '}
-            <strong>
-              {overview?.requests?.length || 0}
-            </strong>
-            {' '}
-            requests shown
+              <span>
+                <strong>
+                  {
+                    transportOperationsFilteredRequests
+                      .length
+                  }
+                </strong>
+                {' '}
+                of
+                {' '}
+                <strong>
+                  {overview?.requests?.length || 0}
+                </strong>
+                {' '}
+                shown
+              </span>
+            </div>
           </div>
 
-          {transportOperationsHasFilters && (
+          <div className="transport-request-toolbar-actions">
+            <div className="transport-request-search">
+              <input
+                type="search"
+                value={search}
+                aria-label="Search requests"
+                placeholder="Search passenger, address, postcode or budget..."
+                onChange={(event) =>
+                  setSearch(
+                    event.target.value
+                  )
+                }
+              />
+            </div>
+
             <button
               type="button"
-              className="nac-filter-reset"
-              onClick={
-                clearTransportOperationsFilters
+              className={
+                transportOperationsFiltersOpen ||
+                transportOperationsActiveFilterCount
+                  ? 'transport-filter-toggle active'
+                  : 'transport-filter-toggle'
+              }
+              onClick={() =>
+                setTransportOperationsFiltersOpen(
+                  value => !value
+                )
               }
             >
-              Clear filters
+              Filters
+              {transportOperationsActiveFilterCount > 0
+                ? ` (${transportOperationsActiveFilterCount})`
+                : ''}
             </button>
-          )}
+          </div>
         </div>
+
+        {transportOperationsFiltersOpen && (
+          <div className="transport-filter-drawer">
+            <div className="nac-filter-grid">
+              <label>
+                Status
+
+                <select
+                  value={statusFilter}
+                  onChange={(event) =>
+                    setStatusFilter(
+                      event.target.value
+                    )
+                  }
+                >
+                  <option value="all">
+                    All statuses
+                  </option>
+
+                  {transportOperationsFilterOptions
+                    .statuses
+                    .map(
+                      (status) => (
+                        <option
+                          key={status}
+                          value={status}
+                        >
+                          {requestStatusLabel(
+                            status
+                          )}
+                        </option>
+                      )
+                    )}
+                </select>
+              </label>
+
+              <label>
+                Service day
+
+                <select
+                  value={dayFilter}
+                  onChange={(event) =>
+                    setDayFilter(
+                      event.target.value
+                    )
+                  }
+                >
+                  <option value="all">
+                    All days
+                  </option>
+
+                  {transportOperationsFilterOptions
+                    .days
+                    .map(
+                      (day) => (
+                        <option
+                          key={day}
+                          value={day}
+                        >
+                          {day}
+                        </option>
+                      )
+                    )}
+                </select>
+              </label>
+
+              <label>
+                Direction
+
+                <select
+                  value={directionFilter}
+                  onChange={(event) =>
+                    setDirectionFilter(
+                      event.target.value
+                    )
+                  }
+                >
+                  <option value="all">
+                    All directions
+                  </option>
+
+                  {transportOperationsFilterOptions
+                    .directions
+                    .map(
+                      (direction) => (
+                        <option
+                          key={direction}
+                          value={direction}
+                        >
+                          {directionLabel(
+                            direction
+                          )}
+                        </option>
+                      )
+                    )}
+                </select>
+              </label>
+
+              <label>
+                Pickup area
+
+                <select
+                  value={pickupAreaFilter}
+                  onChange={(event) =>
+                    setPickupAreaFilter(
+                      event.target.value
+                    )
+                  }
+                >
+                  <option value="all">
+                    All pickup areas
+                  </option>
+
+                  {transportOperationsFilterOptions
+                    .pickupAreas
+                    .map(
+                      (area) => (
+                        <option
+                          key={area}
+                          value={area}
+                        >
+                          {area}
+                        </option>
+                      )
+                    )}
+                </select>
+              </label>
+
+              <label>
+                Destination area
+
+                <select
+                  value={
+                    destinationAreaFilter
+                  }
+                  onChange={(event) =>
+                    setDestinationAreaFilter(
+                      event.target.value
+                    )
+                  }
+                >
+                  <option value="all">
+                    All destination areas
+                  </option>
+
+                  {transportOperationsFilterOptions
+                    .destinationAreas
+                    .map(
+                      (area) => (
+                        <option
+                          key={area}
+                          value={area}
+                        >
+                          {area}
+                        </option>
+                      )
+                    )}
+                </select>
+              </label>
+
+              <label>
+                Sort by
+
+                <select
+                  value={sortBy}
+                  onChange={(event) =>
+                    setSortBy(
+                      event.target.value
+                    )
+                  }
+                >
+                  <option value="shift_asc">
+                    Shift — earliest first
+                  </option>
+
+                  <option value="shift_desc">
+                    Shift — latest first
+                  </option>
+
+                  <option value="passenger_asc">
+                    Passenger — A to Z
+                  </option>
+
+                  <option value="passenger_desc">
+                    Passenger — Z to A
+                  </option>
+
+                  <option value="status">
+                    Status
+                  </option>
+
+                  <option value="area">
+                    Pickup area
+                  </option>
+                </select>
+              </label>
+
+              <label>
+                Attention
+
+                <select
+                  value={
+                    attentionOnly
+                      ? 'attention'
+                      : 'all'
+                  }
+                  onChange={(event) =>
+                    setAttentionOnly(
+                      event.target.value ===
+                        'attention'
+                    )
+                  }
+                >
+                  <option value="all">
+                    All requests
+                  </option>
+
+                  <option value="attention">
+                    Needs attention only
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            {transportOperationsHasFilters && (
+              <div className="transport-filter-actions">
+                <button
+                  type="button"
+                  className="nac-filter-reset"
+                  onClick={
+                    clearTransportOperationsFilters
+                  }
+                >
+                  Clear filters
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
       </section>
 
 
-      <section className="transport-analysis-section">
+      <section className="transport-analysis-section transport-analysis-collapsible">
         <div className="transport-analysis-title">
           <div>
             <small>
@@ -2923,73 +2968,92 @@ function TransportOperationsPage({
             </h2>
 
             <p>
-              Analysis updates automatically
-              with the filters above.
+              {transportOperationsFilteredRequests.length
+                ? 'Review demand patterns for the current request selection.'
+                : 'No request data to analyse yet.'}
             </p>
           </div>
 
-          <span>
-            {
-              transportOperationsFilteredRequests
-                .length
-            }
-            {' '}
-            matching
-            {' '}
-            {
-              transportOperationsFilteredRequests
-                .length === 1
-                ? 'request'
-                : 'requests'
-            }
-          </span>
+          <div className="transport-analysis-summary-actions">
+            <span>
+              {
+                transportOperationsFilteredRequests
+                  .length
+              }
+              {' '}
+              matching
+              {' '}
+              {
+                transportOperationsFilteredRequests
+                  .length === 1
+                  ? 'request'
+                  : 'requests'
+              }
+            </span>
+
+            <button
+              type="button"
+              className="transport-analysis-toggle"
+              onClick={() =>
+                setTransportAnalysisOpen(
+                  value => !value
+                )
+              }
+            >
+              {transportAnalysisOpen
+                ? 'Hide Analysis'
+                : 'Show Analysis'}
+            </button>
+          </div>
         </div>
 
-        <div className="transport-analysis-grid">
-          {transportAnalysisPanel(
-            'By Service Day',
-            'Requests and passengers by date.',
-            transportOperationsAnalysis.days
-          )}
+        {transportAnalysisOpen && (
+          <div className="transport-analysis-grid">
+            {transportAnalysisPanel(
+              'By Service Day',
+              'Requests and passengers by date.',
+              transportOperationsAnalysis.days
+            )}
 
-          {transportAnalysisPanel(
-            'By Shift Hour',
-            'Demand by staff shift time.',
-            transportOperationsAnalysis.hours
-          )}
+            {transportAnalysisPanel(
+              'By Shift Hour',
+              'Demand by staff shift time.',
+              transportOperationsAnalysis.hours
+            )}
 
-          {transportAnalysisPanel(
-            'By Status',
-            'Current request workflow position.',
-            transportOperationsAnalysis.statuses,
-            (label) =>
-              requestStatusLabel(
-                label
-              )
-          )}
+            {transportAnalysisPanel(
+              'By Status',
+              'Current request workflow position.',
+              transportOperationsAnalysis.statuses,
+              (label) =>
+                requestStatusLabel(
+                  label
+                )
+            )}
 
-          {transportAnalysisPanel(
-            'By Direction',
-            'To-work and from-work demand.',
-            transportOperationsAnalysis.directions,
-            (label) =>
-              directionLabel(
-                label
-              )
-          )}
+            {transportAnalysisPanel(
+              'By Direction',
+              'To-work and from-work demand.',
+              transportOperationsAnalysis.directions,
+              (label) =>
+                directionLabel(
+                  label
+                )
+            )}
 
-          {transportAnalysisPanel(
-            'Pickup Areas',
-            'Demand grouped by pickup postcode area.',
-            transportOperationsAnalysis.pickupAreas
-          )}
+            {transportAnalysisPanel(
+              'Pickup Areas',
+              'Demand grouped by pickup postcode area.',
+              transportOperationsAnalysis.pickupAreas
+            )}
 
-          {transportAnalysisPanel(
-            'Destination Areas',
-            'Demand grouped by destination postcode area.',
-            transportOperationsAnalysis.destinationAreas
-          )}
-        </div>
+            {transportAnalysisPanel(
+              'Destination Areas',
+              'Demand grouped by destination postcode area.',
+              transportOperationsAnalysis.destinationAreas
+            )}
+          </div>
+        )}
       </section>
 
 
