@@ -8203,3 +8203,162 @@ button:disabled {
   background: #145b93;
   border-color: #145b93;
 }
+
+.transport-plan-admin-section {
+  display: grid;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.transport-plan-card {
+  display: grid;
+  gap: 18px;
+}
+
+.transport-plan-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.transport-plan-card-heading small {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.transport-plan-card-heading h3,
+.transport-plan-card-heading p {
+  margin: 0;
+}
+
+.transport-plan-selector {
+  min-width: 280px;
+}
+
+.transport-plan-selector select,
+.transport-plan-form-grid input,
+.transport-plan-form-grid select,
+.transport-plan-access-row input {
+  width: 100%;
+}
+
+.transport-plan-form-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.transport-plan-form-grid label,
+.transport-plan-selector,
+.transport-plan-access-row label {
+  display: grid;
+  gap: 6px;
+}
+
+.transport-plan-actions,
+.transport-plan-window-actions,
+.transport-plan-access-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.transport-plan-actions {
+  justify-content: flex-end;
+}
+
+.transport-plan-window-list {
+  display: grid;
+  gap: 10px;
+}
+
+.transport-plan-window-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.transport-plan-window-row:first-child {
+  border-top: 0;
+}
+
+.transport-plan-window-row > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.transport-plan-window-row span {
+  font-size: 0.9rem;
+}
+
+.transport-plan-window-editor {
+  display: grid;
+  gap: 16px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-color);
+}
+
+.transport-plan-active-option {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  align-self: end;
+  padding-bottom: 10px;
+}
+
+.transport-plan-active-option input {
+  width: auto;
+}
+
+.transport-plan-access-row {
+  align-items: end;
+}
+
+.transport-plan-access-row label {
+  flex: 1;
+}
+
+.transport-plan-help {
+  opacity: 0.75;
+}
+
+@media (max-width: 800px) {
+  .transport-plan-card-heading,
+  .transport-plan-window-row,
+  .transport-plan-access-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .transport-plan-selector {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .transport-plan-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .transport-plan-window-actions {
+    flex-wrap: wrap;
+  }
+}
+
+.transport-plan-heading-actions {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+
+@media (max-width: 800px) {
+  .transport-plan-heading-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+}

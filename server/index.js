@@ -88,7 +88,7 @@ const STAFF_TRANSPORT_PROGRAMME_NAME =
 const STAFF_TRANSPORT_REQUEST_OPENS_AT =
   String(
     process.env.STAFF_TRANSPORT_REQUEST_OPENS_AT ||
-    '2026-10-01T00:00:00.000Z'
+    '2026-10-01T00:00:00+01:00'
   ).trim();
 
 const STAFF_TRANSPORT_REQUEST_CLOSES_AT =
@@ -5385,6 +5385,96 @@ function configureTransportProgrammeAccessCode(
     throw error;
   }
 }
+
+
+function setTransportProgrammeAccessCodeActive(
+  programmeId,
+  isActive,
+  actorUserId
+) {
+  const programme =
+    getTransportProgrammeById(
+      programmeId
+    );
+
+  if (!programme) {
+    const error =
+      new Error(
+        'Transport programme not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const existing =
+    getTransportProgrammeAccessCode(
+      programmeId
+    );
+
+  if (!existing) {
+    const error =
+      new Error(
+        'Campaign access code is not configured'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const nextActive =
+    isActive ? 1 : 0;
+
+  if (
+    Number(existing.isActive) ===
+    nextActive
+  ) {
+    return existing;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_programme_access_codes
+      SET
+        is_active = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE programme_id = ?
+    `).run(
+      nextActive,
+      Number(programmeId)
+    );
+
+    const updated =
+      getTransportProgrammeAccessCode(
+        programmeId
+      );
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType:
+        'transport_programme_access_code',
+      entityId:
+        existing.id,
+      oldValue:
+        JSON.stringify(existing),
+      newValue:
+        JSON.stringify(updated),
+      source:
+        'nac_admin',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return updated;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 
 
 function validateTransportProgrammeAccessCode(
@@ -27763,8 +27853,29 @@ const server = http.createServer(async (req, res) => {
       const payload =
         await readJson(req);
 
+      if (
+        payload.code === undefined &&
+        typeof payload.isActive !== 'boolean'
+      ) {
+        const error =
+          new Error(
+            'Access code status must be true or false'
+          );
+
+        error.statusCode = 400;
+        throw error;
+      }
+
       const configured =
-        configureTransportProgrammeAccessCode(
+        payload.code === undefined
+          ? setTransportProgrammeAccessCodeActive(
+              Number(
+                transportProgrammeAccessCodeMatch[1]
+              ),
+              payload.isActive,
+              auth.user.id
+            )
+          : configureTransportProgrammeAccessCode(
           Number(
             transportProgrammeAccessCodeMatch[1]
           ),

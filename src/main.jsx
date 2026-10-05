@@ -757,6 +757,78 @@ function TransportOperationsPage({
   ] =
     useState('');
 
+  const [
+    transportPlanProgrammes,
+    setTransportPlanProgrammes
+  ] =
+    useState([]);
+
+  const [
+    transportPlanProgrammeId,
+    setTransportPlanProgrammeId
+  ] =
+    useState('');
+
+  const [
+    transportPlanProgramme,
+    setTransportPlanProgramme
+  ] =
+    useState(null);
+
+  const [
+    transportPlanWindows,
+    setTransportPlanWindows
+  ] =
+    useState([]);
+
+  const [
+    transportPlanAccess,
+    setTransportPlanAccess
+  ] =
+    useState(null);
+
+  const [
+    transportPlanLoading,
+    setTransportPlanLoading
+  ] =
+    useState(true);
+
+  const [
+    transportPlanSaving,
+    setTransportPlanSaving
+  ] =
+    useState(false);
+
+  const [
+    transportPlanError,
+    setTransportPlanError
+  ] =
+    useState('');
+
+  const [
+    transportPlanMessage,
+    setTransportPlanMessage
+  ] =
+    useState('');
+
+  const [
+    transportPlanWindowEditor,
+    setTransportPlanWindowEditor
+  ] =
+    useState(null);
+
+  const [
+    transportPlanAccessCode,
+    setTransportPlanAccessCode
+  ] =
+    useState('');
+
+  const [
+    transportPlanCreateEditor,
+    setTransportPlanCreateEditor
+  ] =
+    useState(null);
+
   const [search, setSearch] =
     useState('');
 
@@ -832,6 +904,719 @@ function TransportOperationsPage({
       cancelled = true;
     };
   }, []);
+
+  function transportPlanDateTimeInputValue(
+    value
+  ) {
+    if (!value) {
+      return '';
+    }
+
+    const date =
+      new Date(value);
+
+    if (
+      Number.isNaN(
+        date.getTime()
+      )
+    ) {
+      return '';
+    }
+
+    const local =
+      new Date(
+        date.getTime() -
+          date.getTimezoneOffset() *
+          60000
+      );
+
+    return local
+      .toISOString()
+      .slice(0, 16);
+  }
+
+
+  function transportPlanIsoValue(
+    value
+  ) {
+    if (!value) {
+      return null;
+    }
+
+    const date =
+      new Date(value);
+
+    if (
+      Number.isNaN(
+        date.getTime()
+      )
+    ) {
+      return null;
+    }
+
+    return date.toISOString();
+  }
+
+
+  async function loadTransportPlan(
+    preferredProgrammeId = null
+  ) {
+    setTransportPlanLoading(true);
+    setTransportPlanError('');
+
+    try {
+      const programmesResponse =
+        await apiFetch(
+          `${API_BASE}/api/transport-programmes`
+        );
+
+      const programmesData =
+        await programmesResponse
+          .json()
+          .catch(() => ({}));
+
+      if (!programmesResponse.ok) {
+        throw new Error(
+          programmesData.error ||
+            'Unable to load travel plans'
+        );
+      }
+
+      const programmes =
+        programmesData.programmes || [];
+
+      setTransportPlanProgrammes(
+        programmes
+      );
+
+      const selectedId =
+        String(
+          preferredProgrammeId ||
+          transportPlanProgrammeId ||
+          programmes[0]?.id ||
+          ''
+        );
+
+      if (!selectedId) {
+        setTransportPlanProgrammeId('');
+        setTransportPlanProgramme(null);
+        setTransportPlanWindows([]);
+        setTransportPlanAccess(null);
+        return;
+      }
+
+      setTransportPlanProgrammeId(
+        selectedId
+      );
+
+      const [
+        programmeResponse,
+        windowsResponse
+      ] =
+        await Promise.all([
+          apiFetch(
+            `${API_BASE}/api/transport-programmes/${selectedId}`
+          ),
+          apiFetch(
+            `${API_BASE}/api/transport-programmes/${selectedId}/windows`
+          )
+        ]);
+
+      const programmeData =
+        await programmeResponse
+          .json()
+          .catch(() => ({}));
+
+      const windowsData =
+        await windowsResponse
+          .json()
+          .catch(() => ({}));
+
+      if (!programmeResponse.ok) {
+        throw new Error(
+          programmeData.error ||
+            'Unable to load travel plan'
+        );
+      }
+
+      if (!windowsResponse.ok) {
+        throw new Error(
+          windowsData.error ||
+            'Unable to load travel windows'
+        );
+      }
+
+      setTransportPlanProgramme(
+        programmeData.programme || null
+      );
+
+      setTransportPlanWindows(
+        windowsData.windows || []
+      );
+
+      if (transportOperationsIsNacAdmin) {
+        const accessResponse =
+          await apiFetch(
+            `${API_BASE}/api/transport-programmes/${selectedId}/access-code`
+          );
+
+        const accessData =
+          await accessResponse
+            .json()
+            .catch(() => ({}));
+
+        if (!accessResponse.ok) {
+          throw new Error(
+            accessData.error ||
+              'Unable to load campaign access'
+          );
+        }
+
+        setTransportPlanAccess(
+          accessData.configured || null
+        );
+      } else {
+        setTransportPlanAccess(null);
+      }
+    } catch (loadError) {
+      setTransportPlanError(
+        loadError instanceof Error
+          ? loadError.message
+          : 'Unable to load travel plan'
+      );
+    } finally {
+      setTransportPlanLoading(false);
+    }
+  }
+
+
+  useEffect(() => {
+    loadTransportPlan();
+  }, []);
+
+
+  function openTransportPlanCreate() {
+    setTransportPlanCreateEditor({
+      code: '',
+      name: '',
+      status: 'draft',
+      requestOpensAt: '',
+      requestClosesAt: ''
+    });
+
+    setTransportPlanError('');
+    setTransportPlanMessage('');
+  }
+
+
+  async function saveTransportPlanCreate() {
+    if (
+      !transportOperationsIsNacAdmin ||
+      !transportPlanCreateEditor
+    ) {
+      return;
+    }
+
+    setTransportPlanSaving(true);
+    setTransportPlanError('');
+    setTransportPlanMessage('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-programmes`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body: JSON.stringify({
+              code:
+                transportPlanCreateEditor
+                  .code,
+              name:
+                transportPlanCreateEditor
+                  .name,
+              status:
+                transportPlanCreateEditor
+                  .status,
+              programmeType:
+                'special_transport',
+              autocabAccountType:
+                'xmas_staff',
+              requestOpensAt:
+                transportPlanIsoValue(
+                  transportPlanCreateEditor
+                    .requestOpensAt
+                ),
+              requestClosesAt:
+                transportPlanIsoValue(
+                  transportPlanCreateEditor
+                    .requestClosesAt
+                )
+            })
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to create travel plan'
+        );
+      }
+
+      setTransportPlanCreateEditor(
+        null
+      );
+
+      setTransportPlanMessage(
+        'Travel plan created'
+      );
+
+      await loadTransportPlan(
+        data.programme.id
+      );
+    } catch (saveError) {
+      setTransportPlanError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Unable to create travel plan'
+      );
+    } finally {
+      setTransportPlanSaving(false);
+    }
+  }
+
+
+  async function toggleTransportPlanAccess() {
+    if (
+      !transportOperationsIsNacAdmin ||
+      !transportPlanProgramme ||
+      !transportPlanAccess
+    ) {
+      return;
+    }
+
+    setTransportPlanSaving(true);
+    setTransportPlanError('');
+    setTransportPlanMessage('');
+
+    try {
+      const nextActive =
+        !Number(
+          transportPlanAccess.isActive
+        );
+
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-programmes/${transportPlanProgramme.id}/access-code`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body: JSON.stringify({
+              isActive:
+                nextActive
+            })
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to update campaign access'
+        );
+      }
+
+      setTransportPlanMessage(
+        Number(
+          data.configured?.isActive
+        )
+          ? 'Campaign access enabled'
+          : 'Campaign access disabled'
+      );
+
+      await loadTransportPlan(
+        transportPlanProgramme.id
+      );
+    } catch (saveError) {
+      setTransportPlanError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Unable to update campaign access'
+      );
+    } finally {
+      setTransportPlanSaving(false);
+    }
+  }
+
+
+  async function saveTransportPlanProgramme() {
+    if (
+      !transportOperationsIsNacAdmin ||
+      !transportPlanProgramme
+    ) {
+      return;
+    }
+
+    setTransportPlanSaving(true);
+    setTransportPlanError('');
+    setTransportPlanMessage('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-programmes/${transportPlanProgramme.id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body: JSON.stringify({
+              name:
+                transportPlanProgramme.name,
+              status:
+                transportPlanProgramme.status,
+              requestOpensAt:
+                transportPlanIsoValue(
+                  transportPlanProgramme
+                    .requestOpensAt
+                ),
+              requestClosesAt:
+                transportPlanIsoValue(
+                  transportPlanProgramme
+                    .requestClosesAt
+                ),
+              confirmationDueAt:
+                transportPlanIsoValue(
+                  transportPlanProgramme
+                    .confirmationDueAt
+                ),
+              routeLockAt:
+                transportPlanIsoValue(
+                  transportPlanProgramme
+                    .routeLockAt
+                )
+            })
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to save travel plan'
+        );
+      }
+
+      setTransportPlanProgramme(
+        data.programme
+      );
+
+      setTransportPlanMessage(
+        'Travel plan updated'
+      );
+
+      await loadTransportPlan(
+        data.programme.id
+      );
+    } catch (saveError) {
+      setTransportPlanError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Unable to save travel plan'
+      );
+    } finally {
+      setTransportPlanSaving(false);
+    }
+  }
+
+
+  function openTransportPlanWindowCreate() {
+    setTransportPlanWindowEditor({
+      id: null,
+      name: '',
+      startsAt: '',
+      endsAt: '',
+      isActive: true
+    });
+
+    setTransportPlanError('');
+    setTransportPlanMessage('');
+  }
+
+
+  function openTransportPlanWindowEdit(
+    window
+  ) {
+    setTransportPlanWindowEditor({
+      id: window.id,
+      name: window.name || '',
+      startsAt:
+        transportPlanDateTimeInputValue(
+          window.startsAt
+        ),
+      endsAt:
+        transportPlanDateTimeInputValue(
+          window.endsAt
+        ),
+      isActive:
+        Number(
+          window.isActive
+        ) === 1
+    });
+
+    setTransportPlanError('');
+    setTransportPlanMessage('');
+  }
+
+
+  async function saveTransportPlanWindow() {
+    if (
+      !transportOperationsIsNacAdmin ||
+      !transportPlanProgramme ||
+      !transportPlanWindowEditor
+    ) {
+      return;
+    }
+
+    setTransportPlanSaving(true);
+    setTransportPlanError('');
+    setTransportPlanMessage('');
+
+    try {
+      const editing =
+        Boolean(
+          transportPlanWindowEditor.id
+        );
+
+      const response =
+        await apiFetch(
+          editing
+            ? `${API_BASE}/api/transport-programme-windows/${transportPlanWindowEditor.id}`
+            : `${API_BASE}/api/transport-programmes/${transportPlanProgramme.id}/windows`,
+          {
+            method:
+              editing
+                ? 'PATCH'
+                : 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body: JSON.stringify({
+              name:
+                transportPlanWindowEditor
+                  .name,
+              startsAt:
+                transportPlanIsoValue(
+                  transportPlanWindowEditor
+                    .startsAt
+                ),
+              endsAt:
+                transportPlanIsoValue(
+                  transportPlanWindowEditor
+                    .endsAt
+                ),
+              isActive:
+                transportPlanWindowEditor
+                  .isActive
+            })
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to save travel window'
+        );
+      }
+
+      setTransportPlanWindowEditor(
+        null
+      );
+
+      setTransportPlanMessage(
+        editing
+          ? 'Travel window updated'
+          : 'Travel window added'
+      );
+
+      await loadTransportPlan(
+        transportPlanProgramme.id
+      );
+
+      setTransportPlanningRefreshVersion(
+        value => value + 1
+      );
+    } catch (saveError) {
+      setTransportPlanError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Unable to save travel window'
+      );
+    } finally {
+      setTransportPlanSaving(false);
+    }
+  }
+
+
+  async function toggleTransportPlanWindow(
+    window
+  ) {
+    if (!transportOperationsIsNacAdmin) {
+      return;
+    }
+
+    setTransportPlanSaving(true);
+    setTransportPlanError('');
+    setTransportPlanMessage('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-programme-windows/${window.id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body: JSON.stringify({
+              isActive:
+                !Number(
+                  window.isActive
+                )
+            })
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to update travel window'
+        );
+      }
+
+      setTransportPlanMessage(
+        Number(
+          data.window.isActive
+        )
+          ? 'Travel window activated'
+          : 'Travel window deactivated'
+      );
+
+      await loadTransportPlan(
+        transportPlanProgramme.id
+      );
+
+      setTransportPlanningRefreshVersion(
+        value => value + 1
+      );
+    } catch (saveError) {
+      setTransportPlanError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Unable to update travel window'
+      );
+    } finally {
+      setTransportPlanSaving(false);
+    }
+  }
+
+
+  async function saveTransportPlanAccess() {
+    if (
+      !transportOperationsIsNacAdmin ||
+      !transportPlanProgramme ||
+      transportPlanAccessCode.trim()
+        .length < 6
+    ) {
+      return;
+    }
+
+    setTransportPlanSaving(true);
+    setTransportPlanError('');
+    setTransportPlanMessage('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-programmes/${transportPlanProgramme.id}/access-code`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body: JSON.stringify({
+              code:
+                transportPlanAccessCode,
+              isActive: true
+            })
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to update access code'
+        );
+      }
+
+      setTransportPlanAccessCode('');
+
+      setTransportPlanMessage(
+        'Campaign access code updated'
+      );
+
+      await loadTransportPlan(
+        transportPlanProgramme.id
+      );
+    } catch (saveError) {
+      setTransportPlanError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Unable to update access code'
+      );
+    } finally {
+      setTransportPlanSaving(false);
+    }
+  }
+
 
   function requestStatusLabel(
     status
@@ -2205,6 +2990,819 @@ function TransportOperationsPage({
             transportOperationsAnalysis.destinationAreas
           )}
         </div>
+      </section>
+
+
+      <section className="transport-plan-admin-section">
+        <div className="transport-analysis-title">
+          <div>
+            <small>
+              Service control
+            </small>
+
+            <h2>
+              Travel Plan Management
+            </h2>
+
+            <p>
+              Control programme dates,
+              service windows and campaign
+              access without using the terminal.
+            </p>
+          </div>
+
+          <span>
+            {transportOperationsIsNacAdmin
+              ? 'NAC Admin'
+              : 'Read only'}
+          </span>
+        </div>
+
+        {transportPlanError && (
+          <div className="notice error">
+            {transportPlanError}
+          </div>
+        )}
+
+        {transportPlanMessage && (
+          <div className="notice success">
+            {transportPlanMessage}
+          </div>
+        )}
+
+        {transportPlanLoading ? (
+          <div className="card state-panel">
+            Loading travel plan...
+          </div>
+        ) : !transportPlanProgrammes.length ? (
+          <div className="card role-dashboard-empty">
+            <CalendarDays size={26}/>
+
+            <strong>
+              No travel plans configured
+            </strong>
+
+            <span>
+              Create the first Special Transport
+              programme before adding service
+              windows.
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="card transport-plan-card">
+              <div className="transport-plan-card-heading">
+                <div>
+                  <small>
+                    Programme
+                  </small>
+
+                  <h3>
+                    {
+                      transportPlanProgramme
+                        ?.name ||
+                      'Travel plan'
+                    }
+                  </h3>
+                </div>
+
+                <div className="transport-plan-heading-actions">
+                  {transportOperationsIsNacAdmin && (
+                    <button
+                      type="button"
+                      className="transport-capacity-add-button"
+                      onClick={
+                        openTransportPlanCreate
+                      }
+                    >
+                      New Travel Plan
+                    </button>
+                  )}
+
+                  <label className="transport-plan-selector">
+                    Plan
+
+                  <select
+                    value={
+                      transportPlanProgrammeId
+                    }
+                    onChange={(event) =>
+                      loadTransportPlan(
+                        event.target.value
+                      )
+                    }
+                  >
+                    {transportPlanProgrammes
+                      .map(
+                        (programme) => (
+                          <option
+                            key={programme.id}
+                            value={programme.id}
+                          >
+                            {programme.code}
+                            {' — '}
+                            {programme.name}
+                          </option>
+                        )
+                      )}
+                  </select>
+                  </label>
+                </div>
+              </div>
+
+              {transportPlanCreateEditor && (
+                <div className="transport-plan-window-editor">
+                  <div className="transport-capacity-editor-heading">
+                    <strong>
+                      Create Travel Plan
+                    </strong>
+
+                    <span>
+                      Create the programme first,
+                      then add its travel windows
+                      and campaign access code.
+                    </span>
+                  </div>
+
+                  <div className="transport-plan-form-grid">
+                    <label>
+                      Programme code
+
+                      <input
+                        type="text"
+                        placeholder="e.g. XMAS-2027-28"
+                        value={
+                          transportPlanCreateEditor
+                            .code
+                        }
+                        onChange={(event) =>
+                          setTransportPlanCreateEditor({
+                            ...transportPlanCreateEditor,
+                            code:
+                              event.target.value
+                                .toUpperCase()
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Programme name
+
+                      <input
+                        type="text"
+                        placeholder="e.g. Christmas & New Year Staff Transport 2027/28"
+                        value={
+                          transportPlanCreateEditor
+                            .name
+                        }
+                        onChange={(event) =>
+                          setTransportPlanCreateEditor({
+                            ...transportPlanCreateEditor,
+                            name:
+                              event.target.value
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Status
+
+                      <select
+                        value={
+                          transportPlanCreateEditor
+                            .status
+                        }
+                        onChange={(event) =>
+                          setTransportPlanCreateEditor({
+                            ...transportPlanCreateEditor,
+                            status:
+                              event.target.value
+                          })
+                        }
+                      >
+                        <option value="draft">
+                          Draft
+                        </option>
+
+                        <option value="open">
+                          Open
+                        </option>
+                      </select>
+                    </label>
+
+                    <label>
+                      Requests open
+
+                      <input
+                        type="datetime-local"
+                        value={
+                          transportPlanCreateEditor
+                            .requestOpensAt
+                        }
+                        onChange={(event) =>
+                          setTransportPlanCreateEditor({
+                            ...transportPlanCreateEditor,
+                            requestOpensAt:
+                              event.target.value
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Requests close
+
+                      <input
+                        type="datetime-local"
+                        value={
+                          transportPlanCreateEditor
+                            .requestClosesAt
+                        }
+                        onChange={(event) =>
+                          setTransportPlanCreateEditor({
+                            ...transportPlanCreateEditor,
+                            requestClosesAt:
+                              event.target.value
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  <div className="transport-capacity-editor-actions">
+                    <button
+                      type="button"
+                      className="transport-capacity-save-button"
+                      disabled={
+                        transportPlanSaving ||
+                        !transportPlanCreateEditor
+                          .code.trim() ||
+                        !transportPlanCreateEditor
+                          .name.trim()
+                      }
+                      onClick={
+                        saveTransportPlanCreate
+                      }
+                    >
+                      Create Plan
+                    </button>
+
+                    <button
+                      type="button"
+                      className="transport-capacity-cancel-button"
+                      disabled={
+                        transportPlanSaving
+                      }
+                      onClick={() =>
+                        setTransportPlanCreateEditor(
+                          null
+                        )
+                      }
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {transportPlanProgramme && (
+                <div className="transport-plan-form-grid">
+                  <label>
+                    Programme name
+
+                    <input
+                      type="text"
+                      value={
+                        transportPlanProgramme
+                          .name || ''
+                      }
+                      disabled={
+                        !transportOperationsIsNacAdmin
+                      }
+                      onChange={(event) =>
+                        setTransportPlanProgramme({
+                          ...transportPlanProgramme,
+                          name:
+                            event.target.value
+                        })
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Status
+
+                    <select
+                      value={
+                        transportPlanProgramme
+                          .status || 'draft'
+                      }
+                      disabled={
+                        !transportOperationsIsNacAdmin
+                      }
+                      onChange={(event) =>
+                        setTransportPlanProgramme({
+                          ...transportPlanProgramme,
+                          status:
+                            event.target.value
+                        })
+                      }
+                    >
+                      <option value="draft">
+                        Draft
+                      </option>
+                      <option value="open">
+                        Open
+                      </option>
+                      <option value="planning">
+                        Planning
+                      </option>
+                      <option value="confirmation">
+                        Confirmation
+                      </option>
+                      <option value="locked">
+                        Locked
+                      </option>
+                      <option value="active">
+                        Active
+                      </option>
+                      <option value="completed">
+                        Completed
+                      </option>
+                      <option value="cancelled">
+                        Cancelled
+                      </option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Requests open
+
+                    <input
+                      type="datetime-local"
+                      value={
+                        transportPlanDateTimeInputValue(
+                          transportPlanProgramme
+                            .requestOpensAt
+                        )
+                      }
+                      disabled={
+                        !transportOperationsIsNacAdmin
+                      }
+                      onChange={(event) =>
+                        setTransportPlanProgramme({
+                          ...transportPlanProgramme,
+                          requestOpensAt:
+                            event.target.value
+                        })
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Requests close
+
+                    <input
+                      type="datetime-local"
+                      value={
+                        transportPlanDateTimeInputValue(
+                          transportPlanProgramme
+                            .requestClosesAt
+                        )
+                      }
+                      disabled={
+                        !transportOperationsIsNacAdmin
+                      }
+                      onChange={(event) =>
+                        setTransportPlanProgramme({
+                          ...transportPlanProgramme,
+                          requestClosesAt:
+                            event.target.value
+                        })
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Confirmation due
+
+                    <input
+                      type="datetime-local"
+                      value={
+                        transportPlanDateTimeInputValue(
+                          transportPlanProgramme
+                            .confirmationDueAt
+                        )
+                      }
+                      disabled={
+                        !transportOperationsIsNacAdmin
+                      }
+                      onChange={(event) =>
+                        setTransportPlanProgramme({
+                          ...transportPlanProgramme,
+                          confirmationDueAt:
+                            event.target.value
+                        })
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Route lock
+
+                    <input
+                      type="datetime-local"
+                      value={
+                        transportPlanDateTimeInputValue(
+                          transportPlanProgramme
+                            .routeLockAt
+                        )
+                      }
+                      disabled={
+                        !transportOperationsIsNacAdmin
+                      }
+                      onChange={(event) =>
+                        setTransportPlanProgramme({
+                          ...transportPlanProgramme,
+                          routeLockAt:
+                            event.target.value
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+              )}
+
+              {transportOperationsIsNacAdmin && (
+                <div className="transport-plan-actions">
+                  <button
+                    type="button"
+                    className="transport-capacity-save-button"
+                    disabled={
+                      transportPlanSaving ||
+                      !transportPlanProgramme
+                    }
+                    onClick={
+                      saveTransportPlanProgramme
+                    }
+                  >
+                    Save Programme
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="card transport-plan-card">
+              <div className="transport-plan-card-heading">
+                <div>
+                  <small>
+                    Service dates
+                  </small>
+
+                  <h3>
+                    Travel Windows
+                  </h3>
+                </div>
+
+                {transportOperationsIsNacAdmin && (
+                  <button
+                    type="button"
+                    className="transport-capacity-add-button"
+                    onClick={
+                      openTransportPlanWindowCreate
+                    }
+                  >
+                    Add Travel Window
+                  </button>
+                )}
+              </div>
+
+              <div className="transport-plan-window-list">
+                {transportPlanWindows.length ? (
+                  transportPlanWindows.map(
+                    (window) => (
+                      <div
+                        className="transport-plan-window-row"
+                        key={window.id}
+                      >
+                        <div>
+                          <strong>
+                            {window.name}
+                          </strong>
+
+                          <span>
+                            {
+                              new Date(
+                                window.startsAt
+                              ).toLocaleString()
+                            }
+                            {' → '}
+                            {
+                              new Date(
+                                window.endsAt
+                              ).toLocaleString()
+                            }
+                          </span>
+                        </div>
+
+                        <div className="transport-plan-window-actions">
+                          <span
+                            className={`transport-capacity-window-status ${
+                              Number(
+                                window.isActive
+                              )
+                                ? 'configured'
+                                : 'missing'
+                            }`}
+                          >
+                            {Number(
+                              window.isActive
+                            )
+                              ? 'Active'
+                              : 'Inactive'}
+                          </span>
+
+                          {transportOperationsIsNacAdmin && (
+                            <>
+                              <button
+                                type="button"
+                                className="transport-capacity-text-button"
+                                onClick={() =>
+                                  openTransportPlanWindowEdit(
+                                    window
+                                  )
+                                }
+                              >
+                                Edit
+                              </button>
+
+                              <button
+                                type="button"
+                                className="transport-capacity-text-button"
+                                disabled={
+                                  transportPlanSaving
+                                }
+                                onClick={() =>
+                                  toggleTransportPlanWindow(
+                                    window
+                                  )
+                                }
+                              >
+                                {Number(
+                                  window.isActive
+                                )
+                                  ? 'Deactivate'
+                                  : 'Activate'}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  )
+                ) : (
+                  <div className="transport-capacity-config-empty">
+                    <CalendarDays size={20}/>
+
+                    <div>
+                      <strong>
+                        No travel windows
+                      </strong>
+
+                      <span>
+                        Add Christmas Day,
+                        Boxing Day, New Year or
+                        another service period.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {transportPlanWindowEditor && (
+                <div className="transport-plan-window-editor">
+                  <div className="transport-capacity-editor-heading">
+                    <strong>
+                      {
+                        transportPlanWindowEditor.id
+                          ? 'Edit Travel Window'
+                          : 'Add Travel Window'
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="transport-plan-form-grid">
+                    <label>
+                      Name
+
+                      <input
+                        type="text"
+                        value={
+                          transportPlanWindowEditor
+                            .name
+                        }
+                        onChange={(event) =>
+                          setTransportPlanWindowEditor({
+                            ...transportPlanWindowEditor,
+                            name:
+                              event.target.value
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Starts
+
+                      <input
+                        type="datetime-local"
+                        value={
+                          transportPlanWindowEditor
+                            .startsAt
+                        }
+                        onChange={(event) =>
+                          setTransportPlanWindowEditor({
+                            ...transportPlanWindowEditor,
+                            startsAt:
+                              event.target.value
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Ends
+
+                      <input
+                        type="datetime-local"
+                        value={
+                          transportPlanWindowEditor
+                            .endsAt
+                        }
+                        onChange={(event) =>
+                          setTransportPlanWindowEditor({
+                            ...transportPlanWindowEditor,
+                            endsAt:
+                              event.target.value
+                          })
+                        }
+                      />
+                    </label>
+
+                    <label className="transport-plan-active-option">
+                      <input
+                        type="checkbox"
+                        checked={
+                          transportPlanWindowEditor
+                            .isActive
+                        }
+                        onChange={(event) =>
+                          setTransportPlanWindowEditor({
+                            ...transportPlanWindowEditor,
+                            isActive:
+                              event.target.checked
+                          })
+                        }
+                      />
+
+                      Active
+                    </label>
+                  </div>
+
+                  <div className="transport-capacity-editor-actions">
+                    <button
+                      type="button"
+                      className="transport-capacity-save-button"
+                      disabled={
+                        transportPlanSaving
+                      }
+                      onClick={
+                        saveTransportPlanWindow
+                      }
+                    >
+                      Save Window
+                    </button>
+
+                    <button
+                      type="button"
+                      className="transport-capacity-cancel-button"
+                      disabled={
+                        transportPlanSaving
+                      }
+                      onClick={() =>
+                        setTransportPlanWindowEditor(
+                          null
+                        )
+                      }
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {transportOperationsIsNacAdmin && (
+              <div className="card transport-plan-card">
+                <div className="transport-plan-card-heading">
+                  <div>
+                    <small>
+                      Staff access
+                    </small>
+
+                    <h3>
+                      Campaign Access Code
+                    </h3>
+
+                    <p>
+                      {
+                        transportPlanAccess
+                          ? Number(
+                              transportPlanAccess
+                                .isActive
+                            )
+                            ? 'Configured and active'
+                            : 'Configured but inactive'
+                          : 'Not configured'
+                      }
+                    </p>
+                  </div>
+
+                  {transportPlanAccess && (
+                    <button
+                      type="button"
+                      className={
+                        Number(
+                          transportPlanAccess
+                            .isActive
+                        )
+                          ? 'transport-capacity-cancel-button'
+                          : 'transport-capacity-save-button'
+                      }
+                      disabled={
+                        transportPlanSaving
+                      }
+                      onClick={
+                        toggleTransportPlanAccess
+                      }
+                    >
+                      {Number(
+                        transportPlanAccess
+                          .isActive
+                      )
+                        ? 'Disable Access'
+                        : 'Enable Access'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="transport-plan-access-row">
+                  <label>
+                    New access code
+
+                    <input
+                      type="password"
+                      value={
+                        transportPlanAccessCode
+                      }
+                      autoComplete="new-password"
+                      placeholder="Enter at least 6 characters"
+                      onChange={(event) =>
+                        setTransportPlanAccessCode(
+                          event.target.value
+                        )
+                      }
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    className="transport-capacity-save-button"
+                    disabled={
+                      transportPlanSaving ||
+                      transportPlanAccessCode
+                        .trim()
+                        .length < 6
+                    }
+                    onClick={
+                      saveTransportPlanAccess
+                    }
+                  >
+                    Change Access Code
+                  </button>
+                </div>
+
+                <small className="transport-plan-help">
+                  Existing access codes are never
+                  displayed. Enter a new code only
+                  when you want to replace it.
+                </small>
+              </div>
+            )}
+          </>
+        )}
       </section>
 
 
