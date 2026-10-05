@@ -4669,6 +4669,322 @@ function normaliseOptionalDateTime(
 }
 
 
+function normaliseTransportProgrammeAccessCode(
+  value
+) {
+  return String(
+    value || ''
+  )
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '');
+}
+
+
+function hashTransportProgrammeAccessCode(
+  code,
+  salt
+) {
+  return hashOtp(
+    normaliseTransportProgrammeAccessCode(
+      code
+    ),
+    salt
+  );
+}
+
+
+function getTransportProgrammeAccessCode(
+  programmeId
+) {
+  return db.prepare(`
+    SELECT
+      id,
+      programme_id AS programmeId,
+      valid_from AS validFrom,
+      expires_at AS expiresAt,
+      is_active AS isActive,
+      created_by_user_id AS createdByUserId,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM transport_programme_access_codes
+    WHERE programme_id = ?
+    LIMIT 1
+  `).get(
+    Number(programmeId)
+  ) || null;
+}
+
+
+function getTransportProgrammeAccessCodeSecret(
+  programmeId
+) {
+  return db.prepare(`
+    SELECT
+      id,
+      programme_id AS programmeId,
+      code_hash AS codeHash,
+      code_salt AS codeSalt,
+      valid_from AS validFrom,
+      expires_at AS expiresAt,
+      is_active AS isActive,
+      created_by_user_id AS createdByUserId,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM transport_programme_access_codes
+    WHERE programme_id = ?
+    LIMIT 1
+  `).get(
+    Number(programmeId)
+  ) || null;
+}
+
+
+function configureTransportProgrammeAccessCode(
+  programmeId,
+  payload,
+  actorUserId
+) {
+  const programme =
+    getTransportProgrammeById(
+      programmeId
+    );
+
+  if (!programme) {
+    const error =
+      new Error(
+        'Transport programme not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const code =
+    normaliseTransportProgrammeAccessCode(
+      payload.code
+    );
+
+  if (code.length < 6) {
+    const error =
+      new Error(
+        'Access code must contain at least 6 characters'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (code.length > 64) {
+    const error =
+      new Error(
+        'Access code is too long'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const validFrom =
+    normaliseOptionalDateTime(
+      payload.validFrom,
+      'Access code valid-from time'
+    );
+
+  const expiresAt =
+    normaliseOptionalDateTime(
+      payload.expiresAt,
+      'Access code expiry time'
+    );
+
+  if (
+    validFrom &&
+    expiresAt &&
+    new Date(expiresAt) <=
+      new Date(validFrom)
+  ) {
+    const error =
+      new Error(
+        'Access code expiry must be after its valid-from time'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const isActive =
+    payload.isActive === undefined
+      ? 1
+      : payload.isActive
+        ? 1
+        : 0;
+
+  const existing =
+    getTransportProgrammeAccessCode(
+      programmeId
+    );
+
+  const salt =
+    randomBytes(16)
+      .toString('hex');
+
+  const codeHash =
+    hashTransportProgrammeAccessCode(
+      code,
+      salt
+    );
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      INSERT INTO transport_programme_access_codes (
+        programme_id,
+        code_hash,
+        code_salt,
+        valid_from,
+        expires_at,
+        is_active,
+        created_by_user_id
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+
+      ON CONFLICT(programme_id)
+      DO UPDATE SET
+        code_hash =
+          excluded.code_hash,
+
+        code_salt =
+          excluded.code_salt,
+
+        valid_from =
+          excluded.valid_from,
+
+        expires_at =
+          excluded.expires_at,
+
+        is_active =
+          excluded.is_active,
+
+        updated_at =
+          CURRENT_TIMESTAMP
+    `).run(
+      Number(programmeId),
+      codeHash,
+      salt,
+      validFrom,
+      expiresAt,
+      isActive,
+      actorUserId
+    );
+
+    const configured =
+      getTransportProgrammeAccessCode(
+        programmeId
+      );
+
+    writeAudit({
+      action:
+        existing
+          ? 'UPDATE'
+          : 'CREATE',
+
+      entityType:
+        'transport_programme_access_code',
+
+      entityId:
+        configured.id,
+
+      oldValue:
+        existing
+          ? JSON.stringify(
+              existing
+            )
+          : null,
+
+      newValue:
+        JSON.stringify(
+          configured
+        ),
+
+      source:
+        'nac_admin',
+
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return configured;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function validateTransportProgrammeAccessCode(
+  programmeId,
+  suppliedCode
+) {
+  const configured =
+    getTransportProgrammeAccessCodeSecret(
+      programmeId
+    );
+
+  if (
+    !configured ||
+    Number(
+      configured.isActive
+    ) !== 1
+  ) {
+    return false;
+  }
+
+  const cleanCode =
+    normaliseTransportProgrammeAccessCode(
+      suppliedCode
+    );
+
+  if (!cleanCode) {
+    return false;
+  }
+
+  const timing =
+    db.prepare(`
+      SELECT
+        CASE
+          WHEN
+            (? IS NULL OR ? <= CURRENT_TIMESTAMP)
+            AND
+            (? IS NULL OR ? > CURRENT_TIMESTAMP)
+          THEN 1
+          ELSE 0
+        END AS valid
+    `).get(
+      configured.validFrom,
+      configured.validFrom,
+      configured.expiresAt,
+      configured.expiresAt
+    );
+
+  if (!timing?.valid) {
+    return false;
+  }
+
+  const suppliedHash =
+    hashTransportProgrammeAccessCode(
+      cleanCode,
+      configured.codeSalt
+    );
+
+  return safeHashEqual(
+    configured.codeHash,
+    suppliedHash
+  );
+}
+
+
 function getTransportProgrammeById(
   programmeId
 ) {
@@ -26660,6 +26976,87 @@ const server = http.createServer(async (req, res) => {
         200,
         {
           programme
+        }
+      );
+    }
+
+
+
+    const transportProgrammeAccessCodeMatch =
+      url.pathname.match(
+        /^\/api\/transport-programmes\/(\d+)\/access-code$/
+      );
+
+
+    if (
+      req.method === 'GET' &&
+      transportProgrammeAccessCodeMatch
+    ) {
+      requireAnyRole(
+        req,
+        ['nac_admin']
+      );
+
+      const programmeId =
+        Number(
+          transportProgrammeAccessCodeMatch[1]
+        );
+
+      const programme =
+        getTransportProgrammeById(
+          programmeId
+        );
+
+      if (!programme) {
+        const error =
+          new Error(
+            'Transport programme not found'
+          );
+
+        error.statusCode = 404;
+        throw error;
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          configured:
+            getTransportProgrammeAccessCode(
+              programmeId
+            )
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'PATCH' &&
+      transportProgrammeAccessCodeMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['nac_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const configured =
+        configureTransportProgrammeAccessCode(
+          Number(
+            transportProgrammeAccessCodeMatch[1]
+          ),
+          payload,
+          auth.user.id
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          configured
         }
       );
     }
