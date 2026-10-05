@@ -1661,8 +1661,86 @@ function getStaffTransportIdentityByEmail(
 }
 
 
+function resolveStaffTransportProgrammeAccessCode(
+  suppliedCode
+) {
+  const cleanCode =
+    normaliseTransportProgrammeAccessCode(
+      suppliedCode
+    );
+
+  if (!cleanCode) {
+    return null;
+  }
+
+  const now =
+    new Date().toISOString();
+
+  const candidates =
+    db.prepare(`
+      SELECT DISTINCT
+        tp.id,
+        tp.code,
+        tp.name
+
+      FROM transport_programmes tp
+
+      JOIN transport_programme_windows tpw
+        ON tpw.programme_id =
+          tp.id
+
+      JOIN transport_programme_access_codes tpac
+        ON tpac.programme_id =
+          tp.id
+
+      WHERE tp.status = 'open'
+
+        AND tpw.is_active = 1
+
+        AND tpac.is_active = 1
+
+        AND (
+          tp.request_opens_at IS NULL
+          OR tp.request_opens_at <= ?
+        )
+
+        AND (
+          tp.request_closes_at IS NULL
+          OR tp.request_closes_at >= ?
+        )
+
+      ORDER BY tp.id
+    `).all(
+      now,
+      now
+    );
+
+  const matches =
+    candidates.filter(
+      (programme) =>
+        validateTransportProgrammeAccessCode(
+          programme.id,
+          cleanCode
+        )
+    );
+
+  if (matches.length > 1) {
+    const error =
+      new Error(
+        'This access code is configured for more than one active transport programme'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return matches[0] || null;
+}
+
+
 function ensureStaffTransportIdentityForEmail(
-  email
+  email,
+  accessCode
 ) {
   const cleanEmail =
     normaliseStaffTransportEmail(
@@ -1675,26 +1753,17 @@ function ensureStaffTransportIdentityForEmail(
   ) {
     const error =
       new Error(
-        'Enter a valid work email address'
+        'Enter a valid email address'
       );
 
     error.statusCode = 400;
     throw error;
   }
 
-  if (
-    !staffTransportEmailAllowed(
-      cleanEmail
-    )
-  ) {
-    const error =
-      new Error(
-        'This email address is not eligible for staff transport self-service'
-      );
-
-    error.statusCode = 403;
-    throw error;
-  }
+  const cleanAccessCode =
+    normaliseTransportProgrammeAccessCode(
+      accessCode
+    );
 
   let identity =
     getStaffTransportIdentityByEmail(
@@ -1717,7 +1786,67 @@ function ensureStaffTransportIdentityForEmail(
       throw error;
     }
 
+    /*
+      Returning staff may sign in without entering the
+      campaign code again so they can manage existing
+      transport requests.
+
+      Supplying a current campaign code grants access
+      to that programme if they do not already have it.
+    */
+    if (cleanAccessCode) {
+      const programme =
+        resolveStaffTransportProgrammeAccessCode(
+          cleanAccessCode
+        );
+
+      if (!programme) {
+        const error =
+          new Error(
+            'The UHP Staff Transport access code is invalid or no longer active'
+          );
+
+        error.statusCode = 403;
+        throw error;
+      }
+
+      grantStaffTransportProgrammeAccess(
+        identity.id,
+        programme.id,
+        'campaign_code'
+      );
+    }
+
     return identity;
+  }
+
+  /*
+    A new email address cannot create a staff identity
+    unless it presents a valid current UHP campaign code.
+  */
+  if (!cleanAccessCode) {
+    const error =
+      new Error(
+        'Enter the UHP Staff Transport access code'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const programme =
+    resolveStaffTransportProgrammeAccessCode(
+      cleanAccessCode
+    );
+
+  if (!programme) {
+    const error =
+      new Error(
+        'The UHP Staff Transport access code is invalid or no longer active'
+      );
+
+    error.statusCode = 403;
+    throw error;
   }
 
   const result =
@@ -1739,17 +1868,25 @@ function ensureStaffTransportIdentityForEmail(
       result.lastInsertRowid
     );
 
+  grantStaffTransportProgrammeAccess(
+    identity.id,
+    programme.id,
+    'campaign_code'
+  );
+
   return identity;
 }
 
 
 function requestStaffTransportEmailCode(
   email,
+  accessCode,
   req
 ) {
   const identity =
     ensureStaffTransportIdentityForEmail(
-      email
+      email,
+      accessCode
     );
 
   db.prepare(`
@@ -9241,7 +9378,9 @@ function listTransportRequestOptions(
 }
 
 
-function listStaffTransportRequestOptions() {
+function listStaffTransportRequestOptions(
+  staffIdentityId
+) {
   const now =
     new Date().toISOString();
 
@@ -9287,6 +9426,11 @@ function listStaffTransportRequestOptions() {
         ON tpw.programme_id =
           tp.id
 
+      JOIN transport_staff_programme_access tspa
+        ON tspa.programme_id =
+          tp.id
+        AND tspa.staff_identity_id = ?
+
       WHERE tp.status = 'open'
         AND tpw.is_active = 1
 
@@ -9305,6 +9449,7 @@ function listStaffTransportRequestOptions() {
         tpw.display_order,
         tpw.id
     `).all(
+      Number(staffIdentityId),
       now,
       now
     );
@@ -12778,6 +12923,21 @@ function createStaffTransportRequest(
       );
 
     error.statusCode = 404;
+    throw error;
+  }
+
+  if (
+    !hasStaffTransportProgrammeAccess(
+      staff.id,
+      window.programmeId
+    )
+  ) {
+    const error =
+      new Error(
+        'You do not have access to this staff transport programme'
+      );
+
+    error.statusCode = 403;
     throw error;
   }
 
@@ -26514,6 +26674,7 @@ const server = http.createServer(async (req, res) => {
       const challenge =
         requestStaffTransportEmailCode(
           payload.email,
+          payload.accessCode,
           req
         );
 
@@ -26713,14 +26874,17 @@ const server = http.createServer(async (req, res) => {
       url.pathname ===
         '/api/staff-transport/request-options'
     ) {
-      requireActiveStaffTransportAuth(
-        req
-      );
+      const auth =
+        requireActiveStaffTransportAuth(
+          req
+        );
 
       return sendJson(
         res,
         200,
-        listStaffTransportRequestOptions()
+        listStaffTransportRequestOptions(
+          auth.staff.id
+        )
       );
     }
 

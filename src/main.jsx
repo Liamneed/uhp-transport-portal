@@ -16237,6 +16237,11 @@ function StaffTransportAuth({
   );
 
   const [
+    accessCode,
+    setAccessCode
+  ] = useState('');
+
+  const [
     firstName,
     setFirstName
   ] = useState(
@@ -16315,7 +16320,8 @@ function StaffTransportAuth({
             },
             body:
               JSON.stringify({
-                email
+                email,
+                accessCode
               })
           }
         );
@@ -16630,8 +16636,8 @@ function StaffTransportAuth({
 
           <p className="staff-transport-auth-intro">
             Request special staff transport for
-            yourself using your verified work email
-            and mobile number.
+            yourself using your verified email
+            address and mobile number.
           </p>
 
           {error && (
@@ -16648,12 +16654,12 @@ function StaffTransportAuth({
               }
             >
               <label>
-                Work email address
+                Email address
 
                 <input
                   type="email"
                   autoComplete="email"
-                  placeholder="name@nhs.net"
+                  placeholder="you@example.com"
                   value={email}
                   onChange={(event) =>
                     setEmail(
@@ -16663,6 +16669,28 @@ function StaffTransportAuth({
                   required
                   autoFocus
                 />
+              </label>
+
+              <label>
+                UHP Staff Transport access code
+
+                <input
+                  type="text"
+                  autoComplete="off"
+                  placeholder="Enter access code"
+                  value={accessCode}
+                  onChange={(event) =>
+                    setAccessCode(
+                      event.target.value
+                    )
+                  }
+                />
+
+                <small>
+                  First time using Staff Transport?
+                  Enter the access code provided by UHP.
+                  Returning users can leave this blank.
+                </small>
               </label>
 
               <button
