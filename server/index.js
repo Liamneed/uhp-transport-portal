@@ -4985,6 +4985,235 @@ function validateTransportProgrammeAccessCode(
 }
 
 
+function getStaffTransportProgrammeAccess(
+  staffIdentityId,
+  programmeId
+) {
+  return db.prepare(`
+    SELECT
+      id,
+
+      staff_identity_id
+        AS staffIdentityId,
+
+      programme_id
+        AS programmeId,
+
+      grant_source
+        AS grantSource,
+
+      granted_at
+        AS grantedAt,
+
+      created_at
+        AS createdAt
+
+    FROM transport_staff_programme_access
+
+    WHERE staff_identity_id = ?
+      AND programme_id = ?
+
+    LIMIT 1
+  `).get(
+    Number(staffIdentityId),
+    Number(programmeId)
+  ) || null;
+}
+
+
+function hasStaffTransportProgrammeAccess(
+  staffIdentityId,
+  programmeId
+) {
+  if (
+    !Number.isInteger(
+      Number(staffIdentityId)
+    ) ||
+    Number(staffIdentityId) < 1 ||
+    !Number.isInteger(
+      Number(programmeId)
+    ) ||
+    Number(programmeId) < 1
+  ) {
+    return false;
+  }
+
+  return Boolean(
+    getStaffTransportProgrammeAccess(
+      staffIdentityId,
+      programmeId
+    )
+  );
+}
+
+
+function grantStaffTransportProgrammeAccess(
+  staffIdentityId,
+  programmeId,
+  grantSource = 'campaign_code'
+) {
+  const cleanStaffIdentityId =
+    Number(staffIdentityId);
+
+  const cleanProgrammeId =
+    Number(programmeId);
+
+  const cleanGrantSource =
+    String(
+      grantSource ||
+        'campaign_code'
+    ).trim();
+
+  const allowedGrantSources = [
+    'campaign_code',
+    'admin',
+    'migration'
+  ];
+
+  if (
+    !Number.isInteger(
+      cleanStaffIdentityId
+    ) ||
+    cleanStaffIdentityId < 1
+  ) {
+    const error =
+      new Error(
+        'Valid staff identity is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !Number.isInteger(
+      cleanProgrammeId
+    ) ||
+    cleanProgrammeId < 1
+  ) {
+    const error =
+      new Error(
+        'Valid transport programme is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    !allowedGrantSources.includes(
+      cleanGrantSource
+    )
+  ) {
+    const error =
+      new Error(
+        'Invalid staff programme access source'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const staff =
+    getStaffTransportIdentityById(
+      cleanStaffIdentityId
+    );
+
+  if (!staff) {
+    const error =
+      new Error(
+        'Staff transport identity not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const programme =
+    getTransportProgrammeById(
+      cleanProgrammeId
+    );
+
+  if (!programme) {
+    const error =
+      new Error(
+        'Transport programme not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const existing =
+    getStaffTransportProgrammeAccess(
+      cleanStaffIdentityId,
+      cleanProgrammeId
+    );
+
+  if (existing) {
+    return existing;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    const result =
+      db.prepare(`
+        INSERT INTO transport_staff_programme_access (
+          staff_identity_id,
+          programme_id,
+          grant_source
+        )
+        VALUES (?, ?, ?)
+      `).run(
+        cleanStaffIdentityId,
+        cleanProgrammeId,
+        cleanGrantSource
+      );
+
+    const granted =
+      getStaffTransportProgrammeAccess(
+        cleanStaffIdentityId,
+        cleanProgrammeId
+      );
+
+    writeAudit({
+      action:
+        'CREATE',
+
+      entityType:
+        'transport_staff_programme_access',
+
+      entityId:
+        Number(
+          result.lastInsertRowid
+        ),
+
+      newValue:
+        JSON.stringify(
+          granted
+        ),
+
+      source:
+        'staff_self_service',
+
+      actorUserId:
+        null,
+
+      actorStaffIdentityId:
+        cleanStaffIdentityId
+    });
+
+    db.exec('COMMIT');
+
+    return granted;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
 function getTransportProgrammeById(
   programmeId
 ) {
