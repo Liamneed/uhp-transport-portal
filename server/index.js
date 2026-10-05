@@ -65,6 +65,30 @@ const MAPTILER_GEOCODING_API_KEY =
     ''
   ).trim();
 
+const SENDGRID_API_KEY =
+  String(
+    process.env.SENDGRID_API_KEY ||
+    ''
+  ).trim();
+
+const SENDGRID_FROM_EMAIL =
+  String(
+    process.env.SENDGRID_FROM_EMAIL ||
+    ''
+  ).trim();
+
+const SENDGRID_FROM_NAME =
+  String(
+    process.env.SENDGRID_FROM_NAME ||
+    'UHP Staff Transport'
+  ).trim();
+
+const STAFF_SMS_GATEWAY_URL =
+  String(
+    process.env.STAFF_SMS_GATEWAY_URL ||
+    ''
+  ).trim();
+
 const STAFF_TRANSPORT_ALLOWED_EMAIL_DOMAINS =
   String(
     process.env
@@ -1878,7 +1902,222 @@ function ensureStaffTransportIdentityForEmail(
 }
 
 
-function requestStaffTransportEmailCode(
+function invalidateStaffTransportChallenge(
+  challengeId
+) {
+  db.prepare(`
+    UPDATE transport_staff_login_challenges
+    SET consumed_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND consumed_at IS NULL
+  `).run(
+    challengeId
+  );
+}
+
+
+function staffTransportSmsGatewayMobile(
+  mobile
+) {
+  const value =
+    String(mobile || '').trim();
+
+  if (
+    /^\+447\d{9}$/.test(value)
+  ) {
+    return `0${value.slice(3)}`;
+  }
+
+  return value;
+}
+
+
+async function sendStaffTransportEmailOtp(
+  identity,
+  code
+) {
+  if (
+    !SENDGRID_API_KEY ||
+    !SENDGRID_FROM_EMAIL
+  ) {
+    const error =
+      new Error(
+        'Staff Transport email delivery is not configured'
+      );
+
+    error.statusCode = 503;
+    throw error;
+  }
+
+  let response;
+
+  try {
+    response =
+      await fetch(
+        'https://api.sendgrid.com/v3/mail/send',
+        {
+          method: 'POST',
+
+          headers: {
+            Authorization:
+              `Bearer ${SENDGRID_API_KEY}`,
+
+            'Content-Type':
+              'application/json'
+          },
+
+          body: JSON.stringify({
+            personalizations: [
+              {
+                to: [
+                  {
+                    email:
+                      identity.email
+                  }
+                ]
+              }
+            ],
+
+            from: {
+              email:
+                SENDGRID_FROM_EMAIL,
+
+              name:
+                SENDGRID_FROM_NAME
+            },
+
+            subject:
+              'Your UHP Staff Transport verification code',
+
+            content: [
+              {
+                type: 'text/plain',
+
+                value:
+                  `Your UHP Staff Transport verification code is ${code}. It expires in 10 minutes.`
+              }
+            ]
+          })
+        }
+      );
+  } catch (error) {
+    console.error(
+      'Staff Transport SendGrid request failed:',
+      error.message
+    );
+
+    const deliveryError =
+      new Error(
+        'We could not send your verification email. Please try again.'
+      );
+
+    deliveryError.statusCode = 503;
+    throw deliveryError;
+  }
+
+  if (!response.ok) {
+    console.error(
+      'Staff Transport SendGrid delivery failed:',
+      response.status
+    );
+
+    const error =
+      new Error(
+        'We could not send your verification email. Please try again.'
+      );
+
+    error.statusCode = 503;
+    throw error;
+  }
+}
+
+
+async function sendStaffTransportSmsOtp(
+  identity,
+  code
+) {
+  if (!STAFF_SMS_GATEWAY_URL) {
+    const error =
+      new Error(
+        'Staff Transport SMS delivery is not configured'
+      );
+
+    error.statusCode = 503;
+    throw error;
+  }
+
+  let response;
+
+  try {
+    response =
+      await fetch(
+        STAFF_SMS_GATEWAY_URL,
+        {
+          method: 'POST',
+
+          headers: {
+            'Content-Type':
+              'application/json'
+          },
+
+          body: JSON.stringify({
+            customer_phone:
+              staffTransportSmsGatewayMobile(
+                identity.mobile
+              ),
+
+            message:
+              `Your UHP Staff Transport verification code is ${code}. It expires in 10 minutes.`
+          })
+        }
+      );
+  } catch (error) {
+    console.error(
+      'Staff Transport SMS gateway request failed:',
+      error.message
+    );
+
+    const deliveryError =
+      new Error(
+        'We could not send your verification text message. Please try again.'
+      );
+
+    deliveryError.statusCode = 503;
+    throw deliveryError;
+  }
+
+  let result = null;
+
+  try {
+    result =
+      await response.json();
+  } catch {
+    result = null;
+  }
+
+  if (
+    !response.ok ||
+    !result ||
+    result.status !== 'success'
+  ) {
+    console.error(
+      'Staff Transport SMS gateway delivery failed:',
+      response.status,
+      result?.status || 'invalid_response'
+    );
+
+    const error =
+      new Error(
+        'We could not send your verification text message. Please try again.'
+      );
+
+    error.statusCode = 503;
+    throw error;
+  }
+}
+
+
+async function requestStaffTransportEmailCode(
   email,
   accessCode,
   req
@@ -1955,17 +2194,32 @@ function requestStaffTransportEmailCode(
   );
 
   /*
-    Development delivery only.
-
-    The OTP is deliberately NOT returned
+    The plaintext OTP is never returned
     through the HTTP API.
 
-    Production email delivery will replace
-    this log before public launch.
+    Development keeps the existing console
+    delivery so local testing remains simple.
+
+    Production requires SendGrid delivery.
   */
-  console.log(
-    `[STAFF TRANSPORT DEV] Email OTP for ${identity.email}: ${code} challenge=${challengeId} ip=${getRequestIp(req) || 'unknown'}`
-  );
+  if (!IS_PRODUCTION) {
+    console.log(
+      `[STAFF TRANSPORT DEV] Email OTP for ${identity.email}: ${code} challenge=${challengeId} ip=${getRequestIp(req) || 'unknown'}`
+    );
+  } else {
+    try {
+      await sendStaffTransportEmailOtp(
+        identity,
+        code
+      );
+    } catch (error) {
+      invalidateStaffTransportChallenge(
+        challengeId
+      );
+
+      throw error;
+    }
+  }
 
   return {
     challengeId,
@@ -2427,7 +2681,7 @@ function updateStaffTransportProfile(
 }
 
 
-function requestStaffTransportSmsCode(
+async function requestStaffTransportSmsCode(
   staffIdentityId,
   req
 ) {
@@ -2495,6 +2749,7 @@ function requestStaffTransportSmsCode(
       WHERE staff_identity_id = ?
         AND channel = 'sms'
         AND purpose = 'verify_mobile'
+        AND consumed_at IS NULL
         AND created_at >
           datetime(
             'now',
@@ -2587,14 +2842,30 @@ function requestStaffTransportSmsCode(
   );
 
   /*
-    Development delivery only.
+    Development keeps the existing console
+    delivery.
 
-    Real SMS delivery will replace
-    this log before public launch.
+    Production requires successful delivery
+    through the configured SMS gateway.
   */
-  console.log(
-    `[STAFF TRANSPORT DEV] SMS OTP for ${identity.mobile}: ${code} challenge=${challengeId} ip=${getRequestIp(req) || 'unknown'}`
-  );
+  if (!IS_PRODUCTION) {
+    console.log(
+      `[STAFF TRANSPORT DEV] SMS OTP for ${identity.mobile}: ${code} challenge=${challengeId} ip=${getRequestIp(req) || 'unknown'}`
+    );
+  } else {
+    try {
+      await sendStaffTransportSmsOtp(
+        identity,
+        code
+      );
+    } catch (error) {
+      invalidateStaffTransportChallenge(
+        challengeId
+      );
+
+      throw error;
+    }
+  }
 
   return {
     challengeId,
@@ -26672,7 +26943,7 @@ const server = http.createServer(async (req, res) => {
         await readJson(req);
 
       const challenge =
-        requestStaffTransportEmailCode(
+        await requestStaffTransportEmailCode(
           payload.email,
           payload.accessCode,
           req
@@ -26769,7 +27040,7 @@ const server = http.createServer(async (req, res) => {
         );
 
       const challenge =
-        requestStaffTransportSmsCode(
+        await requestStaffTransportSmsCode(
           auth.staff.id,
           req
         );
