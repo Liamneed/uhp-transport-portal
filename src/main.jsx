@@ -12070,16 +12070,6 @@ function MyBookingsPage({
                   : 'New UHP transport requests will appear here.'}
             </span>
           </div>
-        ) : filteredTransportRequests.length === 0 ? (
-          <div className="empty-bookings">
-            <strong>
-              No matching transport requests
-            </strong>
-
-            <span>
-              Try changing or clearing the filters.
-            </span>
-          </div>
         ) : (
           <div className="table-wrap">
             <table className="bookings-table booking-list-compact">
