@@ -1218,17 +1218,14 @@ function buildExpiredSessionCookie() {
 function requireAutocabWebhookSecret(
   req
 ) {
-  const configuredSecrets = [
-    process.env.AUTOCAB_WEBHOOK_SECRET,
-    process.env.AUTOCAB_WEBHOOK_SECRET_PREVIOUS
-  ]
-    .map(
-      (value) =>
-        String(value || '').trim()
-    )
-    .filter(Boolean);
+  const configuredSecret =
+    String(
+      process.env
+        .AUTOCAB_WEBHOOK_SECRET ||
+      ''
+    ).trim();
 
-  if (configuredSecrets.length === 0) {
+  if (!configuredSecret) {
     const error = new Error(
       'Autocab webhook integration is not configured'
     );
@@ -1251,23 +1248,22 @@ function requireAutocabWebhookSecret(
     throw error;
   }
 
+  const configuredHash =
+    hashSessionToken(
+      configuredSecret
+    );
+
   const providedHash =
     hashSessionToken(
       providedSecret
     );
 
-  const matchesConfiguredSecret =
-    configuredSecrets.some(
-      (configuredSecret) =>
-        safeHashEqual(
-          hashSessionToken(
-            configuredSecret
-          ),
-          providedHash
-        )
-    );
-
-  if (!matchesConfiguredSecret) {
+  if (
+    !safeHashEqual(
+      configuredHash,
+      providedHash
+    )
+  ) {
     const error = new Error(
       'Autocab webhook authentication failed'
     );
