@@ -5035,6 +5035,41 @@ button:disabled {
   padding: 17px 18px;
 }
 
+.overview-kpi-filter {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color .15s ease,
+    background-color .15s ease,
+    box-shadow .15s ease;
+}
+
+.overview-kpi-filter:hover {
+  border-color: #a9bfd2;
+}
+
+.overview-kpi-filter.selected {
+  border-color: #2879b9;
+  box-shadow:
+    inset 0 0 0 1px #2879b9;
+  background: #f4f9fd;
+}
+
+.overview-kpi-filter.attention.selected {
+  border-color: #d69a3a;
+  box-shadow:
+    inset 0 0 0 1px #d69a3a;
+  background: #fffaf0;
+}
+
+.overview-kpi-filter:focus-visible {
+  outline: 3px solid
+    rgba(40, 121, 185, .22);
+  outline-offset: 2px;
+}
+
 .overview-kpi small {
   color: #738496;
   font-size: 10px;

@@ -10820,6 +10820,9 @@ function NacControlPage() {
   const [selectedBooking, setSelectedBooking] =
     useState(null);
 
+  const [controlFilter, setControlFilter] =
+    useState('today');
+
   async function loadControl() {
     setLoading(true);
     setError('');
@@ -11026,6 +11029,81 @@ function NacControlPage() {
     };
   }, [bookings]);
 
+  const controlFilterOptions = {
+    today: {
+      title: "Today's Journeys",
+      description:
+        'UHP journeys scheduled for today in pickup-time order.',
+      emptyTitle: 'No journeys today',
+      emptyText:
+        "Today's UHP bookings will appear here.",
+      bookings: dashboard.todaysBookings,
+      showAttention: false
+    },
+
+    upcoming: {
+      title: 'Upcoming Today',
+      description:
+        'UHP journeys still due to run today.',
+      emptyTitle: 'No upcoming journeys',
+      emptyText:
+        'There are no more UHP journeys due today.',
+      bookings: dashboard.upcomingToday,
+      showAttention: false
+    },
+
+    live: {
+      title: 'Live Journeys',
+      description:
+        'UHP journeys currently in progress.',
+      emptyTitle: 'No live journeys',
+      emptyText:
+        'There are no UHP journeys currently in progress.',
+      bookings: dashboard.live,
+      showAttention: false
+    },
+
+    completed: {
+      title: 'Completed Today',
+      description:
+        'UHP journeys completed today.',
+      emptyTitle: 'No completed journeys',
+      emptyText:
+        'No UHP journeys have completed today.',
+      bookings: dashboard.completedToday,
+      showAttention: false
+    },
+
+    cancelled: {
+      title: 'Cancelled / No Fare',
+      description:
+        'UHP journeys cancelled, no-show or no-fare today.',
+      emptyTitle:
+        'No cancelled or no-fare journeys',
+      emptyText:
+        'There are no cancelled, no-show or no-fare journeys today.',
+      bookings:
+        dashboard.cancelledOrNoFareToday,
+      showAttention: false
+    },
+
+    attention: {
+      title: 'Needs Attention',
+      description:
+        'Statuses that may require operational checking.',
+      emptyTitle: 'Nothing needs attention',
+      emptyText:
+        'There are no operational items requiring attention.',
+      bookings:
+        dashboard.operationalAttention,
+      showAttention: true
+    }
+  };
+
+  const activeControlFilter =
+    controlFilterOptions[controlFilter] ||
+    controlFilterOptions.today;
+
   function controlBookingRow(
     booking,
     showAttention = false
@@ -11139,85 +11217,79 @@ function NacControlPage() {
       )}
 
       <div className="overview-kpi-grid">
-        <div className="card overview-kpi">
-          <small>Today</small>
-
-          <strong>
-            {
-              dashboard
-                .todaysBookings
-                .length
-            }
-          </strong>
-
-          <span>journeys</span>
-        </div>
-
-        <div className="card overview-kpi">
-          <small>Upcoming Today</small>
-
-          <strong>
-            {
-              dashboard
-                .upcomingToday
-                .length
-            }
-          </strong>
-
-          <span>still to run</span>
-        </div>
-
-        <div className="card overview-kpi">
-          <small>Live</small>
-
-          <strong>
-            {dashboard.live.length}
-          </strong>
-
-          <span>in progress</span>
-        </div>
-
-        <div className="card overview-kpi">
-          <small>Completed</small>
-
-          <strong>
-            {
-              dashboard
-                .completedToday
-                .length
-            }
-          </strong>
-
-          <span>today</span>
-        </div>
-
-        <div className="card overview-kpi">
-          <small>Cancelled / No Fare</small>
-
-          <strong>
-            {
+        {[
+          {
+            key: 'today',
+            label: 'Today',
+            count:
+              dashboard.todaysBookings.length,
+            detail: 'journeys'
+          },
+          {
+            key: 'upcoming',
+            label: 'Upcoming Today',
+            count:
+              dashboard.upcomingToday.length,
+            detail: 'still to run'
+          },
+          {
+            key: 'live',
+            label: 'Live',
+            count: dashboard.live.length,
+            detail: 'in progress'
+          },
+          {
+            key: 'completed',
+            label: 'Completed',
+            count:
+              dashboard.completedToday.length,
+            detail: 'today'
+          },
+          {
+            key: 'cancelled',
+            label: 'Cancelled / No Fare',
+            count:
               dashboard
                 .cancelledOrNoFareToday
-                .length
-            }
-          </strong>
-
-          <span>today</span>
-        </div>
-
-        <div className="card overview-kpi attention">
-          <small>Needs Attention</small>
-
-          <strong>
-            {
+                .length,
+            detail: 'today'
+          },
+          {
+            key: 'attention',
+            label: 'Needs Attention',
+            count:
               dashboard
                 .operationalAttention
-                .length
+                .length,
+            detail: 'operational items'
+          }
+        ].map((item) => (
+          <button
+            type="button"
+            key={item.key}
+            className={
+              `card overview-kpi overview-kpi-filter ${
+                item.key === 'attention'
+                  ? 'attention'
+                  : ''
+              } ${
+                controlFilter === item.key
+                  ? 'selected'
+                  : ''
+              }`
             }
-          </strong>
-
-          <span>operational items</span>
-        </div>
+            aria-pressed={
+              controlFilter === item.key
+            }
+            onClick={() =>
+              setControlFilter(item.key)
+            }
+          >
+            <small>{item.label}</small>
+            <strong>{item.count}</strong>
+            <span>{item.detail}</span>
+          </button>
+        ))}
       </div>
 
       <div className="overview-dashboard-grid nac-overview-grid">
@@ -11226,25 +11298,31 @@ function NacControlPage() {
             <div>
               <small>Daily operation</small>
 
-              <h2>Today's Journeys</h2>
+              <h2>
+                {activeControlFilter.title}
+              </h2>
 
               <p>
-                UHP journeys scheduled for
-                today in pickup-time order.
+                {
+                  activeControlFilter
+                    .description
+                }
               </p>
             </div>
           </div>
 
-          {dashboard
-            .todaysBookings
+          {activeControlFilter
+            .bookings
             .length ? (
             <div className="overview-booking-list">
-              {dashboard
-                .todaysBookings
+              {activeControlFilter
+                .bookings
                 .map(
                   (booking) =>
                     controlBookingRow(
-                      booking
+                      booking,
+                      activeControlFilter
+                        .showAttention
                     )
                 )}
             </div>
@@ -11253,12 +11331,17 @@ function NacControlPage() {
               <CalendarDays size={28}/>
 
               <strong>
-                No journeys today
+                {
+                  activeControlFilter
+                    .emptyTitle
+                }
               </strong>
 
               <span>
-                Today's UHP bookings will
-                appear here.
+                {
+                  activeControlFilter
+                    .emptyText
+                }
               </span>
             </div>
           )}
