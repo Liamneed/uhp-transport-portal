@@ -104,24 +104,6 @@ const STAFF_TRANSPORT_REQUEST_CLOSES_AT =
     '2026-12-24T23:59:59.000Z'
   ).trim();
 
-const STAFF_TRANSPORT_WINDOW_NAME =
-  String(
-    process.env.STAFF_TRANSPORT_WINDOW_NAME ||
-    'Christmas Day Staff Transport'
-  ).trim();
-
-const STAFF_TRANSPORT_WINDOW_STARTS_AT =
-  String(
-    process.env.STAFF_TRANSPORT_WINDOW_STARTS_AT ||
-    '2026-12-25T00:00:00.000Z'
-  ).trim();
-
-const STAFF_TRANSPORT_WINDOW_ENDS_AT =
-  String(
-    process.env.STAFF_TRANSPORT_WINDOW_ENDS_AT ||
-    '2026-12-25T23:59:59.000Z'
-  ).trim();
-
 const STAFF_TRANSPORT_ACCESS_CODE =
   String(
     process.env.STAFF_TRANSPORT_ACCESS_CODE ||
@@ -29924,11 +29906,36 @@ function clearChristmasDemoData(
   db.exec('BEGIN');
 
   try {
+    /*
+      Requests that existed before Demo Mode must
+      be restored to their genuine state rather
+      than deleted.
+
+      Only records generated specifically for the
+      demo dataset are removed.
+    */
+    const restored =
+      db.prepare(`
+        UPDATE transport_requests
+        SET
+          is_demo = 0,
+          demo_batch_key = NULL,
+          demo_origin = NULL,
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE is_demo = 1
+          AND demo_batch_key = ?
+          AND demo_origin = 'existing'
+      `).run(
+        CHRISTMAS_DEMO_BATCH_KEY
+      );
+
     const deleted =
       db.prepare(`
         DELETE FROM transport_requests
         WHERE is_demo = 1
           AND demo_batch_key = ?
+          AND demo_origin = 'generated'
       `).run(
         CHRISTMAS_DEMO_BATCH_KEY
       );
@@ -29958,10 +29965,22 @@ function clearChristmasDemoData(
           total:
             Number(
               status.total || 0
+            ),
+          existing:
+            Number(
+              status.existing || 0
+            ),
+          generated:
+            Number(
+              status.generated || 0
             )
         }),
       newValue:
         JSON.stringify({
+          restored:
+            Number(
+              restored.changes || 0
+            ),
           deleted:
             Number(
               deleted.changes || 0
@@ -33309,7 +33328,7 @@ function bootstrapLiveStaffTransportProgramme() {
             'xmas_staff',
 
           publicNotes:
-            'UHP Christmas Day staff transport',
+            'UHP Christmas & New Year staff transport',
 
           internalNotes:
             'Created automatically from live Staff Transport configuration'
@@ -33330,56 +33349,13 @@ function bootstrapLiveStaffTransportProgramme() {
     );
   }
 
-  const existingWindow =
-    db.prepare(`
-      SELECT id
-      FROM transport_programme_windows
-      WHERE programme_id = ?
-        AND name = ?
-        AND starts_at = ?
-        AND ends_at = ?
-      LIMIT 1
-    `).get(
-      programme.id,
-      STAFF_TRANSPORT_WINDOW_NAME,
-      STAFF_TRANSPORT_WINDOW_STARTS_AT,
-      STAFF_TRANSPORT_WINDOW_ENDS_AT
-    );
+  /*
+    Service windows are operational programme data
+    and are managed explicitly in the portal.
 
-  if (!existingWindow) {
-    const window =
-      createTransportProgrammeWindow(
-        programme.id,
-        {
-          name:
-            STAFF_TRANSPORT_WINDOW_NAME,
-
-          startsAt:
-            STAFF_TRANSPORT_WINDOW_STARTS_AT,
-
-          endsAt:
-            STAFF_TRANSPORT_WINDOW_ENDS_AT,
-
-          displayOrder: 1,
-          isActive: true,
-
-          publicNotes:
-            'Christmas Day staff transport',
-
-          internalNotes:
-            'Created automatically from live Staff Transport configuration'
-        },
-        null
-      );
-
-    console.log(
-      `Created Staff Transport window ${window.name}`
-    );
-  } else {
-    console.log(
-      `Staff Transport window already exists: ${STAFF_TRANSPORT_WINDOW_NAME}`
-    );
-  }
+    Do not create a legacy one-day Christmas window
+    automatically at application startup.
+  */
 
   if (STAFF_TRANSPORT_ACCESS_CODE) {
     const existingAccessCode =
