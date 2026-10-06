@@ -10849,6 +10849,15 @@ function getTransportRequestById(
 
       tr.source,
 
+      tr.is_demo
+        AS isDemo,
+
+      tr.demo_batch_key
+        AS demoBatchKey,
+
+      tr.demo_origin
+        AS demoOrigin,
+
       CASE
         WHEN u.id IS NOT NULL
         THEN
@@ -12932,6 +12941,9 @@ function getTransportRequestWindowForSubmission(
       tp.status
         AS programmeStatus,
 
+      tp.code
+        AS programmeCode,
+
       tp.request_opens_at
         AS requestOpensAt,
 
@@ -13071,6 +13083,11 @@ function reviewTransportRequest(
     error.statusCode = 404;
     throw error;
   }
+
+  assertDemoTransportMutationAllowed(
+    request,
+    authUser
+  );
 
   const nextStatus =
     String(
@@ -13276,6 +13293,11 @@ function assertTransportRequestCanBeChanged(
     error.statusCode = 404;
     throw error;
   }
+
+  assertDemoTransportMutationAllowed(
+    request,
+    authUser
+  );
 
   const changeableStatuses = [
     'submitted',
@@ -14284,6 +14306,11 @@ function amendStaffTransportRequest(
       staff.id
     );
 
+  assertDemoStaffTransportMutationAllowed(
+    request,
+    staff
+  );
+
   const amendableStatuses = [
     'submitted',
     'needs_information',
@@ -14778,6 +14805,11 @@ function cancelStaffTransportRequest(
       staff.id
     );
 
+  assertDemoStaffTransportMutationAllowed(
+    request,
+    staff
+  );
+
   const cancellableStatuses = [
     'submitted',
     'needs_information',
@@ -15020,6 +15052,13 @@ function createStaffTransportRequest(
     error.statusCode = 409;
     throw error;
   }
+
+  const demoRequest =
+    isDemoStaffIdentity(
+      staff
+    ) &&
+    window.programmeCode ===
+      'XMAS-2026-27';
 
   const direction =
     String(
@@ -15341,6 +15380,22 @@ function createStaffTransportRequest(
         result.lastInsertRowid
       );
 
+    if (demoRequest) {
+      db.prepare(`
+        UPDATE transport_requests
+        SET
+          is_demo = 1,
+          demo_batch_key = ?,
+          demo_origin = 'generated',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        CHRISTMAS_DEMO_BATCH_KEY,
+        requestId
+      );
+    }
+
     db.prepare(`
       INSERT INTO transport_request_events
       (
@@ -15549,6 +15604,13 @@ function createTransportRequest(
       payload,
       authUser
     );
+
+  const demoRequest =
+    isDemoPortalIdentity(
+      authUser
+    ) &&
+    window.programmeCode ===
+      'XMAS-2026-27';
 
   const passengerName =
     String(
@@ -15805,6 +15867,22 @@ function createTransportRequest(
       Number(
         result.lastInsertRowid
       );
+
+    if (demoRequest) {
+      db.prepare(`
+        UPDATE transport_requests
+        SET
+          is_demo = 1,
+          demo_batch_key = ?,
+          demo_origin = 'generated',
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        CHRISTMAS_DEMO_BATCH_KEY,
+        requestId
+      );
+    }
 
     db.prepare(`
       INSERT INTO transport_request_events
@@ -18505,6 +18583,8 @@ function getBookingById(bookingId) {
       b.autocab_booking_source AS autocabBookingSource,
       b.autocab_booked_at AS autocabBookedAt,
       b.source,
+      b.is_demo AS isDemo,
+      b.demo_batch_key AS demoBatchKey,
       b.operational_status AS operationalStatus,
       b.financial_status AS financialStatus,
       b.requested_pickup_at AS requestedPickupAt,
@@ -23202,6 +23282,9 @@ function createPortalBooking(payload) {
   const reasonCodeId = Number(payload.reasonCodeId);
   const createdByUserId = Number(payload.createdByUserId);
 
+  const isDemo =
+    Number(payload.isDemo) === 1;
+
   if (!requestedPickupAt) {
     const error = new Error('Pickup date and time are required');
     error.statusCode = 400;
@@ -23213,6 +23296,36 @@ function createPortalBooking(payload) {
   if (Number.isNaN(parsedPickup.getTime())) {
     const error = new Error('Pickup date and time are not valid');
     error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    isDemo &&
+    !/\bTEST\b/i.test(
+      passengerName
+    )
+  ) {
+    const error =
+      new Error(
+        'Demo bookings must include TEST in the passenger name'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    isDemo &&
+    parsedPickup.getTime() <
+      Date.now() +
+        (2 * 60 * 60 * 1000)
+  ) {
+    const error =
+      new Error(
+        'Demo bookings must be at least 2 hours in the future'
+      );
+
+    error.statusCode = 409;
     throw error;
   }
 
@@ -23467,6 +23580,19 @@ function createPortalBooking(payload) {
     );
 
     const bookingId = Number(result.lastInsertRowid);
+
+    if (isDemo) {
+      db.prepare(`
+        UPDATE bookings
+        SET
+          is_demo = 1,
+          demo_batch_key = ?
+        WHERE id = ?
+      `).run(
+        PORTAL_DEMO_BATCH_KEY,
+        bookingId
+      );
+    }
 
     const referenceYear = new Date().getFullYear();
 
@@ -26389,6 +26515,15 @@ async function modifyLivePortalBooking(
       payload
     );
 
+  assertDemoBookingAutocabSafety({
+    isDemo:
+      booking.is_demo,
+    passengerName:
+      validated.passengerName,
+    requestedPickupAt:
+      validated.requestedPickupAt
+  });
+
   const bookingDetails =
     getBookingById(
       bookingId
@@ -26858,7 +26993,16 @@ async function submitPortalBookingToAutocab(
         operational_status
           AS operationalStatus,
         autocab_booking_id
-          AS autocabBookingId
+          AS autocabBookingId,
+
+        is_demo
+          AS isDemo,
+
+        passenger_name
+          AS passengerName,
+
+        requested_pickup_at
+          AS requestedPickupAt
       FROM bookings
       WHERE id = ?
     `).get(
@@ -26923,6 +27067,15 @@ async function submitPortalBookingToAutocab(
 
     throw error;
   }
+
+  assertDemoBookingAutocabSafety({
+    isDemo:
+      booking.isDemo,
+    passengerName:
+      booking.passengerName,
+    requestedPickupAt:
+      booking.requestedPickupAt
+  });
 
   const payload =
     buildAutocabBookingPayload(
@@ -28708,6 +28861,156 @@ async function fetchRoadRoute(
 
 const CHRISTMAS_DEMO_BATCH_KEY =
   'christmas-2026-demo-v1';
+
+const PORTAL_DEMO_BATCH_KEY =
+  'portal-demo-v1';
+
+
+function assertDemoBookingAutocabSafety({
+  isDemo,
+  passengerName,
+  requestedPickupAt
+}) {
+  if (Number(isDemo) !== 1) {
+    return;
+  }
+
+  const name =
+    String(
+      passengerName || ''
+    ).trim();
+
+  if (
+    !/\bTEST\b/i.test(
+      name
+    )
+  ) {
+    const error =
+      new Error(
+        'Demo bookings sent to Autocab must include TEST in the passenger name'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const pickup =
+    new Date(
+      String(
+        requestedPickupAt || ''
+      )
+    );
+
+  if (
+    Number.isNaN(
+      pickup.getTime()
+    )
+  ) {
+    const error =
+      new Error(
+        'Demo booking pickup date and time are invalid'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    pickup.getTime() <
+      Date.now() +
+        (2 * 60 * 60 * 1000)
+  ) {
+    const error =
+      new Error(
+        'Demo bookings sent to Autocab must be at least 2 hours in the future'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+}
+
+
+function isDemoPortalIdentity(user) {
+  if (
+    !DEMO_MODE ||
+    !user?.id
+  ) {
+    return false;
+  }
+
+  const row =
+    db.prepare(`
+      SELECT email
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `).get(
+      Number(user.id)
+    );
+
+  return /^demo\..+@uhp-demo\.local$/i.test(
+    String(row?.email || '')
+  );
+}
+
+
+function isDemoStaffIdentity(staff) {
+  if (
+    !DEMO_MODE ||
+    !staff?.id
+  ) {
+    return false;
+  }
+
+  return (
+    String(
+      staff.email || ''
+    )
+      .trim()
+      .toLowerCase() ===
+    'demo.staff-transport@uhp-demo.local'
+  );
+}
+
+
+function assertDemoTransportMutationAllowed(
+  request,
+  authUser
+) {
+  if (
+    isDemoPortalIdentity(authUser) &&
+    Number(request?.isDemo) !== 1
+  ) {
+    const error =
+      new Error(
+        'Demo users cannot change genuine transport requests'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+
+function assertDemoStaffTransportMutationAllowed(
+  request,
+  staff
+) {
+  if (
+    isDemoStaffIdentity(staff) &&
+    Number(request?.isDemo) !== 1
+  ) {
+    const error =
+      new Error(
+        'Demo Staff Transport cannot change genuine requests'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
 
 const CHRISTMAS_DEMO_DATASET_TYPE =
   'christmas_staff_transport';
@@ -32664,6 +32967,15 @@ const server = http.createServer(async (req, res) => {
 
       payload.createdByUserId =
         auth.user.id;
+
+      /*
+        Demo status is controlled entirely by
+        the authenticated server session.
+      */
+      payload.isDemo =
+        auth.isDemo
+          ? 1
+          : 0;
 
       const booking =
         createPortalBooking(payload);
