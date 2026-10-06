@@ -1189,7 +1189,7 @@ function enforceApiAccess(
   return null;
 }
 
-function requestLoginCode(
+async function requestLoginCode(
   email,
   req
 ) {
@@ -1339,17 +1339,38 @@ function requestLoginCode(
   );
 
   /*
-    Development delivery only.
-
-    The OTP is deliberately NOT returned
+    The plaintext OTP is never returned
     through the HTTP API.
 
-    Email delivery will replace this log
-    before deployment.
+    Development keeps console delivery for
+    local testing.
+
+    Production requires SendGrid delivery.
   */
-  console.log(
-    `[AUTH DEV] OTP for ${user.email}: ${code} challenge=${challengeId}`
-  );
+  if (!IS_PRODUCTION) {
+    console.log(
+      `[AUTH DEV] OTP for ${user.email}: ${code} challenge=${challengeId}`
+    );
+  } else {
+    try {
+      await sendPortalLoginEmailOtp(
+        user,
+        code
+      );
+    } catch (error) {
+      db.prepare(`
+        UPDATE auth_login_challenges
+        SET consumed_at =
+          CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND consumed_at IS NULL
+      `).run(
+        challengeId
+      );
+
+      throw error;
+    }
+  }
 
   return {
     challengeId,
@@ -2043,6 +2064,106 @@ function staffTransportSmsGatewayMobile(
   }
 
   return value;
+}
+
+
+async function sendPortalLoginEmailOtp(
+  identity,
+  code
+) {
+  if (
+    !SENDGRID_API_KEY ||
+    !SENDGRID_FROM_EMAIL
+  ) {
+    const error =
+      new Error(
+        'Portal email delivery is not configured'
+      );
+
+    error.statusCode = 503;
+    throw error;
+  }
+
+  let response;
+
+  try {
+    response =
+      await fetch(
+        'https://api.sendgrid.com/v3/mail/send',
+        {
+          method: 'POST',
+
+          headers: {
+            Authorization:
+              `Bearer ${SENDGRID_API_KEY}`,
+
+            'Content-Type':
+              'application/json'
+          },
+
+          body: JSON.stringify({
+            personalizations: [
+              {
+                to: [
+                  {
+                    email:
+                      identity.email
+                  }
+                ]
+              }
+            ],
+
+            from: {
+              email:
+                SENDGRID_FROM_EMAIL,
+
+              name:
+                SENDGRID_FROM_NAME
+            },
+
+            subject:
+              'Your UHP Transport Portal verification code',
+
+            content: [
+              {
+                type: 'text/plain',
+
+                value:
+                  `Your UHP Transport Portal verification code is ${code}. It expires in 10 minutes.`
+              }
+            ]
+          })
+        }
+      );
+  } catch (error) {
+    console.error(
+      'Portal SendGrid request failed:',
+      error.message
+    );
+
+    const deliveryError =
+      new Error(
+        'We could not send your verification email. Please try again.'
+      );
+
+    deliveryError.statusCode = 503;
+    throw deliveryError;
+  }
+
+  if (!response.ok) {
+    console.error(
+      'Portal SendGrid delivery failed:',
+      response.status
+    );
+
+    const error =
+      new Error(
+        'We could not send your verification email. Please try again.'
+      );
+
+    error.statusCode = 503;
+    throw error;
+  }
 }
 
 
@@ -28454,7 +28575,7 @@ const server = http.createServer(async (req, res) => {
       const payload = await readJson(req);
 
       const challenge =
-        requestLoginCode(
+        await requestLoginCode(
           payload.email,
           req
         );
