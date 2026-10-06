@@ -20413,10 +20413,21 @@ function reconcileAutocabBookingEvent({
       'Booking closed as No Fare'
   };
 
+  const completedAtTime =
+    normaliseAutocabScalar(
+      payload?.CompletedAtTime
+    );
+
   db.exec('BEGIN');
 
   try {
-    if (statusChanged) {
+    if (
+      statusChanged ||
+      (
+        nextStatus === 'completed' &&
+        completedAtTime
+      )
+    ) {
       db.prepare(`
         UPDATE bookings
         SET
@@ -20426,6 +20437,7 @@ function reconcileAutocabBookingEvent({
             CASE
               WHEN ? = 'completed'
                 THEN COALESCE(
+                  ?,
                   completed_at,
                   CURRENT_TIMESTAMP
                 )
@@ -20455,6 +20467,7 @@ function reconcileAutocabBookingEvent({
       `).run(
         nextStatus,
         nextStatus,
+        completedAtTime,
         nextStatus,
         nextStatus,
         booking.id
@@ -20591,7 +20604,10 @@ function captureAutocabWebhook(
   const autocabBookingId =
     definition.category === 'booking'
       ? normaliseAutocabScalar(
-          routeSuffix === 'cancelled'
+          (
+            routeSuffix === 'cancelled' ||
+            routeSuffix === 'complete'
+          )
             ? payload?.OriginalBookingId ??
               payload?.Id
             : payload?.Id
