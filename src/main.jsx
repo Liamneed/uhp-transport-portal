@@ -447,6 +447,11 @@ function App() {
     setDemoError
   ] = useState('');
 
+  const [
+    demoDataRevision,
+    setDemoDataRevision
+  ] = useState(0);
+
   const nav =
     useMemo(
       () =>
@@ -726,6 +731,10 @@ function App() {
           demoData:
             data.demoData
         })
+      );
+
+      setDemoDataRevision(
+        value => value + 1
       );
     } catch (error) {
       setDemoError(
@@ -1030,7 +1039,10 @@ function App() {
           </div>
         )}
 
-        <section className="content">
+        <section
+          className="content"
+          key={demoDataRevision}
+        >
           {active === 'admin-dashboard' ? (
             <UhpAdminDashboard/>
           ) : active === 'admin-users' ? (
