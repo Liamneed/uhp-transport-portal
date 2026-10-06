@@ -28705,6 +28705,980 @@ async function fetchRoadRoute(
 }
 
 
+
+const CHRISTMAS_DEMO_BATCH_KEY =
+  'christmas-2026-demo-v1';
+
+const CHRISTMAS_DEMO_DATASET_TYPE =
+  'christmas_staff_transport';
+
+const CHRISTMAS_DEMO_ADOPT_CUTOFF =
+  '2026-10-06 23:59:59';
+
+
+function getChristmasDemoDataStatus() {
+  const batch =
+    db.prepare(`
+      SELECT
+        id,
+        batch_key AS batchKey,
+        dataset_type AS datasetType,
+        status,
+        adopted_existing_count
+          AS adoptedExistingCount,
+        generated_count
+          AS generatedCount,
+        loaded_by_user_id
+          AS loadedByUserId,
+        loaded_at AS loadedAt,
+        cleared_by_user_id
+          AS clearedByUserId,
+        cleared_at AS clearedAt
+      FROM demo_data_batches
+      WHERE batch_key = ?
+      LIMIT 1
+    `).get(
+      CHRISTMAS_DEMO_BATCH_KEY
+    ) || null;
+
+  const counts =
+    db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(
+          CASE
+            WHEN demo_origin = 'existing'
+            THEN 1
+            ELSE 0
+          END
+        ) AS existing,
+        SUM(
+          CASE
+            WHEN demo_origin = 'generated'
+            THEN 1
+            ELSE 0
+          END
+        ) AS generated
+      FROM transport_requests
+      WHERE is_demo = 1
+        AND demo_batch_key = ?
+    `).get(
+      CHRISTMAS_DEMO_BATCH_KEY
+    );
+
+  return {
+    batch,
+    loaded:
+      Number(
+        counts?.total || 0
+      ) > 0,
+    total:
+      Number(
+        counts?.total || 0
+      ),
+    existing:
+      Number(
+        counts?.existing || 0
+      ),
+    generated:
+      Number(
+        counts?.generated || 0
+      )
+  };
+}
+
+
+function loadChristmasDemoData(
+  actorUserId
+) {
+  const programme =
+    db.prepare(`
+      SELECT id
+      FROM transport_programmes
+      WHERE code = 'XMAS-2026-27'
+      LIMIT 1
+    `).get();
+
+  if (!programme) {
+    const error =
+      new Error(
+        'Christmas Staff Transport programme is not configured'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const windows =
+    db.prepare(`
+      SELECT
+        id,
+        name,
+        starts_at AS startsAt,
+        ends_at AS endsAt
+      FROM transport_programme_windows
+      WHERE programme_id = ?
+        AND is_active = 1
+      ORDER BY
+        starts_at,
+        id
+    `).all(
+      programme.id
+    );
+
+  const christmasWindow =
+    windows.find(
+      row =>
+        String(row.name || '')
+          .toLowerCase()
+          .includes('christmas')
+    );
+
+  const newYearWindow =
+    windows.find(
+      row =>
+        String(row.name || '')
+          .toLowerCase()
+          .includes('new year')
+    );
+
+  if (
+    !christmasWindow ||
+    !newYearWindow
+  ) {
+    const error =
+      new Error(
+        'Christmas and New Year service windows are required before loading demo data'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const existingStatus =
+    getChristmasDemoDataStatus();
+
+  if (existingStatus.loaded) {
+    return existingStatus;
+  }
+
+  const demoAdmin =
+    db.prepare(`
+      SELECT u.id
+      FROM users u
+      JOIN user_roles ur
+        ON ur.user_id = u.id
+      JOIN roles r
+        ON r.id = ur.role_id
+      WHERE r.code = 'nac_admin'
+        AND u.email =
+          'demo.nac-admin@uhp-demo.local'
+          COLLATE NOCASE
+      LIMIT 1
+    `).get();
+
+  const demoBudgetHolder =
+    db.prepare(`
+      SELECT u.id
+      FROM users u
+      JOIN user_roles ur
+        ON ur.user_id = u.id
+      JOIN roles r
+        ON r.id = ur.role_id
+      WHERE r.code = 'budget_holder'
+        AND u.email =
+          'demo.budget-holder@uhp-demo.local'
+          COLLATE NOCASE
+      LIMIT 1
+    `).get();
+
+  const demoDepartment =
+    db.prepare(`
+      SELECT id
+      FROM departments
+      WHERE code = 'DEMO'
+      LIMIT 1
+    `).get();
+
+  const demoBudget =
+    db.prepare(`
+      SELECT id
+      FROM budgets
+      WHERE budget_number = 'DEMO-001'
+      LIMIT 1
+    `).get();
+
+  const reasonCode =
+    db.prepare(`
+      SELECT id
+      FROM reason_codes
+      WHERE status = 'active'
+      ORDER BY id
+      LIMIT 1
+    `).get();
+
+  if (
+    !demoAdmin ||
+    !demoBudgetHolder ||
+    !demoDepartment ||
+    !demoBudget ||
+    !reasonCode
+  ) {
+    const error =
+      new Error(
+        'Demo reference data is not configured'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const rows = [
+    {
+      windowId:
+        christmasWindow.id,
+      name:
+        'Sarah Mitchell',
+      mobile:
+        '07700900101',
+      email:
+        'sarah.mitchell@example.invalid',
+      direction:
+        'to_work',
+      shift:
+        '2026-12-24T20:00:00',
+      pickup:
+        'Mutley Plain, Plymouth',
+      pickupPostcode:
+        'PL4 6LF',
+      destination:
+        'Derriford Hospital, Plymouth',
+      destinationPostcode:
+        'PL6 8DH',
+      status:
+        'submitted',
+      source:
+        'nac_assisted',
+      notes:
+        'Christmas Eve evening shift.'
+    },
+    {
+      windowId:
+        christmasWindow.id,
+      name:
+        'Daniel Brooks',
+      mobile:
+        '07700900102',
+      email:
+        'daniel.brooks@example.invalid',
+      direction:
+        'to_work',
+      shift:
+        '2026-12-25T07:00:00',
+      pickup:
+        'Peverell, Plymouth',
+      pickupPostcode:
+        'PL3 4LA',
+      destination:
+        'Derriford Hospital, Plymouth',
+      destinationPostcode:
+        'PL6 8DH',
+      status:
+        'ready_for_planning',
+      source:
+        'nac_phone',
+      notes:
+        'Early Christmas Day shift.'
+    },
+    {
+      windowId:
+        christmasWindow.id,
+      name:
+        'Emma Collins',
+      mobile:
+        '07700900103',
+      email:
+        'emma.collins@example.invalid',
+      direction:
+        'from_work',
+      shift:
+        '2026-12-25T08:00:00',
+      pickup:
+        'Derriford Hospital, Plymouth',
+      pickupPostcode:
+        'PL6 8DH',
+      destination:
+        'St Budeaux, Plymouth',
+      destinationPostcode:
+        'PL5 1RQ',
+      status:
+        'planned',
+      source:
+        'uhp_delegated',
+      notes:
+        'Night shift finishing Christmas morning.'
+    },
+    {
+      windowId:
+        christmasWindow.id,
+      name:
+        'Michael Harris',
+      mobile:
+        '07700900104',
+      email:
+        'michael.harris@example.invalid',
+      direction:
+        'to_work',
+      shift:
+        '2026-12-25T12:00:00',
+      pickup:
+        'Plymstock, Plymouth',
+      pickupPostcode:
+        'PL9 7JS',
+      destination:
+        'Derriford Hospital, Plymouth',
+      destinationPostcode:
+        'PL6 8DH',
+      status:
+        'awaiting_confirmation',
+      source:
+        'nac_email',
+      notes:
+        'Christmas Day midday shift.'
+    },
+    {
+      windowId:
+        christmasWindow.id,
+      name:
+        'Lucy Evans',
+      mobile:
+        '07700900105',
+      email:
+        'lucy.evans@example.invalid',
+      direction:
+        'from_work',
+      shift:
+        '2026-12-25T20:00:00',
+      pickup:
+        'Derriford Hospital, Plymouth',
+      pickupPostcode:
+        'PL6 8DH',
+      destination:
+        'Crownhill, Plymouth',
+      destinationPostcode:
+        'PL5 3QW',
+      status:
+        'confirmed',
+      source:
+        'nac_assisted',
+      notes:
+        'Christmas Day late shift finish.'
+    },
+    {
+      windowId:
+        christmasWindow.id,
+      name:
+        'Oliver Reed',
+      mobile:
+        '07700900106',
+      email:
+        'oliver.reed@example.invalid',
+      direction:
+        'to_work',
+      shift:
+        '2026-12-26T08:00:00',
+      pickup:
+        'Devonport, Plymouth',
+      pickupPostcode:
+        'PL1 4JU',
+      destination:
+        'Derriford Hospital, Plymouth',
+      destinationPostcode:
+        'PL6 8DH',
+      status:
+        'locked',
+      source:
+        'nac_phone',
+      notes:
+        'Boxing Day morning shift.'
+    },
+    {
+      windowId:
+        christmasWindow.id,
+      name:
+        'Sophie Turner',
+      mobile:
+        '07700900107',
+      email:
+        'sophie.turner@example.invalid',
+      direction:
+        'from_work',
+      shift:
+        '2026-12-26T20:00:00',
+      pickup:
+        'Derriford Hospital, Plymouth',
+      pickupPostcode:
+        'PL6 8DH',
+      destination:
+        'Plympton, Plymouth',
+      destinationPostcode:
+        'PL7 2AU',
+      status:
+        'change_requested',
+      source:
+        'uhp_delegated',
+      notes:
+        'Passenger has requested an amended destination.'
+    },
+    {
+      windowId:
+        christmasWindow.id,
+      name:
+        'James Foster',
+      mobile:
+        '07700900108',
+      email:
+        'james.foster@example.invalid',
+      direction:
+        'to_work',
+      shift:
+        '2026-12-27T05:00:00',
+      pickup:
+        'Keyham, Plymouth',
+      pickupPostcode:
+        'PL2 1QT',
+      destination:
+        'Derriford Hospital, Plymouth',
+      destinationPostcode:
+        'PL6 8DH',
+      status:
+        'not_accommodated',
+      source:
+        'nac_email',
+      notes:
+        'Example capacity exception for demonstration.'
+    },
+    {
+      windowId:
+        newYearWindow.id,
+      name:
+        'Rachel Morgan',
+      mobile:
+        '07700900201',
+      email:
+        'rachel.morgan@example.invalid',
+      direction:
+        'to_work',
+      shift:
+        '2026-12-31T20:00:00',
+      pickup:
+        'Mannamead, Plymouth',
+      pickupPostcode:
+        'PL3 5QL',
+      destination:
+        'Derriford Hospital, Plymouth',
+      destinationPostcode:
+        'PL6 8DH',
+      status:
+        'ready_for_planning',
+      source:
+        'nac_assisted',
+      notes:
+        'New Year Eve evening shift.'
+    },
+    {
+      windowId:
+        newYearWindow.id,
+      name:
+        'Thomas Wright',
+      mobile:
+        '07700900202',
+      email:
+        'thomas.wright@example.invalid',
+      direction:
+        'from_work',
+      shift:
+        '2027-01-01T01:00:00',
+      pickup:
+        'Derriford Hospital, Plymouth',
+      pickupPostcode:
+        'PL6 8DH',
+      destination:
+        'Stonehouse, Plymouth',
+      destinationPostcode:
+        'PL1 3RP',
+      status:
+        'planned',
+      source:
+        'nac_phone',
+      notes:
+        'New Year overnight return journey.'
+    },
+    {
+      windowId:
+        newYearWindow.id,
+      name:
+        'Rebecca Hall',
+      mobile:
+        '07700900203',
+      email:
+        'rebecca.hall@example.invalid',
+      direction:
+        'to_work',
+      shift:
+        '2027-01-01T07:30:00',
+      pickup:
+        'Southway, Plymouth',
+      pickupPostcode:
+        'PL6 6QR',
+      destination:
+        'Derriford Hospital, Plymouth',
+      destinationPostcode:
+        'PL6 8DH',
+      status:
+        'awaiting_confirmation',
+      source:
+        'uhp_delegated',
+      notes:
+        'New Year morning shift.'
+    },
+    {
+      windowId:
+        newYearWindow.id,
+      name:
+        'Andrew Price',
+      mobile:
+        '07700900204',
+      email:
+        'andrew.price@example.invalid',
+      direction:
+        'from_work',
+      shift:
+        '2027-01-01T16:00:00',
+      pickup:
+        'Derriford Hospital, Plymouth',
+      pickupPostcode:
+        'PL6 8DH',
+      destination:
+        'Estover, Plymouth',
+      destinationPostcode:
+        'PL6 7PS',
+      status:
+        'confirmed',
+      source:
+        'nac_email',
+      notes:
+        'New Year Day afternoon return.'
+    },
+    {
+      windowId:
+        newYearWindow.id,
+      name:
+        'Natalie Green',
+      mobile:
+        '07700900205',
+      email:
+        'natalie.green@example.invalid',
+      direction:
+        'to_work',
+      shift:
+        '2027-01-01T20:00:00',
+      pickup:
+        'Eggbuckland, Plymouth',
+      pickupPostcode:
+        'PL6 5RJ',
+      destination:
+        'Derriford Hospital, Plymouth',
+      destinationPostcode:
+        'PL6 8DH',
+      status:
+        'locked',
+      source:
+        'nac_assisted',
+      notes:
+        'New Year Day late shift.'
+    },
+    {
+      windowId:
+        newYearWindow.id,
+      name:
+        'Christopher Young',
+      mobile:
+        '07700900206',
+      email:
+        'christopher.young@example.invalid',
+      direction:
+        'from_work',
+      shift:
+        '2027-01-02T04:30:00',
+      pickup:
+        'Derriford Hospital, Plymouth',
+      pickupPostcode:
+        'PL6 8DH',
+      destination:
+        'North Prospect, Plymouth',
+      destinationPostcode:
+        'PL2 3BL',
+      status:
+        'cancelled',
+      source:
+        'nac_phone',
+      notes:
+        'Cancelled journey example.'
+    }
+  ];
+
+  db.exec('BEGIN');
+
+  try {
+    /*
+      Adopt only the pre-existing requests we have
+      explicitly classified as demo/test data.
+
+      The cutoff prevents later genuine Christmas
+      requests from ever being swept into Demo Data.
+    */
+    const adopted =
+      db.prepare(`
+        UPDATE transport_requests
+        SET
+          is_demo = 1,
+          demo_batch_key = ?,
+          demo_origin = 'existing',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE programme_window_id IN (
+          SELECT tpw.id
+          FROM transport_programme_windows tpw
+          JOIN transport_programmes tp
+            ON tp.id =
+              tpw.programme_id
+          WHERE tp.code =
+            'XMAS-2026-27'
+        )
+          AND is_demo = 0
+          AND created_at <= ?
+      `).run(
+        CHRISTMAS_DEMO_BATCH_KEY,
+        CHRISTMAS_DEMO_ADOPT_CUTOFF
+      );
+
+    const insertRequest =
+      db.prepare(`
+        INSERT INTO transport_requests (
+          programme_window_id,
+
+          requested_by_user_id,
+          requested_by_staff_identity_id,
+          entered_by_user_id,
+          source,
+
+          passenger_name,
+          passenger_mobile,
+          passenger_email,
+
+          direction,
+          shift_time,
+
+          pickup_address,
+          pickup_postcode,
+
+          destination_address,
+          destination_postcode,
+
+          passenger_count,
+          passenger_notes,
+          internal_notes,
+
+          status,
+
+          confirmed_at,
+          cancelled_at,
+
+          department_id,
+          budget_id,
+          reason_code_id,
+          budget_holder_user_id,
+
+          is_demo,
+          demo_batch_key,
+          demo_origin
+        )
+        VALUES (
+          ?,
+
+          NULL,
+          NULL,
+          ?,
+          ?,
+
+          ?,
+          ?,
+          ?,
+
+          ?,
+          ?,
+
+          ?,
+          ?,
+
+          ?,
+          ?,
+
+          1,
+          ?,
+          'Generated Demo Mode Christmas request',
+
+          ?,
+
+          CASE
+            WHEN ? IN (
+              'confirmed',
+              'locked',
+              'booked'
+            )
+            THEN CURRENT_TIMESTAMP
+            ELSE NULL
+          END,
+
+          CASE
+            WHEN ? = 'cancelled'
+            THEN CURRENT_TIMESTAMP
+            ELSE NULL
+          END,
+
+          ?,
+          ?,
+          ?,
+          ?,
+
+          1,
+          ?,
+          'generated'
+        )
+      `);
+
+    const insertEvent =
+      db.prepare(`
+        INSERT INTO transport_request_events (
+          transport_request_id,
+          event_type,
+          actor_user_id,
+          old_status,
+          new_status,
+          notes
+        )
+        VALUES (
+          ?,
+          ?,
+          ?,
+          NULL,
+          ?,
+          'Demo Mode generated request'
+        )
+      `);
+
+    let generatedCount = 0;
+
+    for (const row of rows) {
+      const created =
+        insertRequest.run(
+          row.windowId,
+
+          demoAdmin.id,
+          row.source,
+
+          row.name,
+          row.mobile,
+          row.email,
+
+          row.direction,
+          row.shift,
+
+          row.pickup,
+          row.pickupPostcode,
+
+          row.destination,
+          row.destinationPostcode,
+
+          row.notes,
+          row.status,
+
+          row.status,
+          row.status,
+
+          demoDepartment.id,
+          demoBudget.id,
+          reasonCode.id,
+          demoBudgetHolder.id,
+
+          CHRISTMAS_DEMO_BATCH_KEY
+        );
+
+      const requestId =
+        Number(
+          created.lastInsertRowid
+        );
+
+      insertEvent.run(
+        requestId,
+        row.status,
+        demoAdmin.id,
+        row.status
+      );
+
+      generatedCount += 1;
+    }
+
+    db.prepare(`
+      INSERT INTO demo_data_batches (
+        batch_key,
+        dataset_type,
+        status,
+        adopted_existing_count,
+        generated_count,
+        loaded_by_user_id,
+        loaded_at,
+        cleared_by_user_id,
+        cleared_at
+      )
+      VALUES (
+        ?,
+        ?,
+        'loaded',
+        ?,
+        ?,
+        ?,
+        CURRENT_TIMESTAMP,
+        NULL,
+        NULL
+      )
+      ON CONFLICT(batch_key)
+      DO UPDATE SET
+        status = 'loaded',
+        adopted_existing_count =
+          excluded.adopted_existing_count,
+        generated_count =
+          excluded.generated_count,
+        loaded_by_user_id =
+          excluded.loaded_by_user_id,
+        loaded_at =
+          CURRENT_TIMESTAMP,
+        cleared_by_user_id = NULL,
+        cleared_at = NULL
+    `).run(
+      CHRISTMAS_DEMO_BATCH_KEY,
+      CHRISTMAS_DEMO_DATASET_TYPE,
+      Number(
+        adopted.changes || 0
+      ),
+      generatedCount,
+      actorUserId
+    );
+
+    writeAudit({
+      action:
+        'DEMO_DATA_LOAD',
+      entityType:
+        'demo_data_batch',
+      entityId:
+        CHRISTMAS_DEMO_BATCH_KEY,
+      oldValue:
+        null,
+      newValue:
+        JSON.stringify({
+          adoptedExisting:
+            Number(
+              adopted.changes || 0
+            ),
+          generated:
+            generatedCount
+        }),
+      source:
+        'demo_mode',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return getChristmasDemoDataStatus();
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function clearChristmasDemoData(
+  actorUserId
+) {
+  const status =
+    getChristmasDemoDataStatus();
+
+  if (!status.loaded) {
+    return status;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    const deleted =
+      db.prepare(`
+        DELETE FROM transport_requests
+        WHERE is_demo = 1
+          AND demo_batch_key = ?
+      `).run(
+        CHRISTMAS_DEMO_BATCH_KEY
+      );
+
+    db.prepare(`
+      UPDATE demo_data_batches
+      SET
+        status = 'cleared',
+        cleared_by_user_id = ?,
+        cleared_at =
+          CURRENT_TIMESTAMP
+      WHERE batch_key = ?
+    `).run(
+      actorUserId,
+      CHRISTMAS_DEMO_BATCH_KEY
+    );
+
+    writeAudit({
+      action:
+        'DEMO_DATA_CLEAR',
+      entityType:
+        'demo_data_batch',
+      entityId:
+        CHRISTMAS_DEMO_BATCH_KEY,
+      oldValue:
+        JSON.stringify({
+          total:
+            Number(
+              status.total || 0
+            )
+        }),
+      newValue:
+        JSON.stringify({
+          deleted:
+            Number(
+              deleted.changes || 0
+            )
+        }),
+      source:
+        'demo_mode',
+      actorUserId
+    });
+
+    db.exec('COMMIT');
+
+    return getChristmasDemoDataStatus();
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(
@@ -29293,7 +30267,81 @@ const server = http.createServer(async (req, res) => {
           currentUser:
             auth.user,
           roles: placeholders,
-          staffTransport: true
+          staffTransport: true,
+          demoData:
+            getChristmasDemoDataStatus()
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/demo/data/christmas/load'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      if (
+        !realUserCanUseDemoMode(
+          auth.realUser
+        )
+      ) {
+        const error =
+          new Error(
+            'Demo Mode is not available'
+          );
+
+        error.statusCode = 403;
+        throw error;
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          ok: true,
+          demoData:
+            loadChristmasDemoData(
+              auth.realUser.id
+            )
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/demo/data/christmas/clear'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      if (
+        !realUserCanUseDemoMode(
+          auth.realUser
+        )
+      ) {
+        const error =
+          new Error(
+            'Demo Mode is not available'
+          );
+
+        error.statusCode = 403;
+        throw error;
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          ok: true,
+          demoData:
+            clearChristmasDemoData(
+              auth.realUser.id
+            )
         }
       );
     }

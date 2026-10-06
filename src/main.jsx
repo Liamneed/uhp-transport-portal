@@ -680,6 +680,64 @@ function App() {
     }
   }
 
+  async function changeChristmasDemoData(
+    action
+  ) {
+    if (demoBusy) {
+      return;
+    }
+
+    if (
+      action === 'clear' &&
+      !window.confirm(
+        'Clear all Christmas Demo Data? This removes only records explicitly marked as demo.'
+      )
+    ) {
+      return;
+    }
+
+    setDemoBusy(true);
+    setDemoError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/demo/data/christmas/${action}`,
+          {
+            method: 'POST'
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to update Demo Data'
+        );
+      }
+
+      setDemoOptions(
+        current => ({
+          ...(current || {}),
+          demoData:
+            data.demoData
+        })
+      );
+    } catch (error) {
+      setDemoError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to update Demo Data'
+      );
+    } finally {
+      setDemoBusy(false);
+    }
+  }
+
   async function logout() {
     try {
       await apiFetch(
@@ -875,6 +933,51 @@ function App() {
             </button>
           </div>
         </header>
+
+        {demoOptions?.enabled && (
+          <div className="demo-data-toolbar">
+            <div>
+              <strong>
+                Christmas Demo Data
+              </strong>
+
+              <span>
+                {demoOptions.demoData?.loaded
+                  ? `${demoOptions.demoData.total} demo requests loaded`
+                  : 'No demo requests loaded'}
+              </span>
+            </div>
+
+            <div className="demo-data-toolbar-actions">
+              {!demoOptions.demoData?.loaded ? (
+                <button
+                  type="button"
+                  disabled={demoBusy}
+                  onClick={() =>
+                    changeChristmasDemoData(
+                      'load'
+                    )
+                  }
+                >
+                  Load Demo Data
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={demoBusy}
+                  onClick={() =>
+                    changeChristmasDemoData(
+                      'clear'
+                    )
+                  }
+                >
+                  Clear Demo Data
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {demoOptions?.active && (
           <div className="demo-view-banner">
