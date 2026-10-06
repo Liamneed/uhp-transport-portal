@@ -12,6 +12,11 @@ RUN npm ci
 
 COPY . .
 
+# Public frontend build configuration only.
+# Production secrets must remain runtime environment variables.
+ARG VITE_MAP_TILE_ATTRIBUTION
+ARG VITE_MAP_TILE_URL
+
 RUN npm run build
 
 ENV NODE_ENV=production
