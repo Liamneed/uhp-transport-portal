@@ -9192,3 +9192,143 @@ button:disabled {
   color: #246b48;
   font-size: 10px;
 }
+
+/* Demo Mode */
+
+.demo-view-control {
+  display: grid;
+  gap: 3px;
+  min-width: 180px;
+}
+
+.demo-view-control > span {
+  color: #8b6b22;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.demo-view-control select {
+  min-height: 34px;
+  border: 1px solid #e1bf72;
+  border-radius: 8px;
+  padding: 6px 30px 6px 9px;
+  background: #fffaf0;
+  color: #674b11;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.demo-view-control select:disabled {
+  opacity: .65;
+  cursor: wait;
+}
+
+.demo-view-banner {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 9px 28px;
+  border-bottom: 1px solid #e6c46f;
+  background: #fff7df;
+  color: #664a10;
+}
+
+.demo-view-banner > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.demo-view-banner strong {
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+
+.demo-view-banner span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.demo-view-banner small {
+  color: #8a713c;
+  font-size: 11px;
+}
+
+.demo-view-banner button,
+.staff-transport-demo-return {
+  border: 1px solid #d7ad50;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #fff;
+  color: #694d12;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.demo-view-banner button:hover,
+.staff-transport-demo-return:hover {
+  background: #fffaf0;
+}
+
+.demo-view-error {
+  padding: 8px 28px;
+  border-bottom: 1px solid #efcccc;
+  background: #fff4f4;
+  color: #a33d3d;
+  font-size: 12px;
+}
+
+.staff-transport-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.staff-transport-demo-return {
+  border-color: rgba(255, 255, 255, .4);
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+}
+
+.staff-transport-demo-return:hover {
+  background: rgba(255, 255, 255, .2);
+}
+
+@media (max-width: 900px) {
+  .demo-view-control {
+    min-width: 145px;
+  }
+
+  .demo-view-banner {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+@media (max-width: 700px) {
+  .demo-view-control {
+    min-width: 130px;
+  }
+
+  .demo-view-control > span {
+    display: none;
+  }
+
+  .demo-view-banner {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .staff-transport-header-actions {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+}

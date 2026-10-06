@@ -432,6 +432,21 @@ function App() {
   const [active, setActive] =
     useState('');
 
+  const [
+    demoOptions,
+    setDemoOptions
+  ] = useState(null);
+
+  const [
+    demoBusy,
+    setDemoBusy
+  ] = useState(false);
+
+  const [
+    demoError,
+    setDemoError
+  ] = useState('');
+
   const nav =
     useMemo(
       () =>
@@ -510,6 +525,161 @@ function App() {
     }
   }, [currentUser, active]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDemoOptions() {
+      if (!currentUser) {
+        setDemoOptions(null);
+        return;
+      }
+
+      try {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/demo/options`
+          );
+
+        if (!response.ok) {
+          if (!cancelled) {
+            setDemoOptions(null);
+          }
+
+          return;
+        }
+
+        const data =
+          await response.json();
+
+        if (!cancelled) {
+          setDemoOptions(data);
+        }
+      } catch {
+        if (!cancelled) {
+          setDemoOptions(null);
+        }
+      }
+    }
+
+    loadDemoOptions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
+
+  async function changeDemoView(
+    value
+  ) {
+    if (
+      !value ||
+      demoBusy
+    ) {
+      return;
+    }
+
+    setDemoBusy(true);
+    setDemoError('');
+
+    try {
+      if (
+        value ===
+          '__staff_transport__'
+      ) {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/demo/staff-transport`,
+            {
+              method: 'POST'
+            }
+          );
+
+        const data =
+          await response
+            .json()
+            .catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              'Unable to open Staff Transport demo'
+          );
+        }
+
+        window.location.assign(
+          data.redirect ||
+            '/staff-transport?demo=1'
+        );
+
+        return;
+      }
+
+      const reset =
+        value === '__real__';
+
+      const response =
+        await apiFetch(
+          reset
+            ? `${API_BASE}/api/demo/reset`
+            : `${API_BASE}/api/demo/switch`,
+          {
+            method: 'POST',
+            headers:
+              reset
+                ? undefined
+                : {
+                    'Content-Type':
+                      'application/json'
+                  },
+            body:
+              reset
+                ? undefined
+                : JSON.stringify({
+                    roleCode:
+                      value
+                  })
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to change demo view'
+        );
+      }
+
+      setCurrentUser(
+        data.user
+      );
+
+      setActive('');
+
+      const optionsResponse =
+        await apiFetch(
+          `${API_BASE}/api/demo/options`
+        );
+
+      if (optionsResponse.ok) {
+        setDemoOptions(
+          await optionsResponse.json()
+        );
+      }
+    } catch (error) {
+      setDemoError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to change demo view'
+      );
+    } finally {
+      setDemoBusy(false);
+    }
+  }
+
   async function logout() {
     try {
       await apiFetch(
@@ -520,6 +690,7 @@ function App() {
       );
     } finally {
       setCurrentUser(null);
+      setDemoOptions(null);
       setActive('');
     }
   }
@@ -618,6 +789,61 @@ function App() {
           )}
 
           <div className="top-actions">
+            {demoOptions?.enabled && (
+              <label className="demo-view-control">
+                <span>View as</span>
+
+                <select
+                  value={
+                    demoOptions.active
+                      ? (
+                          currentUser
+                            ?.roles?.[0]
+                            ?.code ||
+                          '__real__'
+                        )
+                      : '__real__'
+                  }
+                  disabled={demoBusy}
+                  onChange={(event) =>
+                    changeDemoView(
+                      event.target.value
+                    )
+                  }
+                >
+                  <option value="__real__">
+                    My normal role
+                  </option>
+
+                  {(
+                    demoOptions.roles ||
+                    []
+                  ).map(
+                    (role) => (
+                      <option
+                        key={
+                          role.roleCode
+                        }
+                        value={
+                          role.roleCode
+                        }
+                      >
+                        {role.roleName}
+                      </option>
+                    )
+                  )}
+
+                  {demoOptions.staffTransport && (
+                    <option
+                      value="__staff_transport__"
+                    >
+                      Staff Transport Portal
+                    </option>
+                  )}
+                </select>
+              </label>
+            )}
+
             <Bell size={20}/>
 
             <div className="avatar">
@@ -649,6 +875,57 @@ function App() {
             </button>
           </div>
         </header>
+
+        {demoOptions?.active && (
+          <div className="demo-view-banner">
+            <div>
+              <strong>
+                DEMO VIEW
+              </strong>
+
+              <span>
+                Viewing as{' '}
+                {roleSummary(
+                  currentUser
+                )}
+              </span>
+
+              {demoOptions.realUser && (
+                <small>
+                  Signed in as{' '}
+                  {
+                    demoOptions
+                      .realUser
+                      .firstName
+                  }{' '}
+                  {
+                    demoOptions
+                      .realUser
+                      .lastName
+                  }
+                </small>
+              )}
+            </div>
+
+            <button
+              type="button"
+              disabled={demoBusy}
+              onClick={() =>
+                changeDemoView(
+                  '__real__'
+                )
+              }
+            >
+              Return to my role
+            </button>
+          </div>
+        )}
+
+        {demoError && (
+          <div className="demo-view-error">
+            {demoError}
+          </div>
+        )}
 
         <section className="content">
           {active === 'admin-dashboard' ? (
@@ -20490,7 +20767,9 @@ function StaffTransportRequestDetail({
 
 function StaffTransportPortal({
   staff,
-  onLogout
+  onLogout,
+  demoMode = false,
+  onReturnToPortal = null
 }) {
   const [
     view,
@@ -21407,13 +21686,25 @@ function StaffTransportPortal({
           </strong>
         </div>
 
-        <button
-          type="button"
-          className="staff-transport-signout"
-          onClick={onLogout}
-        >
-          Sign out
-        </button>
+        <div className="staff-transport-header-actions">
+          {demoMode && (
+            <button
+              type="button"
+              className="staff-transport-demo-return"
+              onClick={onReturnToPortal}
+            >
+              Return to Portal Demo
+            </button>
+          )}
+
+          <button
+            type="button"
+            className="staff-transport-signout"
+            onClick={onLogout}
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
       <main className="staff-transport-main">
@@ -22264,6 +22555,11 @@ function StaffTransportPortal({
 
 
 function StaffTransportApp() {
+  const staffDemoMode =
+    new URLSearchParams(
+      window.location.search
+    ).get('demo') === '1';
+
   const [
     checkingSession,
     setCheckingSession
@@ -22334,6 +22630,19 @@ function StaffTransportApp() {
     }
   }
 
+  async function returnToPortalDemo() {
+    try {
+      await apiFetch(
+        `${API_BASE}/api/staff-transport/auth/logout`,
+        {
+          method: 'POST'
+        }
+      );
+    } finally {
+      window.location.assign('/');
+    }
+  }
+
   if (checkingSession) {
     return (
       <div className="staff-transport-auth-shell">
@@ -22367,6 +22676,10 @@ function StaffTransportApp() {
     <StaffTransportPortal
       staff={staff}
       onLogout={logout}
+      demoMode={staffDemoMode}
+      onReturnToPortal={
+        returnToPortalDemo
+      }
     />
   );
 }

@@ -32,6 +32,13 @@ const NODE_ENV =
 const IS_PRODUCTION =
   NODE_ENV === 'production';
 
+const DEMO_MODE =
+  String(
+    process.env.DEMO_MODE || ''
+  )
+    .trim()
+    .toLowerCase() === 'true';
+
 const DATA_DIR =
   process.env.DATA_DIR
     ? path.resolve(process.env.DATA_DIR)
@@ -558,6 +565,504 @@ function seedReferenceData() {
   }
 }
 
+const DEMO_ROLE_CODES = [
+  'booker',
+  'budget_holder',
+  'department_manager',
+  'finance',
+  'uhp_admin',
+  'nac_controller',
+  'nac_admin',
+  'special_transport_ops'
+];
+
+
+function realUserCanUseDemoMode(user) {
+  if (!DEMO_MODE || !user) {
+    return false;
+  }
+
+  return userHasAnyRole(
+    user,
+    [
+      'uhp_admin',
+      'nac_admin'
+    ]
+  );
+}
+
+
+function seedDemoModeUsers() {
+  if (!DEMO_MODE) {
+    return;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      INSERT INTO departments (
+        code,
+        name,
+        status,
+        created_at,
+        updated_at
+      )
+      SELECT
+        'DEMO',
+        'Demo Department',
+        'active',
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM departments
+        WHERE code = 'DEMO'
+      )
+    `).run();
+
+    const department =
+      db.prepare(`
+        SELECT id
+        FROM departments
+        WHERE code = 'DEMO'
+        LIMIT 1
+      `).get();
+
+    if (!department) {
+      throw new Error(
+        'Unable to create Demo Mode department'
+      );
+    }
+
+    db.prepare(`
+      INSERT INTO budgets (
+        budget_number,
+        name,
+        department_id,
+        status,
+        notes,
+        created_at,
+        updated_at
+      )
+      SELECT
+        'DEMO-001',
+        'Demo Transport Budget',
+        ?,
+        'active',
+        'Demo Mode only - safe to remove before launch',
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM budgets
+        WHERE budget_number = 'DEMO-001'
+      )
+    `).run(
+      department.id
+    );
+
+    const budget =
+      db.prepare(`
+        SELECT id
+        FROM budgets
+        WHERE budget_number = 'DEMO-001'
+        LIMIT 1
+      `).get();
+
+    if (!budget) {
+      throw new Error(
+        'Unable to create Demo Mode budget'
+      );
+    }
+
+    const demoUsers = [
+      {
+        roleCode: 'booker',
+        firstName: 'Demo',
+        lastName: 'Booker',
+        email: 'demo.booker@uhp-demo.local',
+        jobTitle: 'Demo Booker'
+      },
+      {
+        roleCode: 'budget_holder',
+        firstName: 'Demo',
+        lastName: 'Budget Holder',
+        email: 'demo.budget-holder@uhp-demo.local',
+        jobTitle: 'Demo Budget Holder'
+      },
+      {
+        roleCode: 'department_manager',
+        firstName: 'Demo',
+        lastName: 'Department Manager',
+        email: 'demo.department-manager@uhp-demo.local',
+        jobTitle: 'Demo Department Manager'
+      },
+      {
+        roleCode: 'finance',
+        firstName: 'Demo',
+        lastName: 'Finance',
+        email: 'demo.finance@uhp-demo.local',
+        jobTitle: 'Demo Finance'
+      },
+      {
+        roleCode: 'uhp_admin',
+        firstName: 'Demo',
+        lastName: 'UHP Admin',
+        email: 'demo.uhp-admin@uhp-demo.local',
+        jobTitle: 'Demo UHP Administrator'
+      },
+      {
+        roleCode: 'nac_controller',
+        firstName: 'Demo',
+        lastName: 'NAC Controller',
+        email: 'demo.nac-controller@uhp-demo.local',
+        jobTitle: 'Demo Controller'
+      },
+      {
+        roleCode: 'nac_admin',
+        firstName: 'Demo',
+        lastName: 'NAC Admin',
+        email: 'demo.nac-admin@uhp-demo.local',
+        jobTitle: 'Demo NAC Administrator'
+      },
+      {
+        roleCode: 'special_transport_ops',
+        firstName: 'Demo',
+        lastName: 'Special Transport Ops',
+        email: 'demo.special-transport@uhp-demo.local',
+        jobTitle: 'Demo Special Transport Ops'
+      }
+    ];
+
+    const insertUser =
+      db.prepare(`
+        INSERT INTO users (
+          first_name,
+          last_name,
+          email,
+          department_id,
+          job_title,
+          status,
+          email_verified_at,
+          activated_at,
+          created_at,
+          updated_at
+        )
+        SELECT
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          'active',
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM users
+          WHERE email = ? COLLATE NOCASE
+        )
+      `);
+
+    const findUser =
+      db.prepare(`
+        SELECT id
+        FROM users
+        WHERE email = ? COLLATE NOCASE
+        LIMIT 1
+      `);
+
+    const findRole =
+      db.prepare(`
+        SELECT id
+        FROM roles
+        WHERE code = ?
+        LIMIT 1
+      `);
+
+    const addRole =
+      db.prepare(`
+        INSERT OR IGNORE INTO user_roles (
+          user_id,
+          role_id,
+          created_at
+        )
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+      `);
+
+    for (const demoUser of demoUsers) {
+      insertUser.run(
+        demoUser.firstName,
+        demoUser.lastName,
+        demoUser.email,
+        department.id,
+        demoUser.jobTitle,
+        demoUser.email
+      );
+
+      const user =
+        findUser.get(
+          demoUser.email
+        );
+
+      const role =
+        findRole.get(
+          demoUser.roleCode
+        );
+
+      if (!user || !role) {
+        throw new Error(
+          `Unable to seed Demo Mode role ${demoUser.roleCode}`
+        );
+      }
+
+      addRole.run(
+        user.id,
+        role.id
+      );
+    }
+
+    const booker =
+      findUser.get(
+        'demo.booker@uhp-demo.local'
+      );
+
+    const budgetHolder =
+      findUser.get(
+        'demo.budget-holder@uhp-demo.local'
+      );
+
+    const departmentManager =
+      findUser.get(
+        'demo.department-manager@uhp-demo.local'
+      );
+
+    const grantBudget =
+      db.prepare(`
+        INSERT OR IGNORE INTO user_budget_access (
+          user_id,
+          budget_id,
+          can_book,
+          can_view,
+          can_approve,
+          can_dispute,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+
+    grantBudget.run(
+      booker.id,
+      budget.id,
+      1,
+      1,
+      0,
+      0
+    );
+
+    grantBudget.run(
+      budgetHolder.id,
+      budget.id,
+      1,
+      1,
+      1,
+      1
+    );
+
+    grantBudget.run(
+      departmentManager.id,
+      budget.id,
+      0,
+      1,
+      1,
+      1
+    );
+
+    db.prepare(`
+      INSERT INTO budget_assignments (
+        budget_id,
+        user_id,
+        assignment_type,
+        is_active,
+        created_at
+      )
+      SELECT
+        ?,
+        ?,
+        'primary_holder',
+        1,
+        CURRENT_TIMESTAMP
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM budget_assignments
+        WHERE budget_id = ?
+          AND user_id = ?
+          AND assignment_type =
+            'primary_holder'
+          AND is_active = 1
+      )
+    `).run(
+      budget.id,
+      budgetHolder.id,
+      budget.id,
+      budgetHolder.id
+    );
+
+    db.prepare(`
+      INSERT INTO budget_assignments (
+        budget_id,
+        user_id,
+        assignment_type,
+        is_active,
+        created_at
+      )
+      SELECT
+        ?,
+        ?,
+        'manager',
+        1,
+        CURRENT_TIMESTAMP
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM budget_assignments
+        WHERE budget_id = ?
+          AND user_id = ?
+          AND assignment_type = 'manager'
+          AND is_active = 1
+      )
+    `).run(
+      budget.id,
+      departmentManager.id,
+      budget.id,
+      departmentManager.id
+    );
+
+    db.prepare(`
+      INSERT INTO transport_staff_identities (
+        first_name,
+        last_name,
+        email,
+        mobile,
+        status,
+        email_verified_at,
+        mobile_verified_at,
+        created_at,
+        updated_at
+      )
+      SELECT
+        'Demo',
+        'Staff Member',
+        'demo.staff-transport@uhp-demo.local',
+        '+447700900000',
+        'active',
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM transport_staff_identities
+        WHERE email =
+          'demo.staff-transport@uhp-demo.local'
+          COLLATE NOCASE
+      )
+    `).run();
+
+    const demoStaff =
+      db.prepare(`
+        SELECT id
+        FROM transport_staff_identities
+        WHERE email =
+          'demo.staff-transport@uhp-demo.local'
+          COLLATE NOCASE
+        LIMIT 1
+      `).get();
+
+    if (!demoStaff) {
+      throw new Error(
+        'Unable to create Demo Staff Transport identity'
+      );
+    }
+
+    db.prepare(`
+      UPDATE transport_staff_identities
+      SET
+        first_name = 'Demo',
+        last_name = 'Staff Member',
+        mobile = '+447700900000',
+        status = 'active',
+        email_verified_at =
+          COALESCE(
+            email_verified_at,
+            CURRENT_TIMESTAMP
+          ),
+        mobile_verified_at =
+          COALESCE(
+            mobile_verified_at,
+            CURRENT_TIMESTAMP
+          ),
+        updated_at =
+          CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      demoStaff.id
+    );
+
+    const staffProgramme =
+      db.prepare(`
+        SELECT id
+        FROM transport_programmes
+        WHERE code = ?
+        LIMIT 1
+      `).get(
+        STAFF_TRANSPORT_PROGRAMME_CODE
+      );
+
+    if (staffProgramme) {
+      db.prepare(`
+        INSERT INTO
+          transport_staff_programme_access (
+            staff_identity_id,
+            programme_id,
+            grant_source,
+            granted_at,
+            created_at
+          )
+        SELECT
+          ?,
+          ?,
+          'admin',
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM transport_staff_programme_access
+          WHERE staff_identity_id = ?
+            AND programme_id = ?
+        )
+      `).run(
+        demoStaff.id,
+        staffProgramme.id,
+        demoStaff.id,
+        staffProgramme.id
+      );
+    }
+
+    db.exec('COMMIT');
+
+    console.log(
+      'Demo Mode users ready'
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
 runMigrations();
 ensureUhpAutocabCustomerConfiguration();
 seedReferenceData();
@@ -845,6 +1350,8 @@ function getAuthSession(req) {
     SELECT
       id,
       user_id AS userId,
+      demo_acting_user_id AS demoActingUserId,
+      demo_started_at AS demoStartedAt,
       expires_at AS expiresAt
     FROM auth_sessions
     WHERE session_hash = ?
@@ -857,14 +1364,34 @@ function getAuthSession(req) {
     return null;
   }
 
-  const user =
+  const realUser =
     getAuthUserById(session.userId);
 
   if (
-    !user ||
-    user.status !== 'active'
+    !realUser ||
+    realUser.status !== 'active'
   ) {
     return null;
+  }
+
+  let user = realUser;
+
+  if (
+    DEMO_MODE &&
+    session.demoActingUserId &&
+    realUserCanUseDemoMode(realUser)
+  ) {
+    const demoUser =
+      getAuthUserById(
+        session.demoActingUserId
+      );
+
+    if (
+      demoUser &&
+      demoUser.status === 'active'
+    ) {
+      user = demoUser;
+    }
   }
 
   db.prepare(`
@@ -875,7 +1402,14 @@ function getAuthSession(req) {
 
   return {
     sessionId: session.id,
-    user
+    user,
+    realUser,
+    isDemo:
+      user.id !== realUser.id,
+    demoStartedAt:
+      user.id !== realUser.id
+        ? session.demoStartedAt
+        : null
   };
 }
 
@@ -28675,10 +29209,443 @@ const server = http.createServer(async (req, res) => {
         200,
         {
           authenticated: true,
-          user: auth.user
+          user: auth.user,
+          demo: {
+            enabled:
+              DEMO_MODE &&
+              realUserCanUseDemoMode(
+                auth.realUser
+              ),
+            active:
+              Boolean(auth.isDemo),
+            realUser:
+              auth.isDemo
+                ? auth.realUser
+                : null,
+            startedAt:
+              auth.demoStartedAt || null
+          }
         }
       );
     }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname === '/api/demo/options'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      if (
+        !realUserCanUseDemoMode(
+          auth.realUser
+        )
+      ) {
+        const error =
+          new Error(
+            'Demo Mode is not available'
+          );
+
+        error.statusCode = 403;
+        throw error;
+      }
+
+      const placeholders =
+        DEMO_ROLE_CODES.map(
+          roleCode => {
+            const row =
+              db.prepare(`
+                SELECT
+                  u.id,
+                  u.first_name AS firstName,
+                  u.last_name AS lastName,
+                  r.code AS roleCode,
+                  r.name AS roleName
+                FROM users u
+                JOIN user_roles ur
+                  ON ur.user_id = u.id
+                JOIN roles r
+                  ON r.id = ur.role_id
+                WHERE r.code = ?
+                  AND u.email LIKE
+                    'demo.%@uhp-demo.local'
+                  AND u.status = 'active'
+                ORDER BY u.id
+                LIMIT 1
+              `).get(
+                roleCode
+              );
+
+            return row || null;
+          }
+        )
+          .filter(Boolean);
+
+      return sendJson(
+        res,
+        200,
+        {
+          enabled: true,
+          active:
+            Boolean(auth.isDemo),
+          realUser:
+            auth.realUser,
+          currentUser:
+            auth.user,
+          roles: placeholders,
+          staffTransport: true
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname === '/api/demo/switch'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      if (
+        !realUserCanUseDemoMode(
+          auth.realUser
+        )
+      ) {
+        const error =
+          new Error(
+            'Demo Mode is not available'
+          );
+
+        error.statusCode = 403;
+        throw error;
+      }
+
+      const payload =
+        await readJson(req);
+
+      const roleCode =
+        String(
+          payload.roleCode || ''
+        ).trim();
+
+      if (
+        !DEMO_ROLE_CODES.includes(
+          roleCode
+        )
+      ) {
+        const error =
+          new Error(
+            'Unknown demo role'
+          );
+
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const demoUser =
+        db.prepare(`
+          SELECT u.id
+          FROM users u
+          JOIN user_roles ur
+            ON ur.user_id = u.id
+          JOIN roles r
+            ON r.id = ur.role_id
+          WHERE r.code = ?
+            AND u.email LIKE
+              'demo.%@uhp-demo.local'
+            AND u.status = 'active'
+          ORDER BY u.id
+          LIMIT 1
+        `).get(
+          roleCode
+        );
+
+      if (!demoUser) {
+        const error =
+          new Error(
+            'Demo user is not configured'
+          );
+
+        error.statusCode = 409;
+        throw error;
+      }
+
+      db.prepare(`
+        UPDATE auth_sessions
+        SET
+          demo_acting_user_id = ?,
+          demo_started_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        demoUser.id,
+        auth.sessionId
+      );
+
+      writeAudit({
+        action:
+          'DEMO_ROLE_SWITCH',
+        entityType:
+          'auth_session',
+        entityId:
+          auth.sessionId,
+        oldValue:
+          auth.isDemo
+            ? String(auth.user.id)
+            : null,
+        newValue:
+          String(demoUser.id),
+        source:
+          'demo_mode',
+        actorUserId:
+          auth.realUser.id
+      });
+
+      const refreshed =
+        getAuthSession(req);
+
+      return sendJson(
+        res,
+        200,
+        {
+          ok: true,
+          user:
+            refreshed.user,
+          demo: {
+            enabled: true,
+            active: true,
+            realUser:
+              refreshed.realUser,
+            startedAt:
+              refreshed.demoStartedAt
+          }
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname ===
+        '/api/demo/staff-transport'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      if (
+        !realUserCanUseDemoMode(
+          auth.realUser
+        )
+      ) {
+        const error =
+          new Error(
+            'Demo Mode is not available'
+          );
+
+        error.statusCode = 403;
+        throw error;
+      }
+
+      const staff =
+        db.prepare(`
+          SELECT id
+          FROM transport_staff_identities
+          WHERE email =
+            'demo.staff-transport@uhp-demo.local'
+            COLLATE NOCASE
+            AND status = 'active'
+          LIMIT 1
+        `).get();
+
+      if (!staff) {
+        const error =
+          new Error(
+            'Demo Staff Transport user is not configured'
+          );
+
+        error.statusCode = 409;
+        throw error;
+      }
+
+      db.prepare(`
+        UPDATE auth_sessions
+        SET
+          demo_acting_user_id = NULL,
+          demo_started_at = NULL
+        WHERE id = ?
+      `).run(
+        auth.sessionId
+      );
+
+      db.prepare(`
+        UPDATE transport_staff_sessions
+        SET revoked_at =
+          CURRENT_TIMESTAMP
+        WHERE staff_identity_id = ?
+          AND revoked_at IS NULL
+      `).run(
+        staff.id
+      );
+
+      const rawSessionToken =
+        randomBytes(32)
+          .toString('hex');
+
+      const sessionHash =
+        hashSessionToken(
+          rawSessionToken
+        );
+
+      db.prepare(`
+        INSERT INTO
+          transport_staff_sessions (
+            session_hash,
+            staff_identity_id,
+            expires_at,
+            last_seen_at,
+            ip_address,
+            user_agent
+          )
+        VALUES (
+          ?,
+          ?,
+          datetime(
+            'now',
+            '+8 hours'
+          ),
+          CURRENT_TIMESTAMP,
+          ?,
+          ?
+        )
+      `).run(
+        sessionHash,
+        staff.id,
+        getRequestIp(req),
+        String(
+          req.headers[
+            'user-agent'
+          ] || ''
+        ) || null
+      );
+
+      writeAudit({
+        action:
+          'DEMO_STAFF_TRANSPORT_ENTER',
+        entityType:
+          'transport_staff_identity',
+        entityId:
+          staff.id,
+        oldValue:
+          auth.isDemo
+            ? String(
+                auth.user.id
+              )
+            : null,
+        newValue:
+          String(staff.id),
+        source:
+          'demo_mode',
+        actorUserId:
+          auth.realUser.id
+      });
+
+      return sendJson(
+        res,
+        200,
+        {
+          ok: true,
+          redirect:
+            '/staff-transport?demo=1'
+        },
+        {
+          'Set-Cookie':
+            buildStaffTransportSessionCookie(
+              rawSessionToken
+            )
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'POST' &&
+      url.pathname === '/api/demo/reset'
+    ) {
+      const auth =
+        requireAuth(req);
+
+      if (
+        !realUserCanUseDemoMode(
+          auth.realUser
+        )
+      ) {
+        const error =
+          new Error(
+            'Demo Mode is not available'
+          );
+
+        error.statusCode = 403;
+        throw error;
+      }
+
+      const previousUserId =
+        auth.isDemo
+          ? auth.user.id
+          : null;
+
+      db.prepare(`
+        UPDATE auth_sessions
+        SET
+          demo_acting_user_id = NULL,
+          demo_started_at = NULL
+        WHERE id = ?
+      `).run(
+        auth.sessionId
+      );
+
+      writeAudit({
+        action:
+          'DEMO_ROLE_RESET',
+        entityType:
+          'auth_session',
+        entityId:
+          auth.sessionId,
+        oldValue:
+          previousUserId
+            ? String(
+                previousUserId
+              )
+            : null,
+        newValue:
+          String(
+            auth.realUser.id
+          ),
+        source:
+          'demo_mode',
+        actorUserId:
+          auth.realUser.id
+      });
+
+      const refreshed =
+        getAuthSession(req);
+
+      return sendJson(
+        res,
+        200,
+        {
+          ok: true,
+          user:
+            refreshed.user,
+          demo: {
+            enabled: true,
+            active: false,
+            realUser: null,
+            startedAt: null
+          }
+        }
+      );
+    }
+
 
     if (
       req.method === 'POST' &&
@@ -31088,6 +32055,7 @@ function bootstrapLiveStaffTransportProgramme() {
 
 
 bootstrapLiveStaffTransportProgramme();
+seedDemoModeUsers();
 
 
 const PORT =
