@@ -887,6 +887,26 @@ function userHasAnyRole(
   );
 }
 
+
+function userIsSpecialTransportOpsOnly(
+  user
+) {
+  const roleCodes =
+    (user?.roles || [])
+      .map(
+        role =>
+          String(
+            role?.code || ''
+          ).trim()
+      )
+      .filter(Boolean);
+
+  return roleCodes.includes(
+    'special_transport_ops'
+  );
+}
+
+
 function userHasRoleById(
   userId,
   roleCode
@@ -943,6 +963,44 @@ function enforceApiAccess(
     Public endpoints are handled before
     this guard is called.
   */
+
+  /*
+    Special Transport Ops accounts are
+    deliberately isolated from the rest
+    of the portal.
+
+    They may use only the dedicated
+    Christmas/Special Transport enquiry
+    API. Hiding navigation is not relied
+    upon as an access-control boundary.
+  */
+  const scopedAuth =
+    getAuthSession(req);
+
+  if (
+    scopedAuth &&
+    userIsSpecialTransportOpsOnly(
+      scopedAuth.user
+    )
+  ) {
+    if (
+      pathname ===
+        '/api/transport-operations/christmas-enquiries' ||
+      pathname.startsWith(
+        '/api/transport-operations/christmas-enquiries/'
+      )
+    ) {
+      return scopedAuth;
+    }
+
+    const error =
+      new Error(
+        'This account is restricted to Special Transport enquiries'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
 
   if (
     pathname === '/api/coding-review' ||
@@ -10503,6 +10561,724 @@ function listAllTransportRequests() {
 }
 
 
+
+function listChristmasTransportEnquiries() {
+  return db.prepare(`
+    SELECT
+      tr.id,
+
+      tr.programme_window_id
+        AS programmeWindowId,
+
+      tpw.name
+        AS programmeWindowName,
+
+      tp.id
+        AS programmeId,
+
+      tp.code
+        AS programmeCode,
+
+      tp.name
+        AS programmeName,
+
+      tr.passenger_name
+        AS passengerName,
+
+      tr.passenger_mobile
+        AS passengerMobile,
+
+      tr.passenger_email
+        AS passengerEmail,
+
+      tr.direction,
+
+      tr.shift_time
+        AS shiftTime,
+
+      tr.pickup_address
+        AS pickupAddress,
+
+      tr.pickup_postcode
+        AS pickupPostcode,
+
+      tr.destination_address
+        AS destinationAddress,
+
+      tr.destination_postcode
+        AS destinationPostcode,
+
+      tr.passenger_count
+        AS passengerCount,
+
+      tr.status,
+
+      tr.submitted_at
+        AS submittedAt,
+
+      tr.updated_at
+        AS updatedAt
+
+    FROM transport_requests tr
+
+    JOIN transport_programme_windows tpw
+      ON tpw.id =
+        tr.programme_window_id
+
+    JOIN transport_programmes tp
+      ON tp.id =
+        tpw.programme_id
+
+    WHERE tp.autocab_account_type =
+      'xmas_staff'
+
+    ORDER BY
+      datetime(tr.shift_time),
+      tr.passenger_name,
+      tr.id
+  `).all();
+}
+
+
+
+function addChristmasTransportInternalNote(
+  requestId,
+  note,
+  authUser
+) {
+  if (
+    !userHasAnyRole(
+      authUser,
+      [
+        'special_transport_ops',
+        'nac_controller',
+        'nac_admin'
+      ]
+    )
+  ) {
+    const error =
+      new Error(
+        'You do not have permission to update Special Transport enquiries'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const request =
+    getChristmasTransportEnquiry(
+      requestId
+    );
+
+  if (!request) {
+    const error =
+      new Error(
+        'Christmas transport request not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const cleanNote =
+    String(note || '')
+      .trim();
+
+  if (!cleanNote) {
+    const error =
+      new Error(
+        'Enter an internal note'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (cleanNote.length > 2000) {
+    const error =
+      new Error(
+        'Internal note must be 2000 characters or fewer'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const previousNotes =
+    String(
+      request.internalNotes || ''
+    ).trim();
+
+  const actorName =
+    [
+      authUser.firstName,
+      authUser.lastName
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .trim() ||
+    'Need-A-Cab Ops';
+
+  const noteEntry =
+    `${actorName}: ${cleanNote}`;
+
+  const nextNotes =
+    previousNotes
+      ? `${previousNotes}\n${noteEntry}`
+      : noteEntry;
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_requests
+      SET
+        internal_notes = ?,
+        updated_at =
+          CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      nextNotes,
+      requestId
+    );
+
+    db.prepare(`
+      INSERT INTO transport_request_events
+      (
+        transport_request_id,
+        event_type,
+        actor_user_id,
+        old_status,
+        new_status,
+        notes
+      )
+      VALUES (
+        ?,
+        'internal_note',
+        ?,
+        ?,
+        ?,
+        ?
+      )
+    `).run(
+      requestId,
+      authUser.id,
+      request.status,
+      request.status,
+      cleanNote
+    );
+
+    writeAudit({
+      action:
+        'UPDATE',
+
+      entityType:
+        'transport_request',
+
+      entityId:
+        requestId,
+
+      fieldName:
+        'internal_notes',
+
+      oldValue:
+        previousNotes || null,
+
+      newValue:
+        nextNotes,
+
+      source:
+        'special_transport_enquiries',
+
+      actorUserId:
+        authUser.id
+    });
+
+    db.exec('COMMIT');
+
+    return getChristmasTransportEnquiry(
+      requestId
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function amendChristmasTransportEnquiry(
+  requestId,
+  payload,
+  authUser
+) {
+  if (
+    !userHasAnyRole(
+      authUser,
+      [
+        'special_transport_ops',
+        'nac_controller',
+        'nac_admin'
+      ]
+    )
+  ) {
+    const error =
+      new Error(
+        'You do not have permission to amend Special Transport enquiries'
+      );
+
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const request =
+    getChristmasTransportEnquiry(
+      requestId
+    );
+
+  if (!request) {
+    const error =
+      new Error(
+        'Christmas transport request not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const changeableStatuses = [
+    'submitted',
+    'needs_information',
+    'ready_for_planning'
+  ];
+
+  if (
+    !changeableStatuses.includes(
+      request.status
+    )
+  ) {
+    const error =
+      new Error(
+        'This transport request can no longer be amended'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const passengerName =
+    String(
+      payload.passengerName ?? ''
+    ).trim();
+
+  const passengerMobile =
+    String(
+      payload.passengerMobile ?? ''
+    ).trim();
+
+  const passengerEmail =
+    String(
+      payload.passengerEmail ?? ''
+    ).trim() || null;
+
+  const direction =
+    String(
+      payload.direction ?? ''
+    ).trim();
+
+  const shiftTime =
+    normaliseOptionalDateTime(
+      payload.shiftTime,
+      'Shift time'
+    );
+
+  const resolvedWindow =
+    resolveTransportRequestWindowForShift(
+      request.programmeWindowId,
+      shiftTime
+    );
+
+  const resolvedProgrammeWindowId =
+    Number(
+      resolvedWindow.id
+    );
+
+
+  const pickupAddress =
+    String(
+      payload.pickupAddress ?? ''
+    ).trim();
+
+  const pickupPostcode =
+    String(
+      payload.pickupPostcode ?? ''
+    ).trim() || null;
+
+  const destinationAddress =
+    String(
+      payload.destinationAddress ?? ''
+    ).trim();
+
+  const destinationPostcode =
+    String(
+      payload.destinationPostcode ?? ''
+    ).trim() || null;
+
+  const passengerNotes =
+    String(
+      payload.passengerNotes ?? ''
+    ).trim() || null;
+
+  if (
+    !passengerName ||
+    !passengerMobile ||
+    !shiftTime ||
+    !pickupAddress ||
+    !destinationAddress
+  ) {
+    const error =
+      new Error(
+        'Passenger name, mobile, shift time, pickup and destination are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    ![
+      'to_work',
+      'from_work'
+    ].includes(
+      direction
+    )
+  ) {
+    const error =
+      new Error(
+        'Invalid transport direction'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const changes = [];
+
+  function recordChange(
+    label,
+    oldValue,
+    newValue
+  ) {
+    if (
+      String(oldValue ?? '') !==
+      String(newValue ?? '')
+    ) {
+      changes.push(label);
+    }
+  }
+
+  recordChange(
+    'passenger name',
+    request.passengerName,
+    passengerName
+  );
+
+  recordChange(
+    'mobile',
+    request.passengerMobile,
+    passengerMobile
+  );
+
+  recordChange(
+    'email',
+    request.passengerEmail,
+    passengerEmail
+  );
+
+  recordChange(
+    'direction',
+    request.direction,
+    direction
+  );
+
+  recordChange(
+    'shift time',
+    request.shiftTime,
+    shiftTime
+  );
+
+  recordChange(
+    'service window',
+    request.programmeWindowId,
+    resolvedProgrammeWindowId
+  );
+
+  recordChange(
+    'pickup address',
+    request.pickupAddress,
+    pickupAddress
+  );
+
+  recordChange(
+    'pickup postcode',
+    request.pickupPostcode,
+    pickupPostcode
+  );
+
+  recordChange(
+    'destination address',
+    request.destinationAddress,
+    destinationAddress
+  );
+
+  recordChange(
+    'destination postcode',
+    request.destinationPostcode,
+    destinationPostcode
+  );
+
+  recordChange(
+    'passenger notes',
+    request.passengerNotes,
+    passengerNotes
+  );
+
+  if (!changes.length) {
+    const error =
+      new Error(
+        'No changes to save'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const pickupChanged =
+    pickupAddress !==
+      request.pickupAddress ||
+    pickupPostcode !==
+      request.pickupPostcode;
+
+  const destinationChanged =
+    destinationAddress !==
+      request.destinationAddress ||
+    destinationPostcode !==
+      request.destinationPostcode;
+
+  const oldValue = {
+    programmeWindowId:
+      request.programmeWindowId,
+    passengerName:
+      request.passengerName,
+    passengerMobile:
+      request.passengerMobile,
+    passengerEmail:
+      request.passengerEmail,
+    direction:
+      request.direction,
+    shiftTime:
+      request.shiftTime,
+    pickupAddress:
+      request.pickupAddress,
+    pickupPostcode:
+      request.pickupPostcode,
+    destinationAddress:
+      request.destinationAddress,
+    destinationPostcode:
+      request.destinationPostcode,
+    passengerNotes:
+      request.passengerNotes
+  };
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE transport_requests
+      SET
+        programme_window_id = ?,
+        passenger_name = ?,
+        passenger_mobile = ?,
+        passenger_email = ?,
+        direction = ?,
+        shift_time = ?,
+        pickup_address = ?,
+        pickup_postcode = ?,
+        pickup_latitude = ?,
+        pickup_longitude = ?,
+        destination_address = ?,
+        destination_postcode = ?,
+        destination_latitude = ?,
+        destination_longitude = ?,
+        passenger_notes = ?,
+        updated_at =
+          CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      resolvedProgrammeWindowId,
+      passengerName,
+      passengerMobile,
+      passengerEmail,
+      direction,
+      shiftTime,
+      pickupAddress,
+      pickupPostcode,
+      pickupChanged
+        ? null
+        : request.pickupLatitude,
+      pickupChanged
+        ? null
+        : request.pickupLongitude,
+      destinationAddress,
+      destinationPostcode,
+      destinationChanged
+        ? null
+        : request.destinationLatitude,
+      destinationChanged
+        ? null
+        : request.destinationLongitude,
+      passengerNotes,
+      requestId
+    );
+
+    db.prepare(`
+      INSERT INTO transport_request_events
+      (
+        transport_request_id,
+        event_type,
+        actor_user_id,
+        old_status,
+        new_status,
+        notes
+      )
+      VALUES (
+        ?,
+        'amended',
+        ?,
+        ?,
+        ?,
+        ?
+      )
+    `).run(
+      requestId,
+      authUser.id,
+      request.status,
+      request.status,
+      `Amended: ${changes.join(', ')}`
+    );
+
+    const updated =
+      getTransportRequestById(
+        requestId
+      );
+
+    writeAudit({
+      action:
+        'UPDATE',
+
+      entityType:
+        'transport_request',
+
+      entityId:
+        requestId,
+
+      fieldName:
+        'request_details',
+
+      oldValue:
+        JSON.stringify(
+          oldValue
+        ),
+
+      newValue:
+        JSON.stringify({
+          programmeWindowId:
+            updated.programmeWindowId,
+          passengerName:
+            updated.passengerName,
+          passengerMobile:
+            updated.passengerMobile,
+          passengerEmail:
+            updated.passengerEmail,
+          direction:
+            updated.direction,
+          shiftTime:
+            updated.shiftTime,
+          pickupAddress:
+            updated.pickupAddress,
+          pickupPostcode:
+            updated.pickupPostcode,
+          destinationAddress:
+            updated.destinationAddress,
+          destinationPostcode:
+            updated.destinationPostcode,
+          passengerNotes:
+            updated.passengerNotes
+        }),
+
+      source:
+        'special_transport_enquiries',
+
+      actorUserId:
+        authUser.id
+    });
+
+    db.exec('COMMIT');
+
+    return getChristmasTransportEnquiry(
+      requestId
+    );
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function getChristmasTransportEnquiry(
+  requestId
+) {
+  const request =
+    getTransportRequestById(
+      requestId
+    );
+
+  if (
+    !request ||
+    String(
+      request.programmeCode || ''
+    ).trim() === ''
+  ) {
+    return null;
+  }
+
+  const programme =
+    db.prepare(`
+      SELECT
+        autocab_account_type
+          AS autocabAccountType
+      FROM transport_programmes
+      WHERE id = ?
+    `).get(
+      request.programmeId
+    );
+
+  if (
+    programme?.autocabAccountType !==
+      'xmas_staff'
+  ) {
+    return null;
+  }
+
+  return {
+    ...request,
+    events:
+      listTransportRequestEvents(
+        request.id
+      )
+  };
+}
+
+
 function transportOperationsPostcodeArea(
   postcode
 ) {
@@ -11494,6 +12270,93 @@ function getTransportRequestWindowForSubmission(
   `).get(windowId);
 }
 
+
+
+function resolveTransportRequestWindowForShift(
+  anchorWindowId,
+  shiftTime
+) {
+  const anchorWindow =
+    getTransportRequestWindowForSubmission(
+      anchorWindowId
+    );
+
+  if (!anchorWindow) {
+    const error =
+      new Error(
+        'Transport programme not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const resolved =
+    db.prepare(`
+      SELECT
+        tpw.id,
+
+        tpw.programme_id
+          AS programmeId,
+
+        tpw.name,
+
+        tpw.starts_at
+          AS startsAt,
+
+        tpw.ends_at
+          AS endsAt,
+
+        tpw.is_active
+          AS isActive,
+
+        tp.status
+          AS programmeStatus,
+
+        tp.request_opens_at
+          AS requestOpensAt,
+
+        tp.request_closes_at
+          AS requestClosesAt
+
+      FROM transport_programme_windows tpw
+
+      JOIN transport_programmes tp
+        ON tp.id =
+          tpw.programme_id
+
+      WHERE tpw.programme_id = ?
+        AND tpw.is_active = 1
+        AND datetime(?) >=
+          datetime(tpw.starts_at)
+        AND datetime(?) <=
+          datetime(tpw.ends_at)
+
+      ORDER BY
+        datetime(tpw.starts_at),
+        tpw.id
+
+      LIMIT 1
+    `).get(
+      Number(
+        anchorWindow.programmeId
+      ),
+      shiftTime,
+      shiftTime
+    );
+
+  if (!resolved) {
+    const error =
+      new Error(
+        'Special Transport is not running at this time. Please choose a shift time within one of the available Christmas or New Year operating periods.'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return resolved;
+}
 
 
 function reviewTransportRequest(
@@ -12792,6 +13655,18 @@ function amendStaffTransportRequest(
       'Shift time'
     );
 
+  const resolvedWindow =
+    resolveTransportRequestWindowForShift(
+      request.programmeWindowId,
+      shiftTime
+    );
+
+  const resolvedProgrammeWindowId =
+    Number(
+      resolvedWindow.id
+    );
+
+
   const pickupAddress =
     String(
       payload.pickupAddress ??
@@ -12912,6 +13787,44 @@ function amendStaffTransportRequest(
           ''
     ).trim() || null;
 
+  const conflictingRequest =
+    db.prepare(`
+      SELECT
+        id
+
+      FROM transport_requests
+
+      WHERE requested_by_staff_identity_id = ?
+        AND programme_window_id = ?
+        AND direction = ?
+        AND id <> ?
+        AND status NOT IN (
+          'cancelled',
+          'not_accommodated'
+        )
+
+      ORDER BY
+        id DESC
+
+      LIMIT 1
+    `).get(
+      Number(staff.id),
+      resolvedProgrammeWindowId,
+      direction,
+      Number(requestId)
+    );
+
+  if (conflictingRequest) {
+    const error =
+      new Error(
+        'You already have an active transport request for this service and direction'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+
   const coding =
     (
       payload.budgetId !==
@@ -12944,6 +13857,9 @@ function amendStaffTransportRequest(
 
   const before =
     {
+      programmeWindowId:
+        request.programmeWindowId,
+
       direction:
         request.direction,
 
@@ -12996,6 +13912,7 @@ function amendStaffTransportRequest(
     db.prepare(`
       UPDATE transport_requests
       SET
+        programme_window_id = ?,
         direction = ?,
         shift_time = ?,
 
@@ -13021,6 +13938,7 @@ function amendStaffTransportRequest(
 
       WHERE id = ?
     `).run(
+      resolvedProgrammeWindowId,
       direction,
       shiftTime,
 
@@ -13062,13 +13980,17 @@ function amendStaffTransportRequest(
         ?,
         ?,
         ?,
-        'Transport request amended by staff member'
+        ?
       )
     `).run(
       requestId,
       staff.id,
       request.status,
-      request.status
+      request.status,
+      Number(request.programmeWindowId) !==
+        resolvedProgrammeWindowId
+        ? 'Transport request amended by staff member; service window changed automatically'
+        : 'Transport request amended by staff member'
     );
 
     const updated =
@@ -13096,6 +14018,9 @@ function amendStaffTransportRequest(
 
       newValue:
         JSON.stringify({
+          programmeWindowId:
+            updated.programmeWindowId,
+
           direction:
             updated.direction,
 
@@ -13440,6 +14365,34 @@ function createStaffTransportRequest(
     throw error;
   }
 
+  const resolvedShiftTime =
+    normaliseOptionalDateTime(
+      payload.shiftTime,
+      'Shift time'
+    );
+
+  if (!resolvedShiftTime) {
+    const error =
+      new Error(
+        'Shift time is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const resolvedWindow =
+    resolveTransportRequestWindowForShift(
+      programmeWindowId,
+      resolvedShiftTime
+    );
+
+  const resolvedProgrammeWindowId =
+    Number(
+      resolvedWindow.id
+    );
+
+
   /*
     Hard duplicate block for self-service.
 
@@ -13453,7 +14406,8 @@ function createStaffTransportRequest(
     findStaffTransportDuplicate({
       staffIdentityId:
         staff.id,
-      programmeWindowId,
+      programmeWindowId:
+        resolvedProgrammeWindowId,
       direction
     });
 
@@ -13675,7 +14629,7 @@ function createStaffTransportRequest(
           'submitted'
         )
       `).run(
-        programmeWindowId,
+        resolvedProgrammeWindowId,
 
         staff.id,
 
@@ -13746,7 +14700,8 @@ function createStaffTransportRequest(
 
       newValue:
         JSON.stringify({
-          programmeWindowId,
+          programmeWindowId:
+            resolvedProgrammeWindowId,
 
           requestedByStaffIdentityId:
             staff.id,
@@ -28959,6 +29914,143 @@ const server = http.createServer(async (req, res) => {
       );
     }
 
+
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/transport-operations/christmas-enquiries'
+    ) {
+      return sendJson(
+        res,
+        200,
+        {
+          requests:
+            listChristmasTransportEnquiries()
+        }
+      );
+    }
+
+
+    const christmasTransportEnquiryMatch =
+      url.pathname.match(
+        /^\/api\/transport-operations\/christmas-enquiries\/(\d+)$/
+      );
+
+
+    const christmasTransportInternalNoteMatch =
+      url.pathname.match(
+        /^\/api\/transport-operations\/christmas-enquiries\/(\d+)\/internal-note$/
+      );
+
+
+    if (
+      req.method === 'POST' &&
+      christmasTransportInternalNoteMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          [
+            'special_transport_ops',
+            'nac_controller',
+            'nac_admin'
+          ]
+        );
+
+      const payload =
+        await readJson(req);
+
+      const request =
+        addChristmasTransportInternalNote(
+          Number(
+            christmasTransportInternalNoteMatch[1]
+          ),
+          payload.note,
+          auth.user
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          request
+        }
+      );
+    }
+
+
+    const christmasTransportAmendMatch =
+      url.pathname.match(
+        /^\/api\/transport-operations\/christmas-enquiries\/(\d+)\/amend$/
+      );
+
+
+    if (
+      req.method === 'PATCH' &&
+      christmasTransportAmendMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          [
+            'special_transport_ops',
+            'nac_controller',
+            'nac_admin'
+          ]
+        );
+
+      const payload =
+        await readJson(req);
+
+      const request =
+        amendChristmasTransportEnquiry(
+          Number(
+            christmasTransportAmendMatch[1]
+          ),
+          payload,
+          auth.user
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          request
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'GET' &&
+      christmasTransportEnquiryMatch
+    ) {
+      const request =
+        getChristmasTransportEnquiry(
+          Number(
+            christmasTransportEnquiryMatch[1]
+          )
+        );
+
+      if (!request) {
+        const error =
+          new Error(
+            'Christmas transport request not found'
+          );
+
+        error.statusCode = 404;
+        throw error;
+      }
+
+      return sendJson(
+        res,
+        200,
+        {
+          request
+        }
+      );
+    }
 
 
     if (

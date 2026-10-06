@@ -27,7 +27,8 @@ import {
   CheckCircle2,
   Clock3,
   UsersRound,
-  MapPin
+  MapPin,
+  Settings
 } from 'lucide-react';
 import './styles.css';
 
@@ -106,6 +107,10 @@ const navDefinitions = {
     ['finance-reports', 'Reports', BarChart3]
   ],
 
+  special_transport_ops: [
+    ['nac-christmas', 'Christmas Transport', CarFront]
+  ],
+
   nac_controller: [
     ['nac-control', 'Control', LayoutDashboard],
     ['nac-special-transport', 'Special Transport', UsersRound],
@@ -117,6 +122,7 @@ const navDefinitions = {
   nac_admin: [
     ['nac-control', 'Control', LayoutDashboard],
     ['nac-special-transport', 'Special Transport', UsersRound],
+    ['nac-special-transport-settings', 'Special Transport Settings', Settings],
     ['nac-bookings', 'Bookings', CalendarDays],
     ['nac-exceptions', 'Exceptions', AlertTriangle],
     ['coding-review', 'Coding Review', AlertTriangle],
@@ -433,6 +439,15 @@ function App() {
       [currentUser]
     );
 
+  const specialTransportOpsOnly =
+    Boolean(
+      currentUser?.roles?.some(
+        (role) =>
+          role?.code ===
+            'special_transport_ops'
+      )
+    );
+
   useEffect(() => {
     let cancelled = false;
 
@@ -530,7 +545,14 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className={
+        specialTransportOpsOnly
+          ? 'app-shell special-transport-ops-shell'
+          : 'app-shell'
+      }
+    >
+      {!specialTransportOpsOnly && (
       <aside className="sidebar">
         <div className="brand">
           <strong>UHP</strong>
@@ -571,16 +593,29 @@ function App() {
           )}
         </nav>
       </aside>
+      )}
 
       <main className="main">
         <header className="topbar">
-          <div className="search">
-            <Search size={18}/>
+          {specialTransportOpsOnly ? (
+            <div className="special-transport-ops-brand">
+              <strong>
+                Special Transport
+              </strong>
 
-            <input
-              placeholder="Search users, budgets, bookings..."
-            />
-          </div>
+              <span>
+                Enquiries
+              </span>
+            </div>
+          ) : (
+            <div className="search">
+              <Search size={18}/>
+
+              <input
+                placeholder="Search users, budgets, bookings..."
+              />
+            </div>
+          )}
 
           <div className="top-actions">
             <Bell size={20}/>
@@ -664,12 +699,19 @@ function App() {
             <TransportOperationsPage
               currentUser={currentUser}
             />
+          ) : active === 'nac-special-transport-settings' ? (
+            <TransportOperationsPage
+              currentUser={currentUser}
+              settingsOnly
+            />
           ) : active === 'nac-bookings' ? (
             <NacBookingsPage/>
           ) : active === 'nac-exceptions' ? (
             <NacBookingsPage
               exceptionsOnly
             />
+          ) : active === 'nac-christmas' ? (
+            <ChristmasTransportEnquiriesPage/>
           ) : active === 'coding-review' ? (
             <CodingReviewPage/>
           ) : (
@@ -691,8 +733,1329 @@ function App() {
 }
 
 
+
+function ChristmasTransportEnquiriesPage() {
+  const [requests, setRequests] =
+    useState([]);
+
+  const [query, setQuery] =
+    useState('');
+
+  const [
+    selectedRequest,
+    setSelectedRequest
+  ] =
+    useState(null);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [
+    detailLoading,
+    setDetailLoading
+  ] =
+    useState(false);
+
+  const [error, setError] =
+    useState('');
+
+  const [internalNote, setInternalNote] =
+    useState('');
+
+  const [savingNote, setSavingNote] =
+    useState(false);
+
+  const [noteMessage, setNoteMessage] =
+    useState('');
+
+  const [isAmending, setIsAmending] =
+    useState(false);
+
+  const [savingAmend, setSavingAmend] =
+    useState(false);
+
+  const [amendMessage, setAmendMessage] =
+    useState('');
+
+  const [amendForm, setAmendForm] =
+    useState({
+      passengerName: '',
+      passengerMobile: '',
+      passengerEmail: '',
+      direction: 'to_work',
+      shiftTime: '',
+      pickupAddress: '',
+      pickupPostcode: '',
+      destinationAddress: '',
+      destinationPostcode: '',
+      passengerNotes: ''
+    });
+
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRequests() {
+      setLoading(true);
+      setError('');
+
+      try {
+        const response =
+          await apiFetch(
+            `${API_BASE}/api/transport-operations/christmas-enquiries`
+          );
+
+        const data =
+          await response
+            .json()
+            .catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              'Unable to load Christmas transport enquiries'
+          );
+        }
+
+        if (!cancelled) {
+          setRequests(
+            data.requests || []
+          );
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : 'Unable to load Christmas transport enquiries'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadRequests();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+
+  const filteredRequests =
+    useMemo(() => {
+      const term =
+        query
+          .trim()
+          .toLowerCase();
+
+      if (!term) {
+        return requests;
+      }
+
+      return requests.filter(
+        (request) =>
+          [
+            request.id,
+            `#${request.id}`,
+            request.passengerName,
+            request.passengerMobile,
+            request.passengerEmail,
+            request.pickupAddress,
+            request.pickupPostcode,
+            request.destinationAddress,
+            request.destinationPostcode,
+            request.programmeCode,
+            request.programmeWindowName
+          ]
+            .filter(
+              value =>
+                value !== null &&
+                value !== undefined
+            )
+            .join(' ')
+            .toLowerCase()
+            .includes(term)
+      );
+    }, [
+      requests,
+      query
+    ]);
+
+
+  async function openRequest(
+    requestId
+  ) {
+    setDetailLoading(true);
+    setError('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-operations/christmas-enquiries/${requestId}`
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to open Christmas transport request'
+        );
+      }
+
+      setSelectedRequest(
+        data.request
+      );
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : 'Unable to open Christmas transport request'
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+
+  function enquiryDirectionLabel(
+    direction
+  ) {
+    return direction === 'to_work'
+      ? 'To work'
+      : direction === 'from_work'
+        ? 'From work'
+        : formatStatus(direction);
+  }
+
+
+  function enquiryDateTime(
+    value
+  ) {
+    if (!value) {
+      return '—';
+    }
+
+    const date =
+      new Date(value);
+
+    if (
+      Number.isNaN(
+        date.getTime()
+      )
+    ) {
+      return value;
+    }
+
+    return date.toLocaleString(
+      'en-GB',
+      {
+        dateStyle: 'medium',
+        timeStyle: 'short'
+      }
+    );
+  }
+
+
+
+
+  function enquiryDateTimeInputValue(
+    value
+  ) {
+    if (!value) {
+      return '';
+    }
+
+    const raw =
+      String(value)
+        .trim()
+        .replace(' ', 'T');
+
+    const match =
+      raw.match(
+        /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/
+      );
+
+    return match
+      ? match[1]
+      : '';
+  }
+
+
+  function updateAmendField(
+    field,
+    value
+  ) {
+    setAmendForm(
+      current => ({
+        ...current,
+        [field]: value
+      })
+    );
+  }
+
+
+  function beginChristmasAmend() {
+    if (!selectedRequest) {
+      return;
+    }
+
+    setAmendForm({
+      passengerName:
+        selectedRequest.passengerName || '',
+
+      passengerMobile:
+        selectedRequest.passengerMobile || '',
+
+      passengerEmail:
+        selectedRequest.passengerEmail || '',
+
+      direction:
+        selectedRequest.direction ||
+          'to_work',
+
+      shiftTime:
+        enquiryDateTimeInputValue(
+          selectedRequest.shiftTime
+        ),
+
+      pickupAddress:
+        selectedRequest.pickupAddress || '',
+
+      pickupPostcode:
+        selectedRequest.pickupPostcode || '',
+
+      destinationAddress:
+        selectedRequest.destinationAddress || '',
+
+      destinationPostcode:
+        selectedRequest.destinationPostcode || '',
+
+      passengerNotes:
+        selectedRequest.passengerNotes || ''
+    });
+
+    setError('');
+    setAmendMessage('');
+    setNoteMessage('');
+    setIsAmending(true);
+  }
+
+
+  function cancelChristmasAmend() {
+    setIsAmending(false);
+    setAmendMessage('');
+    setError('');
+  }
+
+
+  async function submitChristmasAmend(
+    event
+  ) {
+    event.preventDefault();
+
+    if (!selectedRequest) {
+      return;
+    }
+
+    setSavingAmend(true);
+    setError('');
+    setAmendMessage('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-operations/christmas-enquiries/${selectedRequest.id}/amend`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify(
+                amendForm
+              )
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to amend transport request'
+        );
+      }
+
+      setSelectedRequest(
+        data.request
+      );
+
+      setRequests(
+        current =>
+          current.map(
+            request =>
+              request.id ===
+                data.request.id
+                ? {
+                    ...request,
+                    ...data.request
+                  }
+                : request
+          )
+      );
+
+      setIsAmending(false);
+
+      setAmendMessage(
+        'Request amended successfully.'
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Unable to amend transport request'
+      );
+    } finally {
+      setSavingAmend(false);
+    }
+  }
+
+
+  async function submitInternalNote(
+    event
+  ) {
+    event.preventDefault();
+
+    const note =
+      internalNote.trim();
+
+    if (
+      !selectedRequest ||
+      !note
+    ) {
+      return;
+    }
+
+    setSavingNote(true);
+    setError('');
+    setNoteMessage('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/transport-operations/christmas-enquiries/${selectedRequest.id}/internal-note`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({
+                note
+              })
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Unable to add internal note'
+        );
+      }
+
+      setSelectedRequest(
+        data.request
+      );
+
+      setInternalNote('');
+
+      setNoteMessage(
+        'Internal note added.'
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Unable to add internal note'
+      );
+    } finally {
+      setSavingNote(false);
+    }
+  }
+
+
+  if (selectedRequest) {
+    return (
+      <>
+        <div className="page-heading christmas-enquiry-heading">
+          <div>
+            <button
+              type="button"
+              className="christmas-enquiry-back"
+              onClick={() =>
+                setSelectedRequest(null)
+              }
+            >
+              ← Back to enquiries
+            </button>
+
+            <small>
+              Christmas Transport
+            </small>
+
+            <h1>
+              {selectedRequest.passengerName}
+            </h1>
+
+            <p>
+              Request #{selectedRequest.id}
+              {' · '}
+              {selectedRequest.programmeWindowName}
+            </p>
+          </div>
+
+          <span
+            className={`badge ${selectedRequest.status}`}
+          >
+            {formatStatus(
+              selectedRequest.status
+            )}
+          </span>
+        </div>
+
+        {error && (
+          <div className="notice error">
+            {error}
+          </div>
+        )}
+
+        <div className="christmas-enquiry-detail-actions">
+          {!isAmending && (
+            <button
+              type="button"
+              className="primary"
+              onClick={beginChristmasAmend}
+              disabled={
+                ![
+                  'submitted',
+                  'needs_information',
+                  'ready_for_planning'
+                ].includes(
+                  selectedRequest.status
+                )
+              }
+            >
+              Amend Request
+            </button>
+          )}
+
+          {![
+            'submitted',
+            'needs_information',
+            'ready_for_planning'
+          ].includes(
+            selectedRequest.status
+          ) && (
+            <small>
+              This request can no longer be amended.
+            </small>
+          )}
+        </div>
+
+        {amendMessage && (
+          <div className="notice success christmas-enquiry-amend-message">
+            {amendMessage}
+          </div>
+        )}
+
+        {isAmending && (
+          <section className="card christmas-enquiry-amend-card">
+            <div className="christmas-enquiry-card-heading">
+              <div>
+                <small>
+                  Office amendment
+                </small>
+
+                <h2>
+                  Amend request
+                </h2>
+              </div>
+            </div>
+
+            <form
+              className="christmas-enquiry-amend-form"
+              onSubmit={submitChristmasAmend}
+            >
+              <div className="christmas-enquiry-amend-grid">
+                <label>
+                  Passenger name
+                  <input
+                    type="text"
+                    value={amendForm.passengerName}
+                    onChange={(event) =>
+                      updateAmendField(
+                        'passengerName',
+                        event.target.value
+                      )
+                    }
+                    required
+                    disabled={savingAmend}
+                  />
+                </label>
+
+                <label>
+                  Mobile
+                  <input
+                    type="tel"
+                    value={amendForm.passengerMobile}
+                    onChange={(event) =>
+                      updateAmendField(
+                        'passengerMobile',
+                        event.target.value
+                      )
+                    }
+                    required
+                    disabled={savingAmend}
+                  />
+                </label>
+
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={amendForm.passengerEmail}
+                    onChange={(event) =>
+                      updateAmendField(
+                        'passengerEmail',
+                        event.target.value
+                      )
+                    }
+                    disabled={savingAmend}
+                  />
+                </label>
+
+                <label>
+                  Direction
+                  <select
+                    value={amendForm.direction}
+                    onChange={(event) =>
+                      updateAmendField(
+                        'direction',
+                        event.target.value
+                      )
+                    }
+                    disabled={savingAmend}
+                  >
+                    <option value="to_work">
+                      To work
+                    </option>
+
+                    <option value="from_work">
+                      From work
+                    </option>
+                  </select>
+                </label>
+
+                <label>
+                  Shift date and time
+                  <input
+                    type="datetime-local"
+                    value={amendForm.shiftTime}
+                    onChange={(event) =>
+                      updateAmendField(
+                        'shiftTime',
+                        event.target.value
+                      )
+                    }
+                    required
+                    disabled={savingAmend}
+                  />
+                </label>
+
+                <div />
+              </div>
+
+              <div className="christmas-enquiry-amend-section">
+                <strong>Pickup</strong>
+
+                <div className="christmas-enquiry-amend-address-grid">
+                  <label>
+                    Address
+                    <input
+                      type="text"
+                      value={amendForm.pickupAddress}
+                      onChange={(event) =>
+                        updateAmendField(
+                          'pickupAddress',
+                          event.target.value
+                        )
+                      }
+                      required
+                      disabled={savingAmend}
+                    />
+                  </label>
+
+                  <label>
+                    Postcode
+                    <input
+                      type="text"
+                      value={amendForm.pickupPostcode}
+                      onChange={(event) =>
+                        updateAmendField(
+                          'pickupPostcode',
+                          event.target.value
+                        )
+                      }
+                      disabled={savingAmend}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="christmas-enquiry-amend-section">
+                <strong>Destination</strong>
+
+                <div className="christmas-enquiry-amend-address-grid">
+                  <label>
+                    Address
+                    <input
+                      type="text"
+                      value={amendForm.destinationAddress}
+                      onChange={(event) =>
+                        updateAmendField(
+                          'destinationAddress',
+                          event.target.value
+                        )
+                      }
+                      required
+                      disabled={savingAmend}
+                    />
+                  </label>
+
+                  <label>
+                    Postcode
+                    <input
+                      type="text"
+                      value={amendForm.destinationPostcode}
+                      onChange={(event) =>
+                        updateAmendField(
+                          'destinationPostcode',
+                          event.target.value
+                        )
+                      }
+                      disabled={savingAmend}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <label className="christmas-enquiry-amend-notes">
+                Passenger information
+
+                <textarea
+                  rows="3"
+                  value={amendForm.passengerNotes}
+                  onChange={(event) =>
+                    updateAmendField(
+                      'passengerNotes',
+                      event.target.value
+                    )
+                  }
+                  placeholder="Journey or passenger information..."
+                  disabled={savingAmend}
+                />
+              </label>
+
+              <div className="christmas-enquiry-amend-actions">
+                <button
+                  type="button"
+                  onClick={cancelChristmasAmend}
+                  disabled={savingAmend}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="primary"
+                  disabled={savingAmend}
+                >
+                  {savingAmend
+                    ? 'Saving...'
+                    : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
+
+        <div className="christmas-enquiry-detail-grid">
+          <section className="card christmas-enquiry-card">
+            <div className="christmas-enquiry-card-heading">
+              <div>
+                <small>
+                  Staff member
+                </small>
+
+                <h2>
+                  Contact
+                </h2>
+              </div>
+            </div>
+
+            <dl className="christmas-enquiry-details">
+              <div>
+                <dt>Name</dt>
+                <dd>
+                  {selectedRequest.passengerName}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Mobile</dt>
+                <dd>
+                  {selectedRequest.passengerMobile || '—'}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Email</dt>
+                <dd>
+                  {selectedRequest.passengerEmail || '—'}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Requested by</dt>
+                <dd>
+                  {selectedRequest.requestedByName || '—'}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="card christmas-enquiry-card">
+            <div className="christmas-enquiry-card-heading">
+              <div>
+                <small>
+                  Journey
+                </small>
+
+                <h2>
+                  Travel details
+                </h2>
+              </div>
+            </div>
+
+            <dl className="christmas-enquiry-details">
+              <div>
+                <dt>Direction</dt>
+                <dd>
+                  {enquiryDirectionLabel(
+                    selectedRequest.direction
+                  )}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Shift time</dt>
+                <dd>
+                  {enquiryDateTime(
+                    selectedRequest.shiftTime
+                  )}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Passengers</dt>
+                <dd>
+                  {selectedRequest.passengerCount || 1}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Service</dt>
+                <dd>
+                  {selectedRequest.programmeName}
+                  <br/>
+                  <span>
+                    {selectedRequest.programmeWindowName}
+                  </span>
+                </dd>
+              </div>
+            </dl>
+
+            <div className="christmas-enquiry-route">
+              <div>
+                <small>
+                  Pickup
+                </small>
+
+                <strong>
+                  {selectedRequest.pickupAddress}
+                </strong>
+
+                {selectedRequest.pickupPostcode && (
+                  <span>
+                    {selectedRequest.pickupPostcode}
+                  </span>
+                )}
+              </div>
+
+              <div className="christmas-enquiry-route-arrow">
+                →
+              </div>
+
+              <div>
+                <small>
+                  Destination
+                </small>
+
+                <strong>
+                  {selectedRequest.destinationAddress}
+                </strong>
+
+                {selectedRequest.destinationPostcode && (
+                  <span>
+                    {selectedRequest.destinationPostcode}
+                  </span>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="card christmas-enquiry-card">
+            <div className="christmas-enquiry-card-heading">
+              <div>
+                <small>
+                  Information
+                </small>
+
+                <h2>
+                  Notes
+                </h2>
+              </div>
+            </div>
+
+            <div className="christmas-enquiry-notes">
+              <div>
+                <strong>
+                  Passenger information
+                </strong>
+
+                <p>
+                  {selectedRequest.passengerNotes ||
+                    'No passenger notes recorded.'}
+                </p>
+              </div>
+
+              <div>
+                <strong>
+                  Accessibility
+                </strong>
+
+                <p>
+                  {selectedRequest.accessibilityNotes ||
+                    'No accessibility requirements recorded.'}
+                </p>
+              </div>
+
+              <div className="internal christmas-enquiry-internal-notes">
+                <strong>
+                  Internal notes
+                </strong>
+
+                <p className="christmas-enquiry-existing-notes">
+                  {selectedRequest.internalNotes ||
+                    'No internal notes recorded.'}
+                </p>
+
+                <form
+                  className="christmas-enquiry-note-form"
+                  onSubmit={submitInternalNote}
+                >
+                  <label>
+                    Add office note
+
+                    <textarea
+                      rows="3"
+                      maxLength="2000"
+                      value={internalNote}
+                      onChange={(event) =>
+                        setInternalNote(
+                          event.target.value
+                        )
+                      }
+                      placeholder="Record details from a phone call or email..."
+                      disabled={savingNote}
+                    />
+                  </label>
+
+                  <div className="christmas-enquiry-note-actions">
+                    <small>
+                      Internal only · maximum 2000 characters
+                    </small>
+
+                    <button
+                      type="submit"
+                      className="primary"
+                      disabled={
+                        savingNote ||
+                        !internalNote.trim()
+                      }
+                    >
+                      {savingNote
+                        ? 'Adding...'
+                        : 'Add Note'}
+                    </button>
+                  </div>
+                </form>
+
+                {noteMessage && (
+                  <div className="notice success christmas-enquiry-note-message">
+                    {noteMessage}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="card christmas-enquiry-card">
+            <div className="christmas-enquiry-card-heading">
+              <div>
+                <small>
+                  Record
+                </small>
+
+                <h2>
+                  Request information
+                </h2>
+              </div>
+            </div>
+
+            <dl className="christmas-enquiry-details">
+              <div>
+                <dt>Request ID</dt>
+                <dd>
+                  #{selectedRequest.id}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Source</dt>
+                <dd>
+                  {formatStatus(
+                    selectedRequest.source
+                  )}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Submitted</dt>
+                <dd>
+                  {enquiryDateTime(
+                    selectedRequest.submittedAt
+                  )}
+                </dd>
+              </div>
+
+              <div>
+                <dt>Last updated</dt>
+                <dd>
+                  {enquiryDateTime(
+                    selectedRequest.updatedAt
+                  )}
+                </dd>
+              </div>
+
+              {selectedRequest.confirmedAt && (
+                <div>
+                  <dt>Confirmed</dt>
+                  <dd>
+                    {enquiryDateTime(
+                      selectedRequest.confirmedAt
+                    )}
+                  </dd>
+                </div>
+              )}
+
+              {selectedRequest.cancelledAt && (
+                <div>
+                  <dt>Cancelled</dt>
+                  <dd>
+                    {enquiryDateTime(
+                      selectedRequest.cancelledAt
+                    )}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </section>
+        </div>
+
+        <section className="card christmas-enquiry-history">
+          <div className="christmas-enquiry-card-heading">
+            <div>
+              <small>
+                Audit trail
+              </small>
+
+              <h2>
+                Request history
+              </h2>
+            </div>
+          </div>
+
+          {selectedRequest.events?.length ? (
+            <div className="christmas-enquiry-timeline">
+              {[...selectedRequest.events]
+                .reverse()
+                .map(
+                  (event) => (
+                    <div
+                      className="christmas-enquiry-event"
+                      key={event.id}
+                    >
+                      <div className="christmas-enquiry-event-dot"/>
+
+                      <div>
+                        <div className="christmas-enquiry-event-top">
+                          <strong>
+                            {formatStatus(
+                              event.eventType
+                            )}
+                          </strong>
+
+                          <span>
+                            {enquiryDateTime(
+                              event.createdAt
+                            )}
+                          </span>
+                        </div>
+
+                        <p>
+                          {event.notes ||
+                            'Request updated'}
+                        </p>
+
+                        <small>
+                          {event.actorName
+                            ? `By ${event.actorName}`
+                            : 'System'}
+                          {event.oldStatus &&
+                          event.newStatus &&
+                          event.oldStatus !==
+                            event.newStatus
+                            ? ` · ${formatStatus(event.oldStatus)} → ${formatStatus(event.newStatus)}`
+                            : ''}
+                        </small>
+                      </div>
+                    </div>
+                  )
+                )}
+            </div>
+          ) : (
+            <div className="state-panel">
+              No request history recorded.
+            </div>
+          )}
+        </section>
+      </>
+    );
+  }
+
+
+  return (
+    <>
+      <div className="page-heading christmas-enquiry-heading">
+        <div>
+          <small>
+            Need-A-Cab Ops
+          </small>
+
+          <h1>
+            Christmas Transport Enquiries
+          </h1>
+
+          <p>
+            Quickly find a staff member or journey
+            while handling telephone and email enquiries.
+          </p>
+        </div>
+
+        <span className="christmas-enquiry-count">
+          {requests.length}
+          {' '}
+          requests
+        </span>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          {error}
+        </div>
+      )}
+
+      <section className="card christmas-enquiry-search-card">
+        <div className="christmas-enquiry-search">
+          <Search size={20}/>
+
+          <input
+            type="search"
+            autoFocus
+            value={query}
+            onChange={(event) =>
+              setQuery(
+                event.target.value
+              )
+            }
+            placeholder="Name, mobile, email, postcode or request number..."
+          />
+        </div>
+
+        <small>
+          Search works across passenger details,
+          pickup, destination and request number.
+        </small>
+      </section>
+
+      {loading ? (
+        <div className="card state-panel">
+          Loading Christmas transport requests...
+        </div>
+      ) : detailLoading ? (
+        <div className="card state-panel">
+          Opening transport request...
+        </div>
+      ) : (
+        <section className="christmas-enquiry-results">
+          <div className="christmas-enquiry-results-heading">
+            <strong>
+              {filteredRequests.length}
+              {' '}
+              {filteredRequests.length === 1
+                ? 'match'
+                : 'matches'}
+            </strong>
+
+            {query && (
+              <span>
+                for “{query}”
+              </span>
+            )}
+          </div>
+
+          {filteredRequests.length ? (
+            <div className="christmas-enquiry-list">
+              {filteredRequests.map(
+                (request) => (
+                  <button
+                    type="button"
+                    className="card christmas-enquiry-result"
+                    key={request.id}
+                    onClick={() =>
+                      openRequest(
+                        request.id
+                      )
+                    }
+                  >
+                    <div className="christmas-enquiry-result-main">
+                      <div>
+                        <strong>
+                          {request.passengerName}
+                        </strong>
+
+                        <span>
+                          {request.passengerMobile || 'No mobile'}
+                          {request.passengerEmail
+                            ? ` · ${request.passengerEmail}`
+                            : ''}
+                        </span>
+                      </div>
+
+                      <span
+                        className={`badge ${request.status}`}
+                      >
+                        {formatStatus(
+                          request.status
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="christmas-enquiry-result-journey">
+                      <div>
+                        <small>
+                          {enquiryDirectionLabel(
+                            request.direction
+                          )}
+                          {' · '}
+                          {enquiryDateTime(
+                            request.shiftTime
+                          )}
+                        </small>
+
+                        <span>
+                          {request.pickupAddress}
+                          {request.pickupPostcode
+                            ? ` (${request.pickupPostcode})`
+                            : ''}
+                        </span>
+
+                        <strong>
+                          →
+                        </strong>
+
+                        <span>
+                          {request.destinationAddress}
+                          {request.destinationPostcode
+                            ? ` (${request.destinationPostcode})`
+                            : ''}
+                        </span>
+                      </div>
+
+                      <small>
+                        Request #{request.id}
+                      </small>
+                    </div>
+                  </button>
+                )
+              )}
+            </div>
+          ) : (
+            <div className="card state-panel">
+              {query
+                ? 'No Christmas transport requests match this search.'
+                : 'No Christmas transport requests have been submitted yet.'}
+            </div>
+          )}
+        </section>
+      )}
+    </>
+  );
+}
+
+
 function TransportOperationsPage({
-  currentUser
+  currentUser,
+  settingsOnly = false
 }) {
   const [overview, setOverview] =
     useState(null);
@@ -880,6 +2243,12 @@ function TransportOperationsPage({
     ].filter(Boolean).length;
 
   useEffect(() => {
+    if (settingsOnly) {
+      setLoading(false);
+      setError('');
+      return;
+    }
+
     let cancelled = false;
 
     async function loadOverview() {
@@ -926,7 +2295,7 @@ function TransportOperationsPage({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [settingsOnly]);
 
   function transportPlanDateTimeInputValue(
     value
@@ -1114,8 +2483,19 @@ function TransportOperationsPage({
 
 
   useEffect(() => {
+    if (
+      !settingsOnly ||
+      !transportOperationsIsNacAdmin
+    ) {
+      setTransportPlanLoading(false);
+      return;
+    }
+
     loadTransportPlan();
-  }, []);
+  }, [
+    settingsOnly,
+    transportOperationsIsNacAdmin
+  ]);
 
 
   function openTransportPlanCreate() {
@@ -2577,24 +3957,27 @@ function TransportOperationsPage({
       <div className="page-heading">
         <div>
           <h1>
-            Special Transport Operations
+            {settingsOnly
+              ? 'Special Transport Settings'
+              : 'Special Transport Operations'}
           </h1>
 
           <p>
-            Need-A-Cab operational view of
-            Special Transport requests before
-            booking and route planning.
+            {settingsOnly
+              ? 'Need-A-Cab Admin configuration for programmes, service windows, campaign access and vehicle capacity.'
+              : 'Need-A-Cab operational view of Special Transport requests before booking and route planning.'}
           </p>
         </div>
       </div>
 
-      {error && (
+      {!settingsOnly && error && (
         <div className="notice error">
           {error}
         </div>
       )}
 
-      <div className="overview-kpi-grid">
+      {!settingsOnly && /* operational:overview-kpi-grid */ (
+<div className="overview-kpi-grid">
         <div className="card overview-kpi">
           <small>Requests</small>
 
@@ -2645,8 +4028,10 @@ function TransportOperationsPage({
           <span>action required</span>
         </div>
       </div>
+)}
 
-      <section className="card nac-bookings-card transport-operations-filters transport-operations-filters-compact">
+      {!settingsOnly && /* operational:card nac-bookings-card transport-operations-filters transport-operations-filters-compact */ (
+<section className="card nac-bookings-card transport-operations-filters transport-operations-filters-compact">
         <div className="transport-request-toolbar">
           <div>
             <small>
@@ -2954,9 +4339,11 @@ function TransportOperationsPage({
         )}
 
       </section>
+)}
 
 
-      <section className="transport-analysis-section transport-analysis-collapsible">
+      {!settingsOnly && /* operational:transport-analysis-section transport-analysis-collapsible */ (
+<section className="transport-analysis-section transport-analysis-collapsible">
         <div className="transport-analysis-title">
           <div>
             <small>
@@ -3055,9 +4442,11 @@ function TransportOperationsPage({
           </div>
         )}
       </section>
+)}
 
 
-      <section className="transport-plan-admin-section">
+      {settingsOnly && /* transport-plan-admin-section */ (
+<section className="transport-plan-admin-section">
         <div className="transport-analysis-title">
           <div>
             <small>
@@ -3868,9 +5257,11 @@ function TransportOperationsPage({
           </>
         )}
       </section>
+)}
 
 
-      <section className="transport-capacity-config-section">
+      {settingsOnly && /* transport-capacity-config-section */ (
+<section className="transport-capacity-config-section">
         <div className="transport-analysis-title">
           <div>
             <small>
@@ -4263,9 +5654,11 @@ function TransportOperationsPage({
           </div>
         )}
       </section>
+)}
 
 
-      <section className="transport-planning-section">
+      {!settingsOnly && /* transport-planning-section */ (
+<section className="transport-planning-section">
         <div className="transport-analysis-title">
           <div>
             <small>
@@ -4651,9 +6044,11 @@ function TransportOperationsPage({
           </>
         )}
       </section>
+)}
 
 
-      <div className="overview-dashboard-grid nac-overview-grid">
+      {!settingsOnly && /* operational:overview-dashboard-grid nac-overview-grid */ (
+<div className="overview-dashboard-grid nac-overview-grid">
         <section className="card overview-panel overview-panel-wide">
           <div className="overview-panel-heading">
             <div>
@@ -4823,6 +6218,7 @@ function TransportOperationsPage({
           )}
         </section>
       </div>
+)}
     </>
   );
 }
@@ -16961,7 +18357,7 @@ function SpecialTransportJourneyMap({
 
           <BookingMapBounds
             coordinates={
-              displayedCoordinates
+              directCoordinates
             }
           />
 
@@ -17408,6 +18804,8 @@ function createInitialStaffTransportForm() {
     programmeWindowId: '',
     direction: 'to_work',
     shiftTime: '',
+    shiftDate: '2026-12-25',
+    shiftClock: '',
 
     pickupAddress: '',
     pickupPostcode: '',
@@ -17501,6 +18899,9 @@ function StaffTransportAddressSearch({
   const searchRequestSequence =
     useRef(0);
 
+  const userTypedSearch =
+    useRef(false);
+
   useEffect(
     () => {
       const query =
@@ -17516,9 +18917,26 @@ function StaffTransportAddressSearch({
       ) {
         suppressNextSearch.current =
           false;
+        userTypedSearch.current =
+          false;
+
+        setResults([]);
+        setSearchState('idle');
+        setOpen(false);
 
         return;
       }
+
+      if (!userTypedSearch.current) {
+        setResults([]);
+        setSearchState('idle');
+        setOpen(false);
+
+        return;
+      }
+
+      userTypedSearch.current =
+        false;
 
       if (query.length < 3) {
         setResults([]);
@@ -17750,6 +19168,9 @@ function StaffTransportAddressSearch({
         onChange={(event) => {
           const nextValue =
             event.target.value;
+
+          userTypedSearch.current =
+            true;
 
           onChange(
             nextValue
@@ -19175,11 +20596,7 @@ function StaffTransportPortal({
                 nextOptions[0].windowId
               ),
             shiftTime:
-              nextOptions[0]?.startsAt
-                ? formatStaffTransportDateTimeLocal(
-                    nextOptions[0].startsAt
-                  )
-                : current.shiftTime
+              current.shiftTime
           };
         }
       );
@@ -19303,6 +20720,22 @@ function StaffTransportPortal({
       shiftTime:
         formatStaffTransportDateTimeLocal(
           request.shiftTime
+        ),
+
+      shiftDate:
+        formatStaffTransportDateTimeLocal(
+          request.shiftTime
+        ).slice(
+          0,
+          10
+        ),
+
+      shiftClock:
+        formatStaffTransportDateTimeLocal(
+          request.shiftTime
+        ).slice(
+          11,
+          16
         ),
 
       pickupAddress:
@@ -19621,28 +21054,47 @@ function StaffTransportPortal({
     );
 
 
-  const duplicateRequest =
-    !editingRequestId &&
-    form.programmeWindowId &&
-    form.direction
-      ? requests.find(
-          (request) =>
-            String(
-              request.programmeWindowId
-            ) ===
-              String(
-                form.programmeWindowId
-              ) &&
-            request.direction ===
-              form.direction &&
-            ![
-              'cancelled',
-              'not_accommodated'
-            ].includes(
-              request.status
-            )
+  const enteredShiftTime =
+    form.shiftDate &&
+    form.shiftClock
+      ? new Date(
+          `${form.shiftDate}T${form.shiftClock}`
+        )
+      : null;
+
+  const matchingServiceWindow =
+    enteredShiftTime &&
+    !Number.isNaN(
+      enteredShiftTime.getTime()
+    )
+      ? options.find(
+          (option) => {
+            const starts =
+              new Date(
+                option.startsAt
+              );
+
+            const ends =
+              new Date(
+                option.endsAt
+              );
+
+            return (
+              enteredShiftTime >= starts &&
+              enteredShiftTime <= ends
+            );
+          }
         ) || null
       : null;
+
+  const shiftOutsideService =
+    Boolean(
+      enteredShiftTime &&
+      !Number.isNaN(
+        enteredShiftTime.getTime()
+      ) &&
+      !matchingServiceWindow
+    );
 
 
   async function submitRequest(
@@ -19656,13 +21108,20 @@ function StaffTransportPortal({
 
     const missing = [];
 
+    const combinedShiftTime =
+      form.shiftDate &&
+      form.shiftClock
+        ? `${form.shiftDate}T${form.shiftClock}`
+        : '';
+
     if (!form.programmeWindowId) {
-      missing.push(
-        'Transport service'
+      setError(
+        'The staff transport programme is not currently available. Please refresh and try again.'
       );
+      return;
     }
 
-    if (!form.shiftTime) {
+    if (!combinedShiftTime) {
       missing.push(
         form.direction ===
         'to_work'
@@ -19724,11 +21183,10 @@ function StaffTransportPortal({
       return;
     }
 
-    if (duplicateRequest) {
-      window.scrollTo({
-        top: 0,
-        behavior: 'smooth'
-      });
+    if (shiftOutsideService) {
+      setError(
+        'Special Transport is not running at this time. Please choose a shift time within one of the Christmas or New Year operating periods shown above.'
+      );
 
       return;
     }
@@ -19751,9 +21209,11 @@ function StaffTransportPortal({
                 'application/json'
             },
             body:
-              JSON.stringify(
-                form
-              )
+              JSON.stringify({
+                ...form,
+                shiftTime:
+                  combinedShiftTime
+              })
           }
         );
 
@@ -20083,97 +21543,40 @@ function StaffTransportPortal({
                   </div>
                 )}
 
-                <label>
-                  Transport service
+                <div className="staff-transport-service-box">
+                  <strong>
+                    When Special Transport is running
+                  </strong>
 
-                  <select
-                    value={
-                      form.programmeWindowId
-                    }
-                    onChange={(event) => {
-                      const nextWindowId =
-                        event.target.value;
-
-                      const nextOption =
-                        options.find(
-                          (option) =>
-                            String(
-                              option.windowId
-                            ) ===
-                            String(
-                              nextWindowId
-                            )
-                        ) || null;
-
-                      setForm(
-                        (current) => ({
-                          ...current,
-                          programmeWindowId:
-                            nextWindowId,
-                          shiftTime:
-                            nextOption?.startsAt
-                              ? formatStaffTransportDateTimeLocal(
-                                  nextOption.startsAt
-                                )
-                              : ''
-                        })
-                      );
-                    }}
-                    required
-                    disabled={
-                      Boolean(
-                        editingRequestId
-                      )
-                    }
-                  >
-                    <option value="">
-                      Select service…
-                    </option>
-
-                    {options.map(
-                      (option) => (
-                        <option
-                          key={
-                            option.windowId
-                          }
-                          value={
-                            option.windowId
-                          }
-                        >
-                          {option.programmeName}
-                          {' — '}
+                  {options.map(
+                    (option) => (
+                      <div
+                        key={option.windowId}
+                        className="staff-transport-service-period"
+                      >
+                        <span>
                           {option.windowName}
-                        </option>
-                      )
-                    )}
-                  </select>
-                </label>
+                        </span>
 
-                {selectedOption && (
-                  <div className="staff-transport-service-box">
-                    <strong>
-                      {selectedOption.windowName}
-                    </strong>
+                        <small>
+                          {formatSpecialTransportWindow(
+                            option.startsAt
+                          )}
+                          {' – '}
+                          {formatSpecialTransportWindow(
+                            option.endsAt
+                          )}
+                        </small>
+                      </div>
+                    )
+                  )}
 
-                    <span>
-                      {formatSpecialTransportWindow(
-                        selectedOption.startsAt
-                      )}
-                      {' – '}
-                      {formatSpecialTransportWindow(
-                        selectedOption.endsAt
-                      )}
-                    </span>
-
-                    {selectedOption.windowPublicNotes && (
-                      <p>
-                        {
-                          selectedOption.windowPublicNotes
-                        }
-                      </p>
-                    )}
-                  </div>
-                )}
+                  <p>
+                    Enter your shift start or finish time
+                    below. We will automatically place your
+                    request into the correct service period.
+                  </p>
+                </div>
 
                 <fieldset className="staff-transport-direction">
                   <legend>
@@ -20219,54 +21622,6 @@ function StaffTransportPortal({
                   </div>
                 </fieldset>
 
-                {duplicateRequest && (
-                  <div className="staff-transport-duplicate-warning">
-                    <div>
-                      <strong>
-                        Possible duplicate — you already have an active request
-                      </strong>
-
-                      <p>
-                        You cannot submit another request for the same
-                        service and journey direction. Check your existing
-                        request first.
-                      </p>
-
-                      <span>
-                        {duplicateRequest.programmeWindowName ||
-                          duplicateRequest.programmeName}
-                        {' · '}
-                        {duplicateRequest.direction ===
-                        'to_work'
-                          ? 'To work'
-                          : 'From work'}
-                        {' · '}
-                        {formatSpecialTransportWindow(
-                          duplicateRequest.shiftTime
-                        )}
-                      </span>
-
-                      <small>
-                        Status:{' '}
-                        {specialTransportStatusLabel(
-                          duplicateRequest.status
-                        )}
-                      </small>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openRequest(
-                          duplicateRequest.id
-                        )
-                      }
-                    >
-                      View existing request
-                    </button>
-                  </div>
-                )}
-
                 <div className="staff-transport-shift-field">
                   <label>
                     <strong className="staff-transport-shift-label">
@@ -20283,74 +21638,73 @@ function StaffTransportPortal({
                       pickup time later.
                     </span>
 
-                    {selectedOption && (
-                      <div className="staff-transport-date-shortcuts">
-                        {staffTransportQuickDates(
-                          selectedOption
-                        ).map(
-                          (date) => {
-                            const dateKey =
-                              formatStaffTransportDateTimeLocal(
-                                date
-                              ).slice(
-                                0,
-                                10
-                              );
+                    <div className="staff-transport-shift-date-time">
+                      <label>
+                        <span>Date</span>
 
-                            const selectedDate =
-                              String(
-                                form.shiftTime ||
-                                ''
-                              ).slice(
-                                0,
-                                10
-                              );
-
-                            return (
-                              <button
-                                key={
-                                  dateKey
-                                }
-                                type="button"
-                                className={
-                                  selectedDate ===
-                                  dateKey
-                                    ? 'active'
-                                    : ''
-                                }
-                                onClick={() =>
-                                  updateField(
-                                    'shiftTime',
-                                    applyStaffTransportQuickDate(
-                                      form.shiftTime,
-                                      date
-                                    )
-                                  )
-                                }
-                              >
-                                {formatStaffTransportQuickDate(
-                                  date
-                                )}
-                              </button>
-                            );
+                        <input
+                          type="date"
+                          value={
+                            form.shiftDate
                           }
-                        )}
+                          min="2026-12-24"
+                          max="2027-01-02"
+                          onChange={(event) =>
+                            updateField(
+                              'shiftDate',
+                              event.target.value
+                            )
+                          }
+                          required
+                        />
+                      </label>
+
+                      <label>
+                        <span>
+                          {form.direction ===
+                          'to_work'
+                            ? 'Shift start time'
+                            : 'Shift finish time'}
+                        </span>
+
+                        <input
+                          type="time"
+                          value={
+                            form.shiftClock
+                          }
+                          onChange={(event) =>
+                            updateField(
+                              'shiftClock',
+                              event.target.value
+                            )
+                          }
+                          required
+                        />
+                      </label>
+                    </div>
+
+                    {shiftOutsideService && (
+                      <div className="staff-transport-service-warning">
+                        <strong>
+                          Special Transport is not running at this time
+                        </strong>
+
+                        <span>
+                          Please choose a shift time within one of the
+                          Christmas or New Year operating periods shown above.
+                        </span>
                       </div>
                     )}
 
-                    <input
-                      type="datetime-local"
-                      value={
-                        form.shiftTime
-                      }
-                      onChange={(event) =>
-                        updateField(
-                          'shiftTime',
-                          event.target.value
-                        )
-                      }
-                      required
-                    />
+                    {matchingServiceWindow && (
+                      <div className="staff-transport-service-valid">
+                        This shift falls within{' '}
+                        <strong>
+                          {matchingServiceWindow.windowName}
+                        </strong>
+                        .
+                      </div>
+                    )}
                   </label>
                 </div>
 
@@ -20646,9 +22000,7 @@ function StaffTransportPortal({
                     className="primary-button staff-transport-submit"
                     disabled={
                       saving ||
-                      Boolean(
-                        duplicateRequest
-                      )
+                      shiftOutsideService
                     }
                   >
                     {saving

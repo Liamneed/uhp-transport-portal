@@ -8522,3 +8522,638 @@ button:disabled {
     gap: 3px;
   }
 }
+
+/* Christmas Transport Enquiries */
+
+.christmas-enquiry-heading small {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.christmas-enquiry-count {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.christmas-enquiry-back {
+  display: block;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1e6fa8;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.christmas-enquiry-search-card {
+  padding: 18px;
+}
+
+.christmas-enquiry-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.christmas-enquiry-search svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.christmas-enquiry-search input {
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 1rem;
+}
+
+.christmas-enquiry-search-card > small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.christmas-enquiry-results {
+  margin-top: 16px;
+}
+
+.christmas-enquiry-results-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.christmas-enquiry-results-heading strong {
+  color: var(--text);
+}
+
+.christmas-enquiry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.christmas-enquiry-result {
+  width: 100%;
+  padding: 15px 17px;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.christmas-enquiry-result:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 7px 20px rgba(15, 45, 75, 0.09);
+}
+
+.christmas-enquiry-result-main,
+.christmas-enquiry-result-journey {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.christmas-enquiry-result-main {
+  align-items: flex-start;
+}
+
+.christmas-enquiry-result-main > div {
+  min-width: 0;
+}
+
+.christmas-enquiry-result-main strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.christmas-enquiry-result-main > div > span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.christmas-enquiry-result-journey {
+  align-items: flex-end;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top:
+    1px solid rgba(15, 45, 75, 0.07);
+}
+
+.christmas-enquiry-result-journey > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.christmas-enquiry-result-journey small {
+  color: var(--muted);
+  font-size: 0.69rem;
+}
+
+.christmas-enquiry-result-journey span {
+  font-size: 0.76rem;
+}
+
+.christmas-enquiry-detail-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.christmas-enquiry-card {
+  padding: 18px;
+}
+
+.christmas-enquiry-card-heading {
+  margin-bottom: 14px;
+}
+
+.christmas-enquiry-card-heading small {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.christmas-enquiry-card-heading h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.christmas-enquiry-details {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.christmas-enquiry-details > div {
+  min-width: 0;
+}
+
+.christmas-enquiry-details dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.christmas-enquiry-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.christmas-enquiry-details dd span {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.christmas-enquiry-route {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top:
+    1px solid rgba(15, 45, 75, 0.08);
+}
+
+.christmas-enquiry-route > div:not(
+  .christmas-enquiry-route-arrow
+) {
+  min-width: 0;
+}
+
+.christmas-enquiry-route small,
+.christmas-enquiry-route span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.christmas-enquiry-route strong {
+  display: block;
+  margin: 3px 0;
+  font-size: 0.78rem;
+}
+
+.christmas-enquiry-route-arrow {
+  color: var(--muted);
+}
+
+.christmas-enquiry-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.christmas-enquiry-notes > div {
+  padding: 11px 12px;
+  border-radius: 9px;
+  background:
+    rgba(15, 45, 75, 0.035);
+}
+
+.christmas-enquiry-notes > div.internal {
+  background:
+    rgba(30, 111, 168, 0.07);
+}
+
+.christmas-enquiry-notes strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.74rem;
+}
+
+.christmas-enquiry-notes p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.christmas-enquiry-history {
+  margin-top: 14px;
+  padding: 18px;
+}
+
+.christmas-enquiry-timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.christmas-enquiry-event {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 10px;
+  padding: 0 0 16px;
+}
+
+.christmas-enquiry-event:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 0;
+  left: 5px;
+  width: 1px;
+  background:
+    rgba(15, 45, 75, 0.13);
+}
+
+.christmas-enquiry-event-dot {
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  margin-top: 3px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #1e6fa8;
+  box-shadow:
+    0 0 0 1px rgba(30, 111, 168, 0.3);
+}
+
+.christmas-enquiry-event-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.christmas-enquiry-event-top strong {
+  font-size: 0.77rem;
+}
+
+.christmas-enquiry-event-top span,
+.christmas-enquiry-event small {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.christmas-enquiry-event p {
+  margin: 3px 0;
+  font-size: 0.74rem;
+}
+
+@media (max-width: 850px) {
+  .christmas-enquiry-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .christmas-enquiry-result-main,
+  .christmas-enquiry-result-journey {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 560px) {
+  .christmas-enquiry-details {
+    grid-template-columns: 1fr;
+  }
+
+  .christmas-enquiry-route {
+    grid-template-columns: 1fr;
+  }
+
+  .christmas-enquiry-route-arrow {
+    transform: rotate(90deg);
+  }
+
+  .christmas-enquiry-event-top {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
+/* Restricted Special Transport office workspace */
+
+.special-transport-ops-shell {
+  grid-template-columns: 1fr;
+}
+
+.special-transport-ops-shell .main {
+  width: 100%;
+  min-width: 0;
+}
+
+.special-transport-ops-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.special-transport-ops-brand strong {
+  font-size: 0.9rem;
+}
+
+.special-transport-ops-brand span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.christmas-enquiry-existing-notes {
+  white-space: pre-wrap;
+}
+
+.christmas-enquiry-note-form {
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top:
+    1px solid rgba(30, 111, 168, 0.12);
+}
+
+.christmas-enquiry-note-form label {
+  display: block;
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.christmas-enquiry-note-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 11px;
+  resize: vertical;
+  border:
+    1px solid rgba(15, 45, 75, 0.14);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.christmas-enquiry-note-form textarea:focus {
+  outline: 2px solid rgba(30, 111, 168, 0.16);
+  border-color: rgba(30, 111, 168, 0.45);
+}
+
+.christmas-enquiry-note-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 9px;
+}
+
+.christmas-enquiry-note-actions small {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.christmas-enquiry-note-actions button {
+  min-width: 92px;
+}
+
+.christmas-enquiry-note-message {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+@media (max-width: 560px) {
+  .christmas-enquiry-note-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.christmas-enquiry-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.christmas-enquiry-detail-actions small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.christmas-enquiry-amend-message {
+  margin-bottom: 12px;
+}
+
+.christmas-enquiry-amend-card {
+  margin-bottom: 14px;
+}
+
+.christmas-enquiry-amend-form {
+  margin-top: 6px;
+}
+
+.christmas-enquiry-amend-grid,
+.christmas-enquiry-amend-address-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.christmas-enquiry-amend-form label {
+  display: block;
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.christmas-enquiry-amend-form input,
+.christmas-enquiry-amend-form select,
+.christmas-enquiry-amend-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 11px;
+  border:
+    1px solid rgba(15, 45, 75, 0.14);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.76rem;
+}
+
+.christmas-enquiry-amend-form input:focus,
+.christmas-enquiry-amend-form select:focus,
+.christmas-enquiry-amend-form textarea:focus {
+  outline:
+    2px solid rgba(30, 111, 168, 0.16);
+  border-color:
+    rgba(30, 111, 168, 0.45);
+}
+
+.christmas-enquiry-amend-form textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.christmas-enquiry-amend-section {
+  margin-top: 15px;
+  padding-top: 13px;
+  border-top:
+    1px solid rgba(30, 111, 168, 0.1);
+}
+
+.christmas-enquiry-amend-section > strong {
+  display: block;
+  margin-bottom: 9px;
+  font-size: 0.75rem;
+}
+
+.christmas-enquiry-amend-address-grid {
+  grid-template-columns:
+    minmax(0, 1fr) minmax(130px, 0.3fr);
+}
+
+.christmas-enquiry-amend-notes {
+  margin-top: 15px;
+}
+
+.christmas-enquiry-amend-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 15px;
+}
+
+@media (max-width: 700px) {
+  .christmas-enquiry-amend-grid,
+  .christmas-enquiry-amend-address-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Staff transport split shift date/time */
+.staff-transport-shift-date-time {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.staff-transport-shift-date-time > label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.staff-transport-shift-date-time > label > span {
+  color: #56697e;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+@media (max-width: 620px) {
+  .staff-transport-shift-date-time {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Staff transport service-period validation */
+.staff-transport-service-warning {
+  margin-top: 9px;
+  padding: 10px 12px;
+  border: 1px solid #efb6b2;
+  border-left: 4px solid #b42318;
+  border-radius: 8px;
+  background: #fff4f2;
+  color: #7a271a;
+}
+
+.staff-transport-service-warning strong,
+.staff-transport-service-warning span {
+  display: block;
+}
+
+.staff-transport-service-warning strong {
+  margin-bottom: 3px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.staff-transport-service-warning span {
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.staff-transport-service-valid {
+  margin-top: 8px;
+  color: #246b48;
+  font-size: 10px;
+}
