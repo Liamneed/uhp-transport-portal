@@ -18768,6 +18768,30 @@ function getUhpManageableBookingDetails(
 }
 
 
+function assertDemoPortalBookingMutationAllowed(
+  booking,
+  auth
+) {
+  if (
+    auth?.isDemo &&
+    Number(
+      booking?.isDemo ??
+      booking?.is_demo ??
+      0
+    ) !== 1
+  ) {
+    const error =
+      new Error(
+        'Demo users cannot change genuine bookings'
+      );
+
+    error.statusCode = 403;
+
+    throw error;
+  }
+}
+
+
 function getOwnedBookingDetails(
   bookingId,
   userId
@@ -32735,6 +32759,11 @@ const server = http.createServer(async (req, res) => {
           auth.user.id
         );
 
+      assertDemoPortalBookingMutationAllowed(
+        existing,
+        auth
+      );
+
       let booking;
 
       if (
@@ -32921,9 +32950,15 @@ const server = http.createServer(async (req, res) => {
         Do not trust a user/customer ID
         supplied by the browser.
       */
-      getOwnedBookingDetails(
-        bookingId,
-        auth.user.id
+      const booking =
+        getOwnedBookingDetails(
+          bookingId,
+          auth.user.id
+        );
+
+      assertDemoPortalBookingMutationAllowed(
+        booking,
+        auth
       );
 
       const result =
@@ -32956,6 +32991,17 @@ const server = http.createServer(async (req, res) => {
 
       const auth =
         requireAuth(req);
+
+      const existing =
+        getUhpManageableBookingDetails(
+          bookingId,
+          auth.user.id
+        );
+
+      assertDemoPortalBookingMutationAllowed(
+        existing,
+        auth
+      );
 
       const booking =
         await cancelPortalBooking(
