@@ -307,6 +307,28 @@ function runMigrations() {
   }
 }
 
+function ensureUhpAutocabCustomerConfiguration() {
+  const result =
+    db.prepare(`
+      UPDATE portal_settings
+      SET
+        autocab_customer_id = '2139',
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = 1
+        AND (
+          autocab_customer_id IS NULL
+          OR TRIM(autocab_customer_id) = ''
+        )
+    `).run();
+
+  if (result.changes > 0) {
+    console.log(
+      'Configured default UHP Autocab customer account'
+    );
+  }
+}
+
+
 function seedReferenceData() {
   db.exec('BEGIN');
 
@@ -537,6 +559,7 @@ function seedReferenceData() {
 }
 
 runMigrations();
+ensureUhpAutocabCustomerConfiguration();
 seedReferenceData();
 
 function getCorsHeaders() {
