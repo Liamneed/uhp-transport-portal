@@ -20805,7 +20805,7 @@ function evaluateAutocabBookingCoding(
     result.reasonStatus = 'invalid';
   }
 
-  const budget =
+  let budget =
     db.prepare(`
       SELECT
         b.id,
@@ -20832,6 +20832,49 @@ function evaluateAutocabBookingCoding(
     `).get(
       parsed.budgetNumber
     );
+
+  /*
+    A previously reviewed imported budget can
+    be linked to an existing master budget.
+
+    The imported budget number remains the
+    historical value in reconciliation data.
+    Only validation and operational master-data
+    resolution follow the approved link.
+  */
+  if (!budget) {
+    budget =
+      db.prepare(`
+        SELECT
+          b.id,
+          b.budget_number AS budgetNumber,
+          b.name,
+          b.department_id AS departmentId,
+          d.name AS departmentName,
+          b.status
+        FROM budget_candidates bc
+        JOIN budgets b
+          ON b.id = bc.resolved_budget_id
+        LEFT JOIN departments d
+          ON d.id = b.department_id
+        WHERE bc.budget_number = ?
+          COLLATE NOCASE
+          AND bc.status = 'linked'
+          AND bc.resolved_budget_id IS NOT NULL
+          AND b.status = 'active'
+          AND (
+            b.effective_from IS NULL OR
+            b.effective_from <= date('now')
+          )
+          AND (
+            b.effective_to IS NULL OR
+            b.effective_to >= date('now')
+          )
+        LIMIT 1
+      `).get(
+        parsed.budgetNumber
+      );
+  }
 
   if (budget) {
     result.budgetStatus = 'valid';
