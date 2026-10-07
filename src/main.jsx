@@ -31070,6 +31070,33 @@ function ReasonCodesPage() {
     loadReasonCodes();
   }, []);
 
+  function reasonCodeCategory(reason) {
+    const prefix =
+      String(reason.code || '')
+        .trim()
+        .toUpperCase()
+        .charAt(0);
+
+    if (prefix === 'P') {
+      return 'Patients';
+    }
+
+    if (prefix === 'S') {
+      return 'Staff';
+    }
+
+    if (prefix === 'C') {
+      return 'Carers / Relatives';
+    }
+
+    if (prefix === 'O') {
+      return 'Other';
+    }
+
+    return 'Historical / Retired';
+  }
+
+
   const filteredReasonCodes = useMemo(() => {
     const term = query.trim().toLowerCase();
 
@@ -31079,7 +31106,8 @@ function ReasonCodesPage() {
       [
         reason.code,
         reason.description,
-        reason.status
+        reason.status,
+        reasonCodeCategory(reason)
       ]
         .filter(Boolean)
         .join(' ')
@@ -31087,6 +31115,45 @@ function ReasonCodesPage() {
         .includes(term)
     );
   }, [reasonCodes, query]);
+
+
+  const groupedReasonCodes = useMemo(() => {
+    const categoryOrder = [
+      'Patients',
+      'Staff',
+      'Carers / Relatives',
+      'Other',
+      'Historical / Retired'
+    ];
+
+    return categoryOrder
+      .map((category) => ({
+        category,
+        reasons:
+          filteredReasonCodes
+            .filter(
+              (reason) =>
+                reasonCodeCategory(reason) ===
+                category
+            )
+            .sort((left, right) =>
+              String(left.code)
+                .localeCompare(
+                  String(right.code),
+                  undefined,
+                  {
+                    numeric: true,
+                    sensitivity: 'base'
+                  }
+                )
+            )
+      }))
+      .filter(
+        (group) =>
+          group.reasons.length > 0
+      );
+  }, [filteredReasonCodes]);
+
 
   const stats = useMemo(() => ({
     active: reasonCodes.filter(
@@ -31317,45 +31384,90 @@ function ReasonCodesPage() {
               </thead>
 
               <tbody>
-                {filteredReasonCodes.map((reason) => (
-                  <tr key={reason.id}>
-                    <td>
-                      <strong>{reason.code}</strong>
-                    </td>
+                {groupedReasonCodes.flatMap(
+                  (group) => [
+                    <tr
+                      className="reason-category-row"
+                      key={`category-${group.category}`}
+                    >
+                      <td colSpan="4">
+                        <div className="reason-category-heading">
+                          <strong>
+                            {group.category}
+                          </strong>
 
-                    <td>{reason.description}</td>
+                          <span>
+                            {group.reasons.length}
+                            {' '}
+                            {group.reasons.length === 1
+                              ? 'code'
+                              : 'codes'}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>,
 
-                    <td>
-                      <span className={`badge ${reason.status}`}>
-                        {formatStatus(reason.status)}
-                      </span>
-                    </td>
+                    ...group.reasons.map(
+                      (reason) => (
+                        <tr key={reason.id}>
+                          <td>
+                            <strong>
+                              {reason.code}
+                            </strong>
+                          </td>
 
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          className="text-action"
-                          onClick={() => openEdit(reason)}
-                        >
-                          Edit
-                        </button>
+                          <td>
+                            {reason.description}
+                          </td>
 
-                        <button
-                          className={
-                            reason.status === 'active'
-                              ? 'text-action warning'
-                              : 'text-action'
-                          }
-                          onClick={() => changeStatus(reason)}
-                        >
-                          {reason.status === 'active'
-                            ? 'Deactivate'
-                            : 'Reactivate'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          <td>
+                            <span
+                              className={
+                                `badge ${reason.status}`
+                              }
+                            >
+                              {formatStatus(
+                                reason.status
+                              )}
+                            </span>
+                          </td>
+
+                          <td>
+                            <div className="row-actions">
+                              <button
+                                className="text-action"
+                                onClick={() =>
+                                  openEdit(reason)
+                                }
+                              >
+                                Edit
+                              </button>
+
+                              <button
+                                className={
+                                  reason.status ===
+                                  'active'
+                                    ? 'text-action warning'
+                                    : 'text-action'
+                                }
+                                onClick={() =>
+                                  changeStatus(
+                                    reason
+                                  )
+                                }
+                              >
+                                {reason.status ===
+                                'active'
+                                  ? 'Deactivate'
+                                  : 'Reactivate'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    )
+                  ]
+                )}
 
                 {filteredReasonCodes.length === 0 && (
                   <tr>

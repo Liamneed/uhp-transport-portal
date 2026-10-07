@@ -9678,3 +9678,41 @@ button:disabled {
   border-color: #8ac3a6;
   background: #e9f7ef;
 }
+
+/* Reason code category grouping */
+
+.reason-category-row td {
+  padding: 10px 14px;
+  border-top: 1px solid #dce5ed;
+  border-bottom: 1px solid #e5ebf0;
+  background: #f5f8fa;
+}
+
+.reason-category-row:first-child td {
+  border-top: 0;
+}
+
+.reason-category-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reason-category-heading strong {
+  color: #314a63;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.reason-category-heading span {
+  color: #7b8b9c;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+@media (max-width: 700px) {
+  .reason-category-heading {
+    align-items: flex-start;
+  }
+}
