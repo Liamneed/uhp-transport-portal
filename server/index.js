@@ -366,6 +366,10 @@ function seedReferenceData() {
       VALUES (?, ?, 'active')
     `);
 
+    insertReason.run(
+      'P1',
+      'Funded Approved Patient Transport'
+    );
     insertReason.run('S1', 'Transfer');
     insertReason.run('S2', 'Extra Duties');
     insertReason.run('S3', 'Bank Holiday');
@@ -373,6 +377,10 @@ function seedReferenceData() {
     insertReason.run('S5', 'Work delay');
     insertReason.run('S6', 'Staff Expenses');
     insertReason.run('S7', 'PHT Business');
+    insertReason.run(
+      'C1',
+      'Parents / Carer who are required to attend Hospital'
+    );
     insertReason.run(
       'C2',
       'Return journey home for carers/relatives who have attended the hospital with a patient'
