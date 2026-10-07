@@ -9055,6 +9055,12 @@ function bookingStatusGroup(booking) {
       status
     )
   ) {
+    if (
+      booking?.liveState === 'stale'
+    ) {
+      return 'stale';
+    }
+
     return 'live';
   }
 
