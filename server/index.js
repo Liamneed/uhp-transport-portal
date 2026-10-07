@@ -366,10 +366,33 @@ function seedReferenceData() {
       VALUES (?, ?, 'active')
     `);
 
-    insertReason.run('RC01', 'Patient Discharge');
-    insertReason.run('RC02', 'Outpatient Transport');
-    insertReason.run('RC03', 'Patient Transfer');
-    insertReason.run('RC04', 'Treatment / Appointment');
+    insertReason.run('S1', 'Transfer');
+    insertReason.run('S2', 'Extra Duties');
+    insertReason.run('S3', 'Bank Holiday');
+    insertReason.run('S4', 'Illness');
+    insertReason.run('S5', 'Work delay');
+    insertReason.run('S6', 'Staff Expenses');
+    insertReason.run('S7', 'PHT Business');
+    insertReason.run(
+      'C2',
+      'Return journey home for carers/relatives who have attended the hospital with a patient'
+    );
+    insertReason.run(
+      'O1',
+      'Transportation of URGENT casenotes (i.e. those required within 1 hour)'
+    );
+    insertReason.run(
+      'O2',
+      'Delivery of late TTA, etc to speed up discharge'
+    );
+    insertReason.run(
+      'O3',
+      'Delivery of items missed at discharge'
+    );
+    insertReason.run(
+      'O4',
+      'Other deliveries'
+    );
 
     const insertUser = db.prepare(`
       INSERT OR IGNORE INTO users

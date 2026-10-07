@@ -13502,9 +13502,14 @@ function CodingReviewPage() {
                         )}`
                       }
                     >
-                      {codingStatusLabel(
-                        selectedBooking.holderStatus
-                      )}
+                      {selectedBooking.holderStatus ===
+                        'not_checked' &&
+                      selectedBooking.budgetStatus !==
+                        'valid'
+                        ? 'Waiting for valid budget'
+                        : codingStatusLabel(
+                            selectedBooking.holderStatus
+                          )}
                     </span>
                   </div>
                 </div>
@@ -24145,7 +24150,7 @@ function SpecialTransportPage({
       'Derriford Hospital, Plymouth',
       'PL6 8DH',
       '410023',
-      'RC01',
+      'S3',
       'Example only - leave this row in place. Enter real requests from row 3 onwards.'
     ];
 
