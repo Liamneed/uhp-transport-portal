@@ -1346,12 +1346,8 @@ function ChristmasTransportEnquiriesPage() {
       return value;
     }
 
-    return date.toLocaleString(
-      'en-GB',
-      {
-        dateStyle: 'medium',
-        timeStyle: 'short'
-      }
+    return formatBookingDateTime(
+      value
     );
   }
 
@@ -5339,15 +5335,15 @@ function TransportOperationsPage({
 
                           <span>
                             {
-                              new Date(
+                              formatBookingDateTime(
                                 window.startsAt
-                              ).toLocaleString()
+                              )
                             }
                             {' → '}
                             {
-                              new Date(
+                              formatBookingDateTime(
                                 window.endsAt
-                              ).toLocaleString()
+                              )
                             }
                           </span>
                         </div>
@@ -8934,9 +8930,33 @@ function formatOperationalStatus(status) {
 function formatBookingDateTime(value) {
   if (!value) return '—';
 
-  return value
-    .replace('T', ' ')
-    .slice(0, 16);
+  const raw =
+    String(value).trim();
+
+  const match =
+    raw.match(
+      /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2}))?/
+    );
+
+  if (!match) {
+    return raw;
+  }
+
+  const [
+    ,
+    year,
+    month,
+    day,
+    hour,
+    minute
+  ] = match;
+
+  const date =
+    `${day}-${month}-${year}`;
+
+  return hour && minute
+    ? `${date} ${hour}:${minute}`
+    : date;
 }
 
 
@@ -10727,17 +10747,35 @@ function BookingDetailModal({
                   </div>
                 )}
 
-                {booking.budgetNumber && (
-                  <div>
-                    <small>Budget</small>
-                    <strong>
-                      {booking.budgetNumber}
-                      {booking.budgetName
-                        ? ` · ${booking.budgetName}`
-                        : ''}
-                    </strong>
-                  </div>
-                )}
+                {
+                  (
+                    booking.budgetNumber ||
+                    booking.parsedBudgetNumber
+                  ) && (
+                    <div>
+                      <small>
+                        {
+                          booking.budgetNumber
+                            ? 'Budget'
+                            : 'Budget · imported'
+                        }
+                      </small>
+
+                      <strong>
+                        {
+                          booking.budgetNumber ||
+                          booking.parsedBudgetNumber
+                        }
+
+                        {
+                          booking.budgetName
+                            ? ` · ${booking.budgetName}`
+                            : ''
+                        }
+                      </strong>
+                    </div>
+                  )
+                }
 
                 {booking.budgetHolder && (
                   <div>
@@ -10748,17 +10786,35 @@ function BookingDetailModal({
                   </div>
                 )}
 
-                {booking.reasonCode && (
-                  <div>
-                    <small>Reason</small>
-                    <strong>
-                      {booking.reasonCode}
-                      {booking.reasonDescription
-                        ? ` · ${booking.reasonDescription}`
-                        : ''}
-                    </strong>
-                  </div>
-                )}
+                {
+                  (
+                    booking.reasonCode ||
+                    booking.parsedReasonCode
+                  ) && (
+                    <div>
+                      <small>
+                        {
+                          booking.reasonCode
+                            ? 'Reason'
+                            : 'Reason · imported'
+                        }
+                      </small>
+
+                      <strong>
+                        {
+                          booking.reasonCode ||
+                          booking.parsedReasonCode
+                        }
+
+                        {
+                          booking.reasonDescription
+                            ? ` · ${booking.reasonDescription}`
+                            : ''
+                        }
+                      </strong>
+                    </div>
+                  )
+                }
 
                 <div>
                   <small>Financial Status</small>
@@ -12354,12 +12410,39 @@ function NacBookingsPage({
 
                           <td>
                             <strong>
-                              {booking.budgetNumber}
+                              {
+                                booking.budgetNumber ||
+                                booking.parsedBudgetNumber ||
+                                '—'
+                              }
                             </strong>
 
                             <small>
-                              {booking.reasonCode}
+                              {
+                                booking.reasonCode ||
+                                booking.parsedReasonCode ||
+                                (
+                                  booking.financialStatus ===
+                                    'coding_required'
+                                    ? 'Needs coding'
+                                    : '—'
+                                )
+                              }
                             </small>
+
+                            {
+                              booking.source === 'import' &&
+                              booking.financialStatus ===
+                                'coding_required' &&
+                              (
+                                booking.parsedBudgetNumber ||
+                                booking.parsedReasonCode
+                              ) && (
+                                <small>
+                                  Imported coding · review required
+                                </small>
+                              )
+                            }
                           </td>
 
                           <td>
@@ -12479,11 +12562,9 @@ function bookingNoticeReference(booking) {
 
 
 function formatPickup(value) {
-  if (!value) return '—';
-
-  return value
-    .replace('T', ' ')
-    .slice(0, 16);
+  return formatBookingDateTime(
+    value
+  );
 }
 
 
@@ -12574,8 +12655,10 @@ function BudgetInvoicesPage() {
               booking.pickupAddress,
               booking.destinationAddress,
               booking.budgetNumber,
+              booking.parsedBudgetNumber,
               booking.budgetName,
               booking.reasonCode,
+              booking.parsedReasonCode,
               booking.reasonDescription,
               booking.createdBy,
               booking.department
@@ -15023,15 +15106,14 @@ function MyBookingsPage({
           'Pickup date & time',
 
         before:
-          String(
-            editingBooking.requestedPickupAt ||
-            ''
-          )
-            .replace('T', ' ')
-            .slice(0, 16),
+          formatBookingDateTime(
+            editingBooking.requestedPickupAt
+          ),
 
         after:
-          `${editForm.pickupDate} ${editForm.pickupTime}`
+          formatBookingDateTime(
+            `${editForm.pickupDate}T${editForm.pickupTime}`
+          )
       },
 
       {
@@ -27560,9 +27642,9 @@ function BookTransportPage({ currentUser }) {
           <div>
             <small>Pickup</small>
             <strong>
-              {confirmation.requestedPickupAt
-                .replace('T', ' ')
-                .slice(0, 16)}
+              {formatBookingDateTime(
+                confirmation.requestedPickupAt
+              )}
             </strong>
           </div>
 
