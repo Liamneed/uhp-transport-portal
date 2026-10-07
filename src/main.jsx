@@ -7825,11 +7825,17 @@ function UhpAdminDashboard() {
           bookingIsOverdue(booking)
       );
 
+    const codingRequired =
+      bookings.filter(
+        (booking) =>
+          booking.financialStatus ===
+            'coding_required'
+      );
+
     const financialAttention =
       bookings.filter(
         (booking) =>
           [
-            'coding_required',
             'pending_review',
             'disputed',
             'adjustment_required'
@@ -7837,16 +7843,6 @@ function UhpAdminDashboard() {
             booking.financialStatus
           )
       );
-
-    const attentionIds =
-      new Set([
-        ...operationalAttention.map(
-          (booking) => booking.id
-        ),
-        ...financialAttention.map(
-          (booking) => booking.id
-        )
-      ]);
 
     const recent =
       [...bookings]
@@ -7874,9 +7870,8 @@ function UhpAdminDashboard() {
       cancelledOrNoFareToday,
       upcoming,
       operationalAttention,
+      codingRequired,
       financialAttention,
-      needsAttention:
-        attentionIds.size,
       recent
     };
   }, [bookings]);
@@ -8099,13 +8094,17 @@ function UhpAdminDashboard() {
         </div>
 
         <div className="card overview-kpi attention">
-          <small>Needs Attention</small>
+          <small>Coding Required</small>
 
           <strong>
-            {dashboard.needsAttention}
+            {
+              dashboard
+                .codingRequired
+                .length
+            }
           </strong>
 
-          <span>account items</span>
+          <span>financial coding</span>
         </div>
       </div>
 
@@ -8214,6 +8213,64 @@ function UhpAdminDashboard() {
         <section className="card overview-panel">
           <div className="overview-panel-heading">
             <div>
+              <small>Financial coding</small>
+
+              <h2>
+                Coding Required
+              </h2>
+
+              <p>
+                Imported bookings awaiting
+                valid UHP budget and reason coding.
+              </p>
+            </div>
+
+            <strong className="overview-panel-count finance">
+              {
+                dashboard
+                  .codingRequired
+                  .length
+              }
+            </strong>
+          </div>
+
+          {dashboard
+            .codingRequired
+            .length ? (
+            <div className="overview-booking-list">
+              {dashboard
+                .codingRequired
+                .slice(0, 5)
+                .map(
+                  (booking) =>
+                    accountBookingRow(
+                      booking,
+                      {
+                        showFinancialAttention:
+                          true
+                      }
+                    )
+                )}
+            </div>
+          ) : (
+            <div className="role-dashboard-empty success">
+              <CheckCircle2 size={28}/>
+
+              <strong>
+                Coding clear
+              </strong>
+
+              <span>
+                No bookings currently require
+                UHP financial coding.
+              </span>
+            </div>
+          )}
+        </section>
+
+        <section className="card overview-panel">
+          <div className="overview-panel-heading">
+            <div>
               <small>Finance</small>
 
               <h2>
@@ -8221,8 +8278,8 @@ function UhpAdminDashboard() {
               </h2>
 
               <p>
-                Coding, review, dispute and
-                adjustment workload.
+                Reviews, disputes and
+                financial adjustments.
               </p>
             </div>
 
@@ -16203,21 +16260,57 @@ function MyBookingsPage({
 
                           <td>
                             <strong>
-                              {booking.budgetNumber}
+                              {
+                                booking.budgetNumber ||
+                                booking.parsedBudgetNumber ||
+                                (
+                                  booking.financialStatus ===
+                                    'coding_required'
+                                    ? 'Needs coding'
+                                    : '—'
+                                )
+                              }
                             </strong>
 
                             <small>
-                              {booking.budgetName}
+                              {
+                                booking.budgetNumber
+                                  ? booking.budgetName || '—'
+                                  : booking.parsedBudgetNumber
+                                    ? 'Imported · review required'
+                                    : booking.financialStatus ===
+                                        'coding_required'
+                                      ? 'Not supplied by Autocab'
+                                      : '—'
+                              }
                             </small>
                           </td>
 
                           <td>
                             <strong>
-                              {booking.reasonCode}
+                              {
+                                booking.reasonCode ||
+                                booking.parsedReasonCode ||
+                                (
+                                  booking.financialStatus ===
+                                    'coding_required'
+                                    ? 'Needs coding'
+                                    : '—'
+                                )
+                              }
                             </strong>
 
                             <small>
-                              {booking.reasonDescription}
+                              {
+                                booking.reasonCode
+                                  ? booking.reasonDescription || '—'
+                                  : booking.parsedReasonCode
+                                    ? 'Imported · review required'
+                                    : booking.financialStatus ===
+                                        'coding_required'
+                                      ? 'Not supplied by Autocab'
+                                      : '—'
+                              }
                             </small>
                           </td>
 
