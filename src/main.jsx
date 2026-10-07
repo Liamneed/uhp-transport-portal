@@ -10778,8 +10778,25 @@ function BookingDetailModal({
                       <div>
                         <small>Budget Holder</small>
                         <strong>
-                          {booking.parsedBudgetHolder ||
-                            'Not supplied'}
+                          {
+                            booking.parsedBudgetHolder
+                              ? String(
+                                  booking.parsedBudgetHolder
+                                )
+                                  .trim()
+                                  .toLowerCase()
+                                  .replace(
+                                    /(^|[\s'-])([a-z])/g,
+                                    (
+                                      _,
+                                      boundary,
+                                      letter
+                                    ) =>
+                                      boundary +
+                                      letter.toUpperCase()
+                                  )
+                              : 'Not supplied'
+                          }
                         </strong>
                         {booking.codingHolderStatus && (
                           <span>
@@ -10860,7 +10877,13 @@ function BookingDetailModal({
                       <strong>
                         {
                           booking.reasonCode ||
-                          booking.parsedReasonCode
+                          (
+                            booking.parsedReasonCode
+                              ? String(
+                                  booking.parsedReasonCode
+                                ).toUpperCase()
+                              : null
+                          )
                         }
 
                         {
@@ -12477,7 +12500,13 @@ function NacBookingsPage({
                             <small>
                               {
                                 booking.reasonCode ||
-                                booking.parsedReasonCode ||
+                                (
+                                  booking.parsedReasonCode
+                                    ? String(
+                                        booking.parsedReasonCode
+                                      ).toUpperCase()
+                                    : null
+                                ) ||
                                 (
                                   booking.financialStatus ===
                                     'coding_required'
@@ -16290,7 +16319,13 @@ function MyBookingsPage({
                             <strong>
                               {
                                 booking.reasonCode ||
-                                booking.parsedReasonCode ||
+                                (
+                                  booking.parsedReasonCode
+                                    ? String(
+                                        booking.parsedReasonCode
+                                      ).toUpperCase()
+                                    : null
+                                ) ||
                                 (
                                   booking.financialStatus ===
                                     'coding_required'

@@ -20728,6 +20728,19 @@ function normaliseCodingName(value) {
 }
 
 
+function normaliseCodingDisplayName(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .replace(
+      /(^|[\s'-])([a-z])/g,
+      (_, boundary, letter) =>
+        boundary + letter.toUpperCase()
+    );
+}
+
+
 function parseAutocabOurReference(
   rawReference
 ) {
@@ -20758,20 +20771,31 @@ function parseAutocabOurReference(
     return {
       rawReference: raw,
       reasonCode:
-        parts[0] || null,
+        parts[0]
+          ? parts[0].toUpperCase()
+          : null,
       budgetNumber:
         parts[1] || null,
       budgetHolder:
-        parts.slice(2).join('/') || null,
+        parts.slice(2).join('/')
+          ? normaliseCodingDisplayName(
+              parts.slice(2).join('/')
+            )
+          : null,
       formatValid: false
     };
   }
 
   return {
     rawReference: raw,
-    reasonCode: parts[0],
-    budgetNumber: parts[1],
-    budgetHolder: parts[2],
+    reasonCode:
+      parts[0].toUpperCase(),
+    budgetNumber:
+      parts[1],
+    budgetHolder:
+      normaliseCodingDisplayName(
+        parts[2]
+      ),
     formatValid: true
   };
 }
