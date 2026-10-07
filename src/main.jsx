@@ -12989,6 +12989,74 @@ function CodingReviewPage() {
     selectedBudget?.holders ?? [];
 
 
+  const codingRecommendations =
+    selectedBooking?.recommendations ?? {
+      reasonCodes: [],
+      budgets: [],
+      holders: []
+    };
+
+
+  const hasCodingRecommendations =
+    Boolean(
+      codingRecommendations.reasonCodes
+        ?.length ||
+      codingRecommendations.budgets
+        ?.length ||
+      codingRecommendations.holders
+        ?.length
+    );
+
+
+  function useReasonRecommendation(
+    recommendation
+  ) {
+    setForm((current) => ({
+      ...current,
+      reasonCodeId:
+        String(recommendation.id)
+    }));
+
+    setError('');
+    setNotice('');
+  }
+
+
+  function useBudgetRecommendation(
+    recommendation
+  ) {
+    setForm((current) => ({
+      ...current,
+      budgetId:
+        String(recommendation.id),
+      budgetHolderUserId: ''
+    }));
+
+    setError('');
+    setNotice('');
+  }
+
+
+  function useHolderRecommendation(
+    recommendation
+  ) {
+    setForm((current) => ({
+      ...current,
+      budgetId:
+        String(
+          recommendation.budgetId
+        ),
+      budgetHolderUserId:
+        String(
+          recommendation.userId
+        )
+    }));
+
+    setError('');
+    setNotice('');
+  }
+
+
   function selectBooking(bookingId) {
     setSelectedBookingId(
       bookingId
@@ -13097,7 +13165,7 @@ function CodingReviewPage() {
         bookingNoticeReference(selectedBooking);
 
       setNotice(
-        `${approvedReference} coding has been approved.`
+        `${approvedReference} coding approved. The booking has moved out of Coding Review and is now available in All Bookings.`
       );
 
       await loadCodingReview();
@@ -13441,6 +13509,350 @@ function CodingReviewPage() {
                   </div>
                 </div>
               </div>
+
+
+              {hasCodingRecommendations && (
+                <div className="card coding-suggestions-card">
+                  <div className="coding-review-card-heading">
+                    <div>
+                      <span className="coding-review-kicker">
+                        Suggested corrections
+                      </span>
+
+                      <h2>
+                        Possible Master Data Matches
+                      </h2>
+
+                      <p>
+                        These are suggestions only.
+                        Review the match before
+                        approving the coding.
+                      </p>
+                    </div>
+
+                    <span className="coding-suggestion-advisory">
+                      Review required
+                    </span>
+                  </div>
+
+
+                  <div className="coding-suggestion-groups">
+                    {codingRecommendations
+                      .reasonCodes
+                      ?.length > 0 && (
+                      <div className="coding-suggestion-group">
+                        <div className="coding-suggestion-group-heading">
+                          <div>
+                            <small>
+                              Imported reason code
+                            </small>
+
+                            <strong>
+                              {selectedBooking
+                                .parsedReasonCode ||
+                                '—'}
+                            </strong>
+                          </div>
+
+                          <span>
+                            {codingRecommendations
+                              .reasonCodes.some(
+                                (item) =>
+                                  item.confidence ===
+                                  'high'
+                              )
+                              ? 'Likely match'
+                              : 'Possible matches'}
+                          </span>
+                        </div>
+
+                        <div className="coding-suggestion-list">
+                          {codingRecommendations
+                            .reasonCodes.map(
+                              (recommendation) => (
+                                <div
+                                  className="coding-suggestion-item"
+                                  key={
+                                    `reason-${recommendation.id}`
+                                  }
+                                >
+                                  <div>
+                                    <div className="coding-suggestion-title">
+                                      <strong>
+                                        {recommendation.code}
+                                      </strong>
+
+                                      <span
+                                        className={
+                                          `coding-suggestion-confidence ${recommendation.confidence}`
+                                        }
+                                      >
+                                        {recommendation.confidence ===
+                                        'high'
+                                          ? 'Likely'
+                                          : 'Possible'}
+                                      </span>
+                                    </div>
+
+                                    <small>
+                                      {recommendation.description}
+                                    </small>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    className={
+                                      String(form.reasonCodeId) ===
+                                      String(recommendation.id)
+                                        ? 'coding-suggestion-use selected'
+                                        : 'coding-suggestion-use'
+                                    }
+                                    onClick={() =>
+                                      useReasonRecommendation(
+                                        recommendation
+                                      )
+                                    }
+                                  >
+                                    {String(form.reasonCodeId) ===
+                                    String(recommendation.id)
+                                      ? 'Selected ✓'
+                                      : 'Use'}
+                                  </button>
+                                </div>
+                              )
+                            )}
+                        </div>
+                      </div>
+                    )}
+
+
+                    {codingRecommendations
+                      .budgets
+                      ?.length > 0 && (
+                      <div className="coding-suggestion-group">
+                        <div className="coding-suggestion-group-heading">
+                          <div>
+                            <small>
+                              Imported budget
+                            </small>
+
+                            <strong>
+                              {selectedBooking
+                                .parsedBudgetNumber ||
+                                '—'}
+                            </strong>
+                          </div>
+
+                          <span>
+                            {codingRecommendations
+                              .budgets.some(
+                                (item) =>
+                                  item.confidence ===
+                                  'high'
+                              )
+                              ? 'Likely match'
+                              : 'Possible matches'}
+                          </span>
+                        </div>
+
+                        <div className="coding-suggestion-list">
+                          {codingRecommendations
+                            .budgets.map(
+                              (
+                                recommendation,
+                                index
+                              ) => (
+                                <div
+                                  className="coding-suggestion-item"
+                                  key={
+                                    `budget-${recommendation.id}-${recommendation.matchedNumber}-${index}`
+                                  }
+                                >
+                                  <div>
+                                    <div className="coding-suggestion-title">
+                                      <strong>
+                                        {recommendation
+                                          .aliasBudgetNumber
+                                          ? `${recommendation.matchedNumber} → ${recommendation.budgetNumber}`
+                                          : recommendation.budgetNumber}
+                                      </strong>
+
+                                      <span
+                                        className={
+                                          `coding-suggestion-confidence ${recommendation.confidence}`
+                                        }
+                                      >
+                                        {recommendation.confidence ===
+                                        'high'
+                                          ? 'Likely'
+                                          : 'Possible'}
+                                      </span>
+                                    </div>
+
+                                    <small>
+                                      {recommendation.name}
+
+                                      {recommendation.department
+                                        ? ` · ${recommendation.department}`
+                                        : ''}
+                                    </small>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    className={
+                                      String(form.budgetId) ===
+                                      String(recommendation.id)
+                                        ? 'coding-suggestion-use selected'
+                                        : 'coding-suggestion-use'
+                                    }
+                                    onClick={() =>
+                                      useBudgetRecommendation(
+                                        recommendation
+                                      )
+                                    }
+                                  >
+                                    {String(form.budgetId) ===
+                                    String(recommendation.id)
+                                      ? 'Selected ✓'
+                                      : 'Use'}
+                                  </button>
+                                </div>
+                              )
+                            )}
+                        </div>
+                      </div>
+                    )}
+
+
+                    {codingRecommendations
+                      .holders
+                      ?.length > 0 && (
+                      <div className="coding-suggestion-group">
+                        <div className="coding-suggestion-group-heading">
+                          <div>
+                            <small>
+                              Imported budget holder
+                            </small>
+
+                            <strong>
+                              {selectedBooking
+                                .parsedBudgetHolder ||
+                                '—'}
+                            </strong>
+                          </div>
+
+                          <span>
+                            {codingRecommendations
+                              .holders.some(
+                                (item) =>
+                                  item.confidence ===
+                                  'high'
+                              )
+                              ? 'Likely match'
+                              : 'Possible matches'}
+                          </span>
+                        </div>
+
+                        <div className="coding-suggestion-list">
+                          {codingRecommendations
+                            .holders.map(
+                              (
+                                recommendation,
+                                index
+                              ) => (
+                                <div
+                                  className="coding-suggestion-item"
+                                  key={
+                                    `holder-${recommendation.userId}-${recommendation.budgetId}-${index}`
+                                  }
+                                >
+                                  <div>
+                                    <div className="coding-suggestion-title">
+                                      <strong>
+                                        {recommendation.name}
+                                      </strong>
+
+                                      <span
+                                        className={
+                                          `coding-suggestion-confidence ${recommendation.confidence}`
+                                        }
+                                      >
+                                        {recommendation.confidence ===
+                                        'high'
+                                          ? 'Likely'
+                                          : 'Possible'}
+                                      </span>
+                                    </div>
+
+                                    <small>
+                                      {recommendation.budgetNumber}
+                                      {' — '}
+                                      {recommendation.budgetName}
+                                      {' · '}
+                                      {formatStatus(
+                                        recommendation.assignmentType
+                                      )}
+                                    </small>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    className={
+                                      String(
+                                        form.budgetHolderUserId
+                                      ) ===
+                                        String(
+                                          recommendation.userId
+                                        ) &&
+                                      String(form.budgetId) ===
+                                        String(
+                                          recommendation.budgetId
+                                        )
+                                        ? 'coding-suggestion-use selected'
+                                        : 'coding-suggestion-use'
+                                    }
+                                    onClick={() =>
+                                      useHolderRecommendation(
+                                        recommendation
+                                      )
+                                    }
+                                  >
+                                    {String(
+                                      form.budgetHolderUserId
+                                    ) ===
+                                      String(
+                                        recommendation.userId
+                                      ) &&
+                                    String(form.budgetId) ===
+                                      String(
+                                        recommendation.budgetId
+                                      )
+                                      ? 'Selected ✓'
+                                      : 'Use'}
+                                  </button>
+                                </div>
+                              )
+                            )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+
+                  <div className="coding-suggestion-footnote">
+                    <AlertTriangle size={16}/>
+
+                    <span>
+                      Using a suggestion only fills
+                      the form below. It does not
+                      change the booking until
+                      <strong> Approve Coding</strong>
+                      {' '}is selected.
+                    </span>
+                  </div>
+                </div>
+              )}
 
 
               <form

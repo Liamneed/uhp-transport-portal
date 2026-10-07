@@ -6149,9 +6149,16 @@ function approveBudgetCandidate(
         reviewerUserId
     });
 
+    const codingReevaluation =
+      reEvaluateImportedBookingsForBudgetCandidate(
+        budgetNumber,
+        reviewerUserId
+      );
+
     db.exec('COMMIT');
 
     return {
+      codingReevaluation,
       candidate:
         getBudgetCandidateById(
           candidateId
@@ -6193,6 +6200,11 @@ function linkBudgetCandidate(
     error.statusCode = 400;
     throw error;
   }
+
+  const importedBudgetNumber =
+    String(
+      candidate.budgetNumber || ''
+    ).trim();
 
   const budget =
     getBudgetById(
@@ -6256,9 +6268,16 @@ function linkBudgetCandidate(
         reviewerUserId
     });
 
+    const codingReevaluation =
+      reEvaluateImportedBookingsForBudgetCandidate(
+        importedBudgetNumber,
+        reviewerUserId
+      );
+
     db.exec('COMMIT');
 
     return {
+      codingReevaluation,
       candidate:
         getBudgetCandidateById(
           candidateId
@@ -16887,6 +16906,10 @@ function listCodingReviewBookings() {
   return bookings.map(
     (booking) => ({
       ...booking,
+      recommendations:
+        buildCodingRecommendations(
+          booking
+        ),
       stops:
         stopsStatement.all(
           booking.id
@@ -20998,6 +21021,768 @@ function evaluateAutocabBookingCoding(
   }
 
   return result;
+}
+
+
+function codingRecommendationNormalise(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+
+function codingRecommendationDistance(
+  leftValue,
+  rightValue
+) {
+  const left =
+    codingRecommendationNormalise(
+      leftValue
+    );
+
+  const right =
+    codingRecommendationNormalise(
+      rightValue
+    );
+
+  if (left === right) {
+    return 0;
+  }
+
+  if (!left) {
+    return right.length;
+  }
+
+  if (!right) {
+    return left.length;
+  }
+
+  const rows =
+    left.length + 1;
+
+  const columns =
+    right.length + 1;
+
+  const matrix =
+    Array.from(
+      { length: rows },
+      () =>
+        Array(columns).fill(0)
+    );
+
+  for (
+    let row = 0;
+    row < rows;
+    row += 1
+  ) {
+    matrix[row][0] = row;
+  }
+
+  for (
+    let column = 0;
+    column < columns;
+    column += 1
+  ) {
+    matrix[0][column] = column;
+  }
+
+  for (
+    let row = 1;
+    row < rows;
+    row += 1
+  ) {
+    for (
+      let column = 1;
+      column < columns;
+      column += 1
+    ) {
+      const substitutionCost =
+        left[row - 1] ===
+        right[column - 1]
+          ? 0
+          : 1;
+
+      matrix[row][column] =
+        Math.min(
+          matrix[row - 1][column] + 1,
+          matrix[row][column - 1] + 1,
+          matrix[row - 1][column - 1] +
+            substitutionCost
+        );
+
+      if (
+        row > 1 &&
+        column > 1 &&
+        left[row - 1] ===
+          right[column - 2] &&
+        left[row - 2] ===
+          right[column - 1]
+      ) {
+        matrix[row][column] =
+          Math.min(
+            matrix[row][column],
+            matrix[row - 2][column - 2] + 1
+          );
+      }
+    }
+  }
+
+  return matrix[
+    left.length
+  ][
+    right.length
+  ];
+}
+
+
+function codingRecommendationThreshold(
+  value
+) {
+  const length =
+    codingRecommendationNormalise(
+      value
+    ).length;
+
+  if (length <= 6) {
+    return 1;
+  }
+
+  if (length <= 12) {
+    return 2;
+  }
+
+  return 3;
+}
+
+
+function finaliseCodingRecommendations(
+  matches
+) {
+  if (!matches.length) {
+    return [];
+  }
+
+  const sorted =
+    [...matches].sort(
+      (left, right) =>
+        left.distance -
+        right.distance
+    );
+
+  const bestDistance =
+    sorted[0].distance;
+
+  const equallyBest =
+    sorted.filter(
+      (item) =>
+        item.distance ===
+        bestDistance
+    ).length;
+
+  return sorted
+    .slice(0, 3)
+    .map((item) => ({
+      ...item,
+      confidence:
+        item.distance === bestDistance &&
+        equallyBest === 1 &&
+        bestDistance <= 1
+          ? 'high'
+          : 'medium'
+    }));
+}
+
+
+function buildCodingRecommendations(
+  booking
+) {
+  const recommendations = {
+    reasonCodes: [],
+    budgets: [],
+    holders: []
+  };
+
+  const parsedReasonCode =
+    normaliseAutocabScalar(
+      booking?.parsedReasonCode
+    );
+
+  const parsedBudgetNumber =
+    normaliseAutocabScalar(
+      booking?.parsedBudgetNumber
+    );
+
+  const parsedBudgetHolder =
+    normaliseAutocabScalar(
+      booking?.parsedBudgetHolder
+    );
+
+  if (
+    parsedReasonCode &&
+    booking?.reasonStatus !== 'valid'
+  ) {
+    const threshold =
+      codingRecommendationThreshold(
+        parsedReasonCode
+      );
+
+    recommendations.reasonCodes =
+      db.prepare(`
+        SELECT
+          id,
+          code,
+          description
+        FROM reason_codes
+        WHERE status = 'active'
+          AND (
+            effective_from IS NULL OR
+            effective_from <= date('now')
+          )
+          AND (
+            effective_to IS NULL OR
+            effective_to >= date('now')
+          )
+      `).all()
+        .map((reasonCode) => ({
+          ...reasonCode,
+          distance:
+            codingRecommendationDistance(
+              parsedReasonCode,
+              reasonCode.code
+            )
+        }))
+        .filter(
+          (reasonCode) =>
+            reasonCode.distance > 0 &&
+            reasonCode.distance <=
+              threshold
+        )
+        ;
+
+    recommendations.reasonCodes =
+      finaliseCodingRecommendations(
+        recommendations.reasonCodes
+          .sort(
+            (left, right) =>
+              left.distance -
+                right.distance ||
+              left.code.localeCompare(
+                right.code
+              )
+          )
+      );
+  }
+
+  if (
+    parsedBudgetNumber &&
+    booking?.budgetStatus !== 'valid'
+  ) {
+    const threshold =
+      codingRecommendationThreshold(
+        parsedBudgetNumber
+      );
+
+    const budgetMatches =
+      db.prepare(`
+        SELECT
+          b.id,
+          b.budget_number
+            AS budgetNumber,
+          b.name,
+          b.department_id
+            AS departmentId,
+          d.name AS department,
+          b.budget_number
+            AS matchedNumber,
+          NULL AS aliasBudgetNumber
+
+        FROM budgets b
+
+        LEFT JOIN departments d
+          ON d.id = b.department_id
+
+        WHERE b.status = 'active'
+          AND (
+            b.effective_from IS NULL OR
+            b.effective_from <= date('now')
+          )
+          AND (
+            b.effective_to IS NULL OR
+            b.effective_to >= date('now')
+          )
+
+        UNION ALL
+
+        SELECT
+          b.id,
+          b.budget_number
+            AS budgetNumber,
+          b.name,
+          b.department_id
+            AS departmentId,
+          d.name AS department,
+          bc.budget_number
+            AS matchedNumber,
+          bc.budget_number
+            AS aliasBudgetNumber
+
+        FROM budget_candidates bc
+
+        JOIN budgets b
+          ON b.id =
+            bc.resolved_budget_id
+
+        LEFT JOIN departments d
+          ON d.id = b.department_id
+
+        WHERE bc.status = 'linked'
+          AND b.status = 'active'
+          AND (
+            b.effective_from IS NULL OR
+            b.effective_from <= date('now')
+          )
+          AND (
+            b.effective_to IS NULL OR
+            b.effective_to >= date('now')
+          )
+      `).all();
+
+    const seen =
+      new Set();
+
+    recommendations.budgets =
+      budgetMatches
+        .map((budget) => ({
+          ...budget,
+          distance:
+            codingRecommendationDistance(
+              parsedBudgetNumber,
+              budget.matchedNumber
+            )
+        }))
+        .filter(
+          (budget) =>
+            budget.distance > 0 &&
+            budget.distance <=
+              threshold
+        )
+        .sort(
+          (left, right) =>
+            left.distance -
+              right.distance ||
+            String(
+              left.matchedNumber
+            ).localeCompare(
+              String(
+                right.matchedNumber
+              )
+            )
+        )
+        .filter((budget) => {
+          const key =
+            `${budget.id}:${budget.matchedNumber}`;
+
+          if (seen.has(key)) {
+            return false;
+          }
+
+          seen.add(key);
+          return true;
+        });
+
+    recommendations.budgets =
+      finaliseCodingRecommendations(
+        recommendations.budgets
+      );
+  }
+
+  if (parsedBudgetHolder) {
+    const evaluated =
+      evaluateAutocabBookingCoding(
+        booking?.rawReference ||
+        booking?.autocabReference ||
+        ''
+      );
+
+    const candidateBudgetIds =
+      new Set();
+
+    if (evaluated?.budgetId) {
+      candidateBudgetIds.add(
+        Number(evaluated.budgetId)
+      );
+    }
+
+    for (
+      const budget of
+      recommendations.budgets
+    ) {
+      candidateBudgetIds.add(
+        Number(budget.id)
+      );
+    }
+
+    const budgetIds =
+      [...candidateBudgetIds]
+        .filter(
+          (budgetId) =>
+            Number.isInteger(
+              budgetId
+            ) &&
+            budgetId > 0
+        );
+
+    if (budgetIds.length > 0) {
+      const placeholders =
+        budgetIds
+          .map(() => '?')
+          .join(', ');
+
+      const holderRows =
+        db.prepare(`
+          SELECT
+            u.id AS userId,
+            u.first_name AS firstName,
+            u.last_name AS lastName,
+            ba.budget_id AS budgetId,
+            ba.assignment_type
+              AS assignmentType,
+            b.budget_number
+              AS budgetNumber,
+            b.name AS budgetName
+          FROM budget_assignments ba
+          JOIN users u
+            ON u.id = ba.user_id
+          JOIN budgets b
+            ON b.id = ba.budget_id
+          WHERE ba.budget_id IN (
+            ${placeholders}
+          )
+            AND ba.assignment_type IN (
+              'primary_holder',
+              'deputy_holder'
+            )
+            AND ba.is_active = 1
+            AND (
+              ba.valid_from IS NULL OR
+              ba.valid_from <= date('now')
+            )
+            AND (
+              ba.valid_to IS NULL OR
+              ba.valid_to >= date('now')
+            )
+            AND u.status = 'active'
+        `).all(
+          ...budgetIds
+        );
+
+      const threshold =
+        codingRecommendationThreshold(
+          parsedBudgetHolder
+        );
+
+      recommendations.holders =
+        holderRows
+          .map((holder) => {
+            const name =
+              `${holder.firstName} ${holder.lastName}`;
+
+            return {
+              ...holder,
+              name,
+              distance:
+                codingRecommendationDistance(
+                  parsedBudgetHolder,
+                  name
+                )
+            };
+          })
+          .filter(
+            (holder) =>
+              holder.distance > 0 &&
+              holder.distance <=
+                threshold
+          )
+          .sort(
+            (left, right) =>
+              left.distance -
+                right.distance ||
+              left.name.localeCompare(
+                right.name
+              )
+          );
+
+      recommendations.holders =
+        finaliseCodingRecommendations(
+          recommendations.holders
+        );
+    }
+  }
+
+  return recommendations;
+}
+
+
+function getImportedBookingCustomerId(
+  bookingId
+) {
+  const integrationEvent =
+    db.prepare(`
+      SELECT
+        json_extract(
+          payload_json,
+          '$.Account.Id'
+        ) AS customerId
+      FROM integration_events
+      WHERE booking_id = ?
+        AND provider = 'autocab'
+        AND direction = 'inbound'
+        AND route_suffix = 'created'
+      ORDER BY id
+      LIMIT 1
+    `).get(
+      bookingId
+    );
+
+  const eventCustomerId =
+    normaliseAutocabScalar(
+      integrationEvent?.customerId
+    );
+
+  if (eventCustomerId) {
+    return eventCustomerId;
+  }
+
+  const settings =
+    db.prepare(`
+      SELECT
+        autocab_customer_id
+          AS autocabCustomerId
+      FROM portal_settings
+      WHERE id = 1
+    `).get();
+
+  return normaliseAutocabScalar(
+    settings?.autocabCustomerId
+  );
+}
+
+
+function insertResolvedCodingSnapshot(
+  bookingId,
+  coding
+) {
+  const existing =
+    db.prepare(`
+      SELECT booking_id
+      FROM booking_account_snapshot
+      WHERE booking_id = ?
+      LIMIT 1
+    `).get(
+      bookingId
+    );
+
+  if (existing) {
+    return false;
+  }
+
+  db.prepare(`
+    INSERT INTO booking_account_snapshot
+      (
+        booking_id,
+        customer_id,
+        budget_id,
+        budget_number,
+        budget_name,
+        reason_code_id,
+        reason_code,
+        reason_description,
+        budget_holder_user_id,
+        budget_holder_name,
+        department_id,
+        department_name
+      )
+    VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    )
+  `).run(
+    bookingId,
+    getImportedBookingCustomerId(
+      bookingId
+    ),
+    coding.budget.id,
+    coding.budget.budgetNumber,
+    coding.budget.name,
+    coding.reasonCodeRecord.id,
+    coding.reasonCodeRecord.code,
+    coding.reasonCodeRecord.description,
+    coding.budgetHolderUserId,
+    `${coding.budgetHolderRecord.firstName} ${coding.budgetHolderRecord.lastName}`,
+    coding.departmentId,
+    coding.budget.departmentName || null
+  );
+
+  return true;
+}
+
+
+function reEvaluateImportedBookingsForBudgetCandidate(
+  budgetNumber,
+  reviewerUserId
+) {
+  const importedBudgetNumber =
+    normaliseAutocabScalar(
+      budgetNumber
+    );
+
+  if (!importedBudgetNumber) {
+    return {
+      checked: 0,
+      resolved: 0
+    };
+  }
+
+  const bookings =
+    db.prepare(`
+      SELECT
+        b.id,
+        b.public_reference
+          AS publicReference,
+        b.operational_status
+          AS operationalStatus,
+        b.financial_status
+          AS financialStatus,
+        r.raw_reference
+          AS rawReference
+      FROM bookings b
+      JOIN booking_coding_reconciliation r
+        ON r.booking_id = b.id
+      WHERE b.source = 'import'
+        AND b.financial_status =
+          'coding_required'
+        AND r.parsed_budget_number = ?
+          COLLATE NOCASE
+      ORDER BY b.id
+    `).all(
+      importedBudgetNumber
+    );
+
+  let checked = 0;
+  let resolved = 0;
+
+  for (const booking of bookings) {
+    const coding =
+      evaluateAutocabBookingCoding(
+        booking.rawReference
+      );
+
+    checked += 1;
+
+    upsertBookingCodingReconciliation(
+      booking.id,
+      coding
+    );
+
+    if (coding.status !== 'valid') {
+      continue;
+    }
+
+    const update =
+      db.prepare(`
+        UPDATE bookings
+        SET
+          financial_status =
+            'authorised',
+          budget_id = ?,
+          reason_code_id = ?,
+          budget_holder_user_id = ?,
+          department_id = ?,
+          updated_at =
+            CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND source = 'import'
+          AND financial_status =
+            'coding_required'
+      `).run(
+        coding.budgetId,
+        coding.reasonCodeId,
+        coding.budgetHolderUserId,
+        coding.departmentId,
+        booking.id
+      );
+
+    if (
+      Number(update.changes) !== 1
+    ) {
+      continue;
+    }
+
+    insertResolvedCodingSnapshot(
+      booking.id,
+      coding
+    );
+
+    db.prepare(`
+      INSERT INTO booking_events
+        (
+          booking_id,
+          event_type,
+          event_source,
+          user_id,
+          notes
+        )
+      VALUES (
+        ?,
+        'coding_resolved',
+        'portal',
+        ?,
+        ?
+      )
+    `).run(
+      booking.id,
+      reviewerUserId,
+      `Imported coding resolved locally after budget ${importedBudgetNumber} review`
+    );
+
+    writeAudit({
+      action: 'UPDATE',
+      entityType: 'booking',
+      entityId: booking.id,
+      oldValue:
+        JSON.stringify({
+          financialStatus:
+            booking.financialStatus
+        }),
+      newValue:
+        JSON.stringify({
+          financialStatus:
+            'authorised',
+          budgetId:
+            coding.budgetId,
+          reasonCodeId:
+            coding.reasonCodeId,
+          budgetHolderUserId:
+            coding.budgetHolderUserId,
+          departmentId:
+            coding.departmentId,
+          codingStatus:
+            coding.status,
+          resolution:
+            'budget_candidate_review'
+        }),
+      source: 'uhp_admin',
+      actorUserId:
+        reviewerUserId
+    });
+
+    resolved += 1;
+  }
+
+  return {
+    checked,
+    resolved
+  };
 }
 
 

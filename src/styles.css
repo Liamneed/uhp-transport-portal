@@ -9504,3 +9504,177 @@ button:disabled {
     flex-wrap: wrap;
   }
 }
+
+/* Coding review recommendations */
+
+.coding-suggestions-card {
+  padding: 21px;
+}
+
+.coding-suggestion-advisory {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #fff2d8;
+  color: #936000;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.coding-suggestion-groups {
+  display: grid;
+  gap: 13px;
+}
+
+.coding-suggestion-group {
+  overflow: hidden;
+  border: 1px solid #e2e9ef;
+  border-radius: 11px;
+  background: #fafcfd;
+}
+
+.coding-suggestion-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e6ecf1;
+  background: #f5f8fa;
+}
+
+.coding-suggestion-group-heading > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.coding-suggestion-group-heading small {
+  color: #7d8c9d;
+}
+
+.coding-suggestion-group-heading strong {
+  color: #30465f;
+}
+
+.coding-suggestion-group-heading > span {
+  flex: 0 0 auto;
+  color: #68788c;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.coding-suggestion-list {
+  display: grid;
+}
+
+.coding-suggestion-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e8edf2;
+  background: #fff;
+}
+
+.coding-suggestion-item:last-child {
+  border-bottom: 0;
+}
+
+.coding-suggestion-item > div {
+  min-width: 0;
+}
+
+.coding-suggestion-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 3px;
+}
+
+.coding-suggestion-title strong {
+  color: #30465f;
+  font-size: 14px;
+}
+
+.coding-suggestion-item small {
+  display: block;
+  color: #75869a;
+  line-height: 1.35;
+}
+
+.coding-suggestion-confidence {
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.coding-suggestion-confidence.high {
+  background: #e6f5ed;
+  color: #187548;
+}
+
+.coding-suggestion-confidence.medium {
+  background: #eef2f6;
+  color: #617186;
+}
+
+.coding-suggestion-use {
+  flex: 0 0 auto;
+  border: 1px solid #ccd9e4;
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: #fff;
+  color: #1768a8;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.coding-suggestion-use:hover {
+  border-color: #9bbbd3;
+  background: #f2f8fc;
+}
+
+.coding-suggestion-footnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 13px;
+  color: #718196;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.coding-suggestion-footnote svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+@media (max-width: 700px) {
+  .coding-suggestion-group-heading,
+  .coding-suggestion-item {
+    align-items: flex-start;
+  }
+
+  .coding-suggestion-group-heading > div {
+    flex-direction: column;
+    gap: 3px;
+  }
+}
+
+.coding-suggestion-use.selected {
+  border-color: #8ac3a6;
+  background: #e9f7ef;
+  color: #167447;
+}
+
+.coding-suggestion-use.selected:hover {
+  border-color: #8ac3a6;
+  background: #e9f7ef;
+}
