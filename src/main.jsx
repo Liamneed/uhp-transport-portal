@@ -28288,6 +28288,7 @@ function BudgetsPage() {
   const [budgets, setBudgets] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
+  const [budgetCandidates, setBudgetCandidates] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -28297,6 +28298,20 @@ function BudgetsPage() {
 
   const [showModal, setShowModal] = useState(false);
   const [editingBudget, setEditingBudget] = useState(null);
+
+  const [showCandidateReview, setShowCandidateReview] =
+    useState(false);
+
+  const [candidateModal, setCandidateModal] =
+    useState(null);
+
+  const [candidateForm, setCandidateForm] =
+    useState({
+      name: '',
+      departmentId: '',
+      holderUserId: '',
+      existingBudgetId: ''
+    });
 
   const emptyForm = {
     budgetNumber: '',
@@ -28316,17 +28331,20 @@ function BudgetsPage() {
       const [
         budgetsResponse,
         departmentsResponse,
-        usersResponse
+        usersResponse,
+        candidatesResponse
       ] = await Promise.all([
         apiFetch(`${API_BASE}/api/budgets`),
         apiFetch(`${API_BASE}/api/departments`),
-        apiFetch(`${API_BASE}/api/users`)
+        apiFetch(`${API_BASE}/api/users`),
+        apiFetch(`${API_BASE}/api/budget-candidates`)
       ]);
 
       if (
         !budgetsResponse.ok ||
         !departmentsResponse.ok ||
-        !usersResponse.ok
+        !usersResponse.ok ||
+        !candidatesResponse.ok
       ) {
         throw new Error('Unable to load budget administration data');
       }
@@ -28334,10 +28352,14 @@ function BudgetsPage() {
       const budgetData = await budgetsResponse.json();
       const departmentData = await departmentsResponse.json();
       const userData = await usersResponse.json();
+      const candidateData = await candidatesResponse.json();
 
       setBudgets(budgetData.budgets ?? []);
       setDepartments(departmentData.departments ?? []);
       setUsers(userData.users ?? []);
+      setBudgetCandidates(
+        candidateData.candidates ?? []
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -28373,6 +28395,16 @@ function BudgetsPage() {
         .includes(term)
     );
   }, [budgets, query]);
+
+  const pendingBudgetCandidates =
+    useMemo(
+      () =>
+        budgetCandidates.filter(
+          (candidate) =>
+            candidate.status === 'pending'
+        ),
+      [budgetCandidates]
+    );
 
   const stats = useMemo(() => ({
     active: budgets.filter((b) => b.status === 'active').length,
@@ -28476,6 +28508,204 @@ function BudgetsPage() {
     }
   }
 
+  function openCandidateApprove(candidate) {
+    setCandidateForm({
+      name:
+        candidate.suggestedName || '',
+      departmentId:
+        candidate.suggestedDepartmentId
+          ? String(
+              candidate.suggestedDepartmentId
+            )
+          : '',
+      holderUserId:
+        candidate.suggestedHolderUserId
+          ? String(
+              candidate.suggestedHolderUserId
+            )
+          : '',
+      existingBudgetId: ''
+    });
+
+    setError('');
+    setNotice('');
+
+    setCandidateModal({
+      mode: 'approve',
+      candidate
+    });
+  }
+
+
+  function openCandidateLink(candidate) {
+    setCandidateForm({
+      name: '',
+      departmentId: '',
+      holderUserId: '',
+      existingBudgetId: ''
+    });
+
+    setError('');
+    setNotice('');
+
+    setCandidateModal({
+      mode: 'link',
+      candidate
+    });
+  }
+
+
+  async function submitCandidateReview(
+    event
+  ) {
+    event.preventDefault();
+
+    if (!candidateModal) {
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    setNotice('');
+
+    const candidate =
+      candidateModal.candidate;
+
+    try {
+      const isApprove =
+        candidateModal.mode ===
+        'approve';
+
+      const response =
+        await apiFetch(
+          isApprove
+            ? `${API_BASE}/api/budget-candidates/${candidate.id}/approve`
+            : `${API_BASE}/api/budget-candidates/${candidate.id}/link`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify(
+                isApprove
+                  ? {
+                      name:
+                        candidateForm.name,
+                      departmentId:
+                        Number(
+                          candidateForm.departmentId
+                        ),
+                      holderUserId:
+                        candidateForm.holderUserId
+                          ? Number(
+                              candidateForm.holderUserId
+                            )
+                          : null
+                    }
+                  : {
+                      budgetId:
+                        Number(
+                          candidateForm.existingBudgetId
+                        )
+                    }
+              )
+          }
+        );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+          (
+            isApprove
+              ? 'Unable to approve budget'
+              : 'Unable to link budget'
+          )
+        );
+      }
+
+      setCandidateModal(null);
+
+      setNotice(
+        isApprove
+          ? `Budget ${candidate.budgetNumber} approved successfully.`
+          : `Imported budget ${candidate.budgetNumber} linked successfully.`
+      );
+
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to review budget'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+
+  async function rejectCandidate(
+    candidate
+  ) {
+    if (
+      !window.confirm(
+        `Reject imported budget ${candidate.budgetNumber}?`
+      )
+    ) {
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const response =
+        await apiFetch(
+          `${API_BASE}/api/budget-candidates/${candidate.id}/reject`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({})
+          }
+        );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+          'Unable to reject budget'
+        );
+      }
+
+      setNotice(
+        `Imported budget ${candidate.budgetNumber} rejected.`
+      );
+
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to reject budget'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+
   async function changeStatus(budget) {
     const nextStatus =
       budget.status === 'active'
@@ -28563,6 +28793,117 @@ function BudgetsPage() {
       {error && !loading && (
         <div className="notice error">
           {error}
+        </div>
+      )}
+
+      {pendingBudgetCandidates.length > 0 && (
+        <div className="card budget-candidate-panel">
+          <div className="budget-candidate-summary">
+            <div>
+              <div className="budget-candidate-heading">
+                <AlertTriangle size={18}/>
+                <strong>New from Autocab</strong>
+              </div>
+
+              <p>
+                {pendingBudgetCandidates.length}
+                {' '}
+                {pendingBudgetCandidates.length === 1
+                  ? 'budget number needs'
+                  : 'budget numbers need'}
+                {' '}
+                review before being added to the UHP budget list.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className="secondary"
+              onClick={() =>
+                setShowCandidateReview(
+                  !showCandidateReview
+                )
+              }
+            >
+              {showCandidateReview
+                ? 'Hide Review'
+                : 'Review New Budgets'}
+            </button>
+          </div>
+
+          {showCandidateReview && (
+            <div className="budget-candidate-list">
+              {pendingBudgetCandidates.map(
+                (candidate) => (
+                  <div
+                    className="budget-candidate-row"
+                    key={candidate.id}
+                  >
+                    <div className="budget-candidate-detail">
+                      <strong>
+                        {candidate.budgetNumber}
+                      </strong>
+
+                      <span>
+                        Seen{' '}
+                        {candidate.occurrenceCount}{' '}
+                        {candidate.occurrenceCount === 1
+                          ? 'time'
+                          : 'times'}
+                      </span>
+
+                      <small>
+                        Imported holder:{' '}
+                        {candidate.importedHolderName ||
+                          'Not supplied'}
+                      </small>
+                    </div>
+
+                    <div className="row-actions">
+                      <button
+                        type="button"
+                        className="text-action"
+                        onClick={() =>
+                          openCandidateApprove(
+                            candidate
+                          )
+                        }
+                        disabled={saving}
+                      >
+                        Approve / Edit
+                      </button>
+
+                      <button
+                        type="button"
+                        className="text-action"
+                        onClick={() =>
+                          openCandidateLink(
+                            candidate
+                          )
+                        }
+                        disabled={saving}
+                      >
+                        Link Existing
+                      </button>
+
+                      <button
+                        type="button"
+                        className="text-action warning"
+                        onClick={() =>
+                          rejectCandidate(
+                            candidate
+                          )
+                        }
+                        disabled={saving}
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -28685,6 +29026,276 @@ function BudgetsPage() {
           </div>
         )}
       </div>
+
+      {candidateModal && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (
+              event.target ===
+                event.currentTarget &&
+              !saving
+            ) {
+              setCandidateModal(null);
+            }
+          }}
+        >
+          <form
+            className="modal-card modal-card-small"
+            onSubmit={submitCandidateReview}
+          >
+            <div className="modal-header">
+              <div>
+                <h2>
+                  {candidateModal.mode ===
+                  'approve'
+                    ? 'Approve Budget'
+                    : 'Link Existing Budget'}
+                </h2>
+
+                <p>
+                  Imported from Autocab as{' '}
+                  <strong>
+                    {
+                      candidateModal
+                        .candidate
+                        .budgetNumber
+                    }
+                  </strong>
+                  .
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() =>
+                  setCandidateModal(null)
+                }
+                disabled={saving}
+              >
+                ×
+              </button>
+            </div>
+
+            {candidateModal.mode ===
+            'approve' ? (
+              <>
+                <label>
+                  Budget Number
+                  <input
+                    value={
+                      candidateModal
+                        .candidate
+                        .budgetNumber
+                    }
+                    disabled
+                  />
+                </label>
+
+                <label>
+                  Budget Name
+                  <input
+                    required
+                    value={
+                      candidateForm.name
+                    }
+                    onChange={(event) =>
+                      setCandidateForm({
+                        ...candidateForm,
+                        name:
+                          event.target.value
+                      })
+                    }
+                  />
+                </label>
+
+                <label>
+                  Department
+                  <select
+                    required
+                    value={
+                      candidateForm
+                        .departmentId
+                    }
+                    onChange={(event) =>
+                      setCandidateForm({
+                        ...candidateForm,
+                        departmentId:
+                          event.target.value
+                      })
+                    }
+                  >
+                    <option value="">
+                      Select department...
+                    </option>
+
+                    {departments
+                      .filter(
+                        (department) =>
+                          department.status ===
+                          'active'
+                      )
+                      .map(
+                        (department) => (
+                          <option
+                            key={
+                              department.id
+                            }
+                            value={
+                              department.id
+                            }
+                          >
+                            {
+                              department.name
+                            }
+                          </option>
+                        )
+                      )}
+                  </select>
+                </label>
+
+                <label>
+                  Budget Holder
+                  <select
+                    value={
+                      candidateForm
+                        .holderUserId
+                    }
+                    onChange={(event) =>
+                      setCandidateForm({
+                        ...candidateForm,
+                        holderUserId:
+                          event.target.value
+                      })
+                    }
+                  >
+                    <option value="">
+                      Not assigned
+                    </option>
+
+                    {eligibleUsers.map(
+                      (user) => (
+                        <option
+                          key={user.id}
+                          value={user.id}
+                        >
+                          {user.firstName}{' '}
+                          {user.lastName}
+                          {user.department
+                            ? ` — ${user.department}`
+                            : ''}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+
+                <div className="inline-warning">
+                  Assigning a budget holder
+                  gives oversight access only.
+                  It does not automatically
+                  authorise them to book
+                  transport against this
+                  budget.
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="budget-candidate-link-source">
+                  <small>
+                    Imported budget
+                  </small>
+                  <strong>
+                    {
+                      candidateModal
+                        .candidate
+                        .budgetNumber
+                    }
+                  </strong>
+                </div>
+
+                <label>
+                  Link to Existing Budget
+                  <select
+                    required
+                    value={
+                      candidateForm
+                        .existingBudgetId
+                    }
+                    onChange={(event) =>
+                      setCandidateForm({
+                        ...candidateForm,
+                        existingBudgetId:
+                          event.target.value
+                      })
+                    }
+                  >
+                    <option value="">
+                      Select budget...
+                    </option>
+
+                    {budgets
+                      .filter(
+                        (budget) =>
+                          budget.status ===
+                          'active'
+                      )
+                      .map(
+                        (budget) => (
+                          <option
+                            key={budget.id}
+                            value={budget.id}
+                          >
+                            {
+                              budget.budgetNumber
+                            }
+                            {' — '}
+                            {budget.name}
+                          </option>
+                        )
+                      )}
+                  </select>
+                </label>
+
+                <div className="inline-warning">
+                  Linking resolves this
+                  imported number to an
+                  existing budget. The
+                  original Autocab coding is
+                  retained in booking history.
+                </div>
+              </>
+            )}
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() =>
+                  setCandidateModal(null)
+                }
+                disabled={saving}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                className="primary"
+                disabled={saving}
+              >
+                {saving
+                  ? 'Saving...'
+                  : candidateModal.mode ===
+                      'approve'
+                    ? 'Approve Budget'
+                    : 'Link Budget'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showModal && (
         <div

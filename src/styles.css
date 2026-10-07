@@ -9404,3 +9404,103 @@ button:disabled {
     padding-right: 16px;
   }
 }
+
+/* Budget candidates imported from Autocab */
+
+.budget-candidate-panel {
+  margin-bottom: 18px;
+}
+
+.budget-candidate-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+}
+
+.budget-candidate-summary p {
+  margin: 5px 0 0;
+  color: #687b8d;
+  font-size: 13px;
+}
+
+.budget-candidate-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #263f56;
+}
+
+.budget-candidate-heading svg {
+  color: #9a5c08;
+}
+
+.budget-candidate-list {
+  display: grid;
+  margin-top: 18px;
+  border-top: 1px solid #e8edf1;
+}
+
+.budget-candidate-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  padding: 15px 0;
+  border-bottom: 1px solid #edf1f4;
+}
+
+.budget-candidate-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.budget-candidate-detail {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.budget-candidate-detail strong {
+  color: #263f56;
+  font-size: 15px;
+}
+
+.budget-candidate-detail span {
+  color: #526679;
+  font-size: 12px;
+}
+
+.budget-candidate-detail small {
+  color: #8492a0;
+}
+
+.budget-candidate-link-source {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid #e3e9f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.budget-candidate-link-source small {
+  color: #8492a0;
+}
+
+.budget-candidate-link-source strong {
+  color: #263f56;
+  font-size: 16px;
+}
+
+@media (max-width: 720px) {
+  .budget-candidate-summary,
+  .budget-candidate-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .budget-candidate-row .row-actions {
+    flex-wrap: wrap;
+  }
+}
