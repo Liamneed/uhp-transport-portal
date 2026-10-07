@@ -1586,6 +1586,18 @@ function enforceApiAccess(
   }
 
   if (
+    pathname === '/api/budget-candidates' ||
+    pathname.startsWith(
+      '/api/budget-candidates/'
+    )
+  ) {
+    return requireAnyRole(
+      req,
+      ['uhp_admin']
+    );
+  }
+
+  if (
     pathname === '/api/users' ||
     pathname.startsWith(
       '/api/users/'
@@ -5210,11 +5222,21 @@ function grantBudgetHolderAccess(userId, budgetId) {
     LIMIT 1
   `).get(userId, budgetId);
 
+  /*
+    Budget responsibility and booking
+    authorisation are deliberately separate.
+
+    Becoming a holder gives oversight access,
+    but must never automatically make the
+    holder an authorised booker.
+
+    If an access row already exists, preserve
+    its existing can_book value.
+  */
   if (existing) {
     db.prepare(`
       UPDATE user_budget_access
       SET
-        can_book = 1,
         can_view = 1,
         can_approve = 1,
         can_dispute = 1,
@@ -5236,9 +5258,23 @@ function grantBudgetHolderAccess(userId, budgetId) {
         can_dispute,
         valid_from
       )
-    VALUES (?, ?, 1, 1, 1, 1, date('now'))
+    VALUES (?, ?, 0, 1, 1, 1, date('now'))
   `).run(userId, budgetId);
 }
+
+const UHP_BUDGET_NUMBER_PATTERN = /^12\d{4}$/;
+
+
+function validateUhpBudgetNumber(budgetNumber) {
+  if (!UHP_BUDGET_NUMBER_PATTERN.test(budgetNumber)) {
+    const error = new Error(
+      'Budget number must be exactly 6 digits and start with 12'
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
 
 function getBudgetById(budgetId) {
   return db.prepare(`
@@ -5271,6 +5307,8 @@ function createBudget(payload) {
     error.statusCode = 400;
     throw error;
   }
+
+  validateUhpBudgetNumber(budgetNumber);
 
   const duplicate = db.prepare(`
     SELECT id
@@ -5629,6 +5667,679 @@ function setBudgetStatus(budgetId, nextStatus) {
     throw error;
   }
 }
+
+function getBudgetCandidateById(candidateId) {
+  return db.prepare(`
+    SELECT
+      bc.id,
+      bc.budget_number AS budgetNumber,
+      bc.imported_holder_name AS importedHolderName,
+
+      bc.suggested_name AS suggestedName,
+      bc.suggested_department_id AS suggestedDepartmentId,
+      d.name AS suggestedDepartment,
+
+      bc.suggested_holder_user_id AS suggestedHolderUserId,
+
+      CASE
+        WHEN holder.id IS NULL
+        THEN NULL
+        ELSE holder.first_name || ' ' || holder.last_name
+      END AS suggestedHolder,
+
+      bc.status,
+
+      bc.resolved_budget_id AS resolvedBudgetId,
+
+      resolved.budget_number AS resolvedBudgetNumber,
+      resolved.name AS resolvedBudgetName,
+
+      bc.first_seen_at AS firstSeenAt,
+      bc.last_seen_at AS lastSeenAt,
+      bc.occurrence_count AS occurrenceCount,
+
+      bc.reviewed_by_user_id AS reviewedByUserId,
+
+      CASE
+        WHEN reviewer.id IS NULL
+        THEN NULL
+        ELSE reviewer.first_name || ' ' || reviewer.last_name
+      END AS reviewedBy,
+
+      bc.reviewed_at AS reviewedAt,
+      bc.review_notes AS reviewNotes,
+
+      bc.created_at AS createdAt,
+      bc.updated_at AS updatedAt
+
+    FROM budget_candidates bc
+
+    LEFT JOIN departments d
+      ON d.id = bc.suggested_department_id
+
+    LEFT JOIN users holder
+      ON holder.id = bc.suggested_holder_user_id
+
+    LEFT JOIN budgets resolved
+      ON resolved.id = bc.resolved_budget_id
+
+    LEFT JOIN users reviewer
+      ON reviewer.id = bc.reviewed_by_user_id
+
+    WHERE bc.id = ?
+  `).get(candidateId);
+}
+
+
+function listBudgetCandidates() {
+  return db.prepare(`
+    SELECT
+      bc.id,
+      bc.budget_number AS budgetNumber,
+      bc.imported_holder_name AS importedHolderName,
+
+      bc.suggested_name AS suggestedName,
+      bc.suggested_department_id AS suggestedDepartmentId,
+      d.name AS suggestedDepartment,
+
+      bc.suggested_holder_user_id AS suggestedHolderUserId,
+
+      CASE
+        WHEN holder.id IS NULL
+        THEN NULL
+        ELSE holder.first_name || ' ' || holder.last_name
+      END AS suggestedHolder,
+
+      bc.status,
+
+      bc.resolved_budget_id AS resolvedBudgetId,
+      resolved.budget_number AS resolvedBudgetNumber,
+      resolved.name AS resolvedBudgetName,
+
+      bc.first_seen_at AS firstSeenAt,
+      bc.last_seen_at AS lastSeenAt,
+      bc.occurrence_count AS occurrenceCount,
+
+      bc.reviewed_by_user_id AS reviewedByUserId,
+
+      CASE
+        WHEN reviewer.id IS NULL
+        THEN NULL
+        ELSE reviewer.first_name || ' ' || reviewer.last_name
+      END AS reviewedBy,
+
+      bc.reviewed_at AS reviewedAt,
+      bc.review_notes AS reviewNotes,
+
+      bc.created_at AS createdAt,
+      bc.updated_at AS updatedAt
+
+    FROM budget_candidates bc
+
+    LEFT JOIN departments d
+      ON d.id = bc.suggested_department_id
+
+    LEFT JOIN users holder
+      ON holder.id = bc.suggested_holder_user_id
+
+    LEFT JOIN budgets resolved
+      ON resolved.id = bc.resolved_budget_id
+
+    LEFT JOIN users reviewer
+      ON reviewer.id = bc.reviewed_by_user_id
+
+    ORDER BY
+      CASE bc.status
+        WHEN 'pending' THEN 0
+        ELSE 1
+      END,
+      bc.last_seen_at DESC,
+      bc.id DESC
+  `).all();
+}
+
+
+function requirePendingBudgetCandidate(candidateId) {
+  if (
+    !Number.isInteger(candidateId) ||
+    candidateId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid budget candidate id is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const candidate =
+    getBudgetCandidateById(candidateId);
+
+  if (!candidate) {
+    const error =
+      new Error(
+        'Budget candidate not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (candidate.status !== 'pending') {
+    const error =
+      new Error(
+        'This budget candidate has already been reviewed'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return candidate;
+}
+
+
+function validateCandidateDepartment(
+  departmentId
+) {
+  if (
+    !Number.isInteger(departmentId) ||
+    departmentId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid department is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const department =
+    db.prepare(`
+      SELECT
+        id,
+        name
+      FROM departments
+      WHERE id = ?
+        AND status = 'active'
+    `).get(departmentId);
+
+  if (!department) {
+    const error =
+      new Error(
+        'Selected department is not valid'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return department;
+}
+
+
+function validateCandidateHolder(
+  holderUserId
+) {
+  if (!holderUserId) {
+    return null;
+  }
+
+  if (
+    !Number.isInteger(holderUserId) ||
+    holderUserId < 1
+  ) {
+    const error =
+      new Error(
+        'Selected budget holder is not valid'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const holder =
+    db.prepare(`
+      SELECT
+        id,
+        first_name AS firstName,
+        last_name AS lastName
+      FROM users
+      WHERE id = ?
+        AND status IN (
+          'active',
+          'invited'
+        )
+    `).get(holderUserId);
+
+  if (!holder) {
+    const error =
+      new Error(
+        'Selected budget holder is not valid'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return holder;
+}
+
+
+function approveBudgetCandidate(
+  candidateId,
+  reviewerUserId,
+  payload = {}
+) {
+  const candidate =
+    requirePendingBudgetCandidate(
+      candidateId
+    );
+
+  const budgetNumber =
+    String(
+      candidate.budgetNumber || ''
+    ).trim();
+
+  validateUhpBudgetNumber(
+    budgetNumber
+  );
+
+  const name =
+    String(
+      payload.name ??
+      candidate.suggestedName ??
+      ''
+    ).trim();
+
+  const departmentId =
+    Number(
+      payload.departmentId ??
+      candidate.suggestedDepartmentId
+    );
+
+  const holderUserIdRaw =
+    payload.holderUserId ??
+    candidate.suggestedHolderUserId ??
+    null;
+
+  const holderUserId =
+    holderUserIdRaw === null ||
+    holderUserIdRaw === ''
+      ? null
+      : Number(holderUserIdRaw);
+
+  const reviewNotes =
+    String(
+      payload.reviewNotes || ''
+    ).trim() || null;
+
+  if (!name) {
+    const error =
+      new Error(
+        'Budget name is required before approval'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  validateCandidateDepartment(
+    departmentId
+  );
+
+  validateCandidateHolder(
+    holderUserId
+  );
+
+  const duplicate =
+    db.prepare(`
+      SELECT
+        id,
+        budget_number AS budgetNumber,
+        name
+      FROM budgets
+      WHERE budget_number = ?
+      LIMIT 1
+    `).get(
+      budgetNumber
+    );
+
+  if (duplicate) {
+    const error =
+      new Error(
+        'This budget number already exists. Link the candidate to the existing budget instead.'
+      );
+
+    error.statusCode = 409;
+    throw error;
+  }
+
+  db.exec('BEGIN');
+
+  try {
+    const result =
+      db.prepare(`
+        INSERT INTO budgets
+          (
+            budget_number,
+            name,
+            department_id,
+            status,
+            effective_from
+          )
+        VALUES (
+          ?,
+          ?,
+          ?,
+          'active',
+          date('now')
+        )
+      `).run(
+        budgetNumber,
+        name,
+        departmentId
+      );
+
+    const budgetId =
+      Number(
+        result.lastInsertRowid
+      );
+
+    if (holderUserId) {
+      db.prepare(`
+        INSERT INTO budget_assignments
+          (
+            budget_id,
+            user_id,
+            assignment_type,
+            valid_from,
+            is_active
+          )
+        VALUES (
+          ?,
+          ?,
+          'primary_holder',
+          date('now'),
+          1
+        )
+      `).run(
+        budgetId,
+        holderUserId
+      );
+
+      /*
+        Holder responsibility does not
+        automatically grant can_book.
+      */
+      grantBudgetHolderAccess(
+        holderUserId,
+        budgetId
+      );
+    }
+
+    db.prepare(`
+      UPDATE budget_candidates
+      SET
+        suggested_name = ?,
+        suggested_department_id = ?,
+        suggested_holder_user_id = ?,
+
+        status = 'approved',
+        resolved_budget_id = ?,
+
+        reviewed_by_user_id = ?,
+        reviewed_at = CURRENT_TIMESTAMP,
+        review_notes = ?,
+
+        updated_at = CURRENT_TIMESTAMP
+
+      WHERE id = ?
+        AND status = 'pending'
+    `).run(
+      name,
+      departmentId,
+      holderUserId,
+      budgetId,
+      reviewerUserId,
+      reviewNotes,
+      candidateId
+    );
+
+    writeAudit({
+      action: 'APPROVE',
+      entityType: 'budget_candidate',
+      entityId: candidateId,
+      oldValue:
+        JSON.stringify(candidate),
+      newValue:
+        JSON.stringify({
+          status: 'approved',
+          resolvedBudgetId:
+            budgetId,
+          budgetNumber,
+          name,
+          departmentId,
+          holderUserId,
+          reviewNotes
+        }),
+      source: 'uhp_admin',
+      actorUserId:
+        reviewerUserId
+    });
+
+    writeAudit({
+      action: 'CREATE',
+      entityType: 'budget',
+      entityId: budgetId,
+      newValue:
+        JSON.stringify({
+          budgetNumber,
+          name,
+          departmentId,
+          holderUserId,
+          sourceCandidateId:
+            candidateId,
+          status: 'active'
+        }),
+      source: 'uhp_admin',
+      actorUserId:
+        reviewerUserId
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      candidate:
+        getBudgetCandidateById(
+          candidateId
+        ),
+      budget:
+        getBudgetById(
+          budgetId
+        )
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function linkBudgetCandidate(
+  candidateId,
+  reviewerUserId,
+  payload = {}
+) {
+  const candidate =
+    requirePendingBudgetCandidate(
+      candidateId
+    );
+
+  const budgetId =
+    Number(payload.budgetId);
+
+  if (
+    !Number.isInteger(budgetId) ||
+    budgetId < 1
+  ) {
+    const error =
+      new Error(
+        'A valid existing budget is required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const budget =
+    getBudgetById(
+      budgetId
+    );
+
+  if (!budget) {
+    const error =
+      new Error(
+        'Selected budget was not found'
+      );
+
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const reviewNotes =
+    String(
+      payload.reviewNotes || ''
+    ).trim() || null;
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE budget_candidates
+      SET
+        status = 'linked',
+        resolved_budget_id = ?,
+
+        reviewed_by_user_id = ?,
+        reviewed_at = CURRENT_TIMESTAMP,
+        review_notes = ?,
+
+        updated_at = CURRENT_TIMESTAMP
+
+      WHERE id = ?
+        AND status = 'pending'
+    `).run(
+      budgetId,
+      reviewerUserId,
+      reviewNotes,
+      candidateId
+    );
+
+    writeAudit({
+      action: 'LINK',
+      entityType: 'budget_candidate',
+      entityId: candidateId,
+      oldValue:
+        JSON.stringify(candidate),
+      newValue:
+        JSON.stringify({
+          status: 'linked',
+          resolvedBudgetId:
+            budgetId,
+          reviewNotes
+        }),
+      source: 'uhp_admin',
+      actorUserId:
+        reviewerUserId
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      candidate:
+        getBudgetCandidateById(
+          candidateId
+        ),
+      budget
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+
+function rejectBudgetCandidate(
+  candidateId,
+  reviewerUserId,
+  payload = {}
+) {
+  const candidate =
+    requirePendingBudgetCandidate(
+      candidateId
+    );
+
+  const reviewNotes =
+    String(
+      payload.reviewNotes || ''
+    ).trim() || null;
+
+  db.exec('BEGIN');
+
+  try {
+    db.prepare(`
+      UPDATE budget_candidates
+      SET
+        status = 'rejected',
+        resolved_budget_id = NULL,
+
+        reviewed_by_user_id = ?,
+        reviewed_at = CURRENT_TIMESTAMP,
+        review_notes = ?,
+
+        updated_at = CURRENT_TIMESTAMP
+
+      WHERE id = ?
+        AND status = 'pending'
+    `).run(
+      reviewerUserId,
+      reviewNotes,
+      candidateId
+    );
+
+    writeAudit({
+      action: 'REJECT',
+      entityType: 'budget_candidate',
+      entityId: candidateId,
+      oldValue:
+        JSON.stringify(candidate),
+      newValue:
+        JSON.stringify({
+          status: 'rejected',
+          reviewNotes
+        }),
+      source: 'uhp_admin',
+      actorUserId:
+        reviewerUserId
+    });
+
+    db.exec('COMMIT');
+
+    return {
+      candidate:
+        getBudgetCandidateById(
+          candidateId
+        )
+    };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 
 function getReasonCodeById(reasonCodeId) {
   return db.prepare(`
@@ -20247,6 +20958,124 @@ function evaluateAutocabBookingCoding(
 }
 
 
+function upsertBudgetCandidateFromCoding(coding) {
+  const budgetNumber =
+    normaliseAutocabScalar(
+      coding?.budgetNumber
+    );
+
+  /*
+    Only genuine UHP-format budget numbers
+    can become master-data candidates.
+
+    Malformed historical coding remains in
+    booking_coding_reconciliation and must
+    not pollute budget master data.
+  */
+  if (
+    !budgetNumber ||
+    !UHP_BUDGET_NUMBER_PATTERN.test(
+      budgetNumber
+    )
+  ) {
+    return null;
+  }
+
+  /*
+    If the budget already exists in portal
+    master data there is nothing to propose.
+  */
+  const existingBudget =
+    db.prepare(`
+      SELECT id
+      FROM budgets
+      WHERE budget_number = ?
+      LIMIT 1
+    `).get(
+      budgetNumber
+    );
+
+  if (existingBudget) {
+    return null;
+  }
+
+  const importedHolderName =
+    normaliseAutocabScalar(
+      coding?.budgetHolder
+    );
+
+  db.prepare(`
+    INSERT INTO budget_candidates
+      (
+        budget_number,
+        imported_holder_name,
+        status,
+        first_seen_at,
+        last_seen_at,
+        occurrence_count,
+        created_at,
+        updated_at
+      )
+    VALUES (
+      ?,
+      ?,
+      'pending',
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP,
+      1,
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP
+    )
+
+    ON CONFLICT(budget_number)
+    DO UPDATE SET
+
+      imported_holder_name =
+        CASE
+          WHEN (
+            budget_candidates
+              .imported_holder_name IS NULL
+            OR trim(
+              budget_candidates
+                .imported_holder_name
+            ) = ''
+          )
+          THEN excluded.imported_holder_name
+          ELSE budget_candidates
+            .imported_holder_name
+        END,
+
+      last_seen_at =
+        CURRENT_TIMESTAMP,
+
+      occurrence_count =
+        budget_candidates
+          .occurrence_count + 1,
+
+      updated_at =
+        CURRENT_TIMESTAMP
+  `).run(
+    budgetNumber,
+    importedHolderName
+  );
+
+  return db.prepare(`
+    SELECT
+      id,
+      budget_number AS budgetNumber,
+      imported_holder_name AS importedHolderName,
+      status,
+      occurrence_count AS occurrenceCount,
+      first_seen_at AS firstSeenAt,
+      last_seen_at AS lastSeenAt
+    FROM budget_candidates
+    WHERE budget_number = ?
+  `).get(
+    budgetNumber
+  );
+}
+
+
 function upsertBookingCodingReconciliation(
   bookingId,
   coding
@@ -20745,6 +21574,18 @@ function importAutocabCreatedBooking(
 
     upsertBookingCodingReconciliation(
       bookingId,
+      coding
+    );
+
+    /*
+      Unknown but structurally valid UHP
+      budgets become review candidates.
+
+      This does not change the imported
+      booking, reconciliation evidence or
+      historical Autocab reference.
+    */
+    upsertBudgetCandidateFromCoding(
       coding
     );
 
@@ -33168,6 +34009,132 @@ const server = http.createServer(async (req, res) => {
         {
           location
         }
+      );
+    }
+
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/budget-candidates'
+    ) {
+      requireAnyRole(
+        req,
+        ['uhp_admin']
+      );
+
+      return sendJson(
+        res,
+        200,
+        {
+          candidates:
+            listBudgetCandidates()
+        }
+      );
+    }
+
+
+    const budgetCandidateApproveMatch =
+      url.pathname.match(
+        /^\/api\/budget-candidates\/(\d+)\/approve$/
+      );
+
+    if (
+      req.method === 'POST' &&
+      budgetCandidateApproveMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['uhp_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const result =
+        approveBudgetCandidate(
+          Number(
+            budgetCandidateApproveMatch[1]
+          ),
+          auth.user.id,
+          payload
+        );
+
+      return sendJson(
+        res,
+        200,
+        result
+      );
+    }
+
+
+    const budgetCandidateLinkMatch =
+      url.pathname.match(
+        /^\/api\/budget-candidates\/(\d+)\/link$/
+      );
+
+    if (
+      req.method === 'POST' &&
+      budgetCandidateLinkMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['uhp_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const result =
+        linkBudgetCandidate(
+          Number(
+            budgetCandidateLinkMatch[1]
+          ),
+          auth.user.id,
+          payload
+        );
+
+      return sendJson(
+        res,
+        200,
+        result
+      );
+    }
+
+
+    const budgetCandidateRejectMatch =
+      url.pathname.match(
+        /^\/api\/budget-candidates\/(\d+)\/reject$/
+      );
+
+    if (
+      req.method === 'POST' &&
+      budgetCandidateRejectMatch
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          ['uhp_admin']
+        );
+
+      const payload =
+        await readJson(req);
+
+      const result =
+        rejectBudgetCandidate(
+          Number(
+            budgetCandidateRejectMatch[1]
+          ),
+          auth.user.id,
+          payload
+        );
+
+      return sendJson(
+        res,
+        200,
+        result
       );
     }
 
