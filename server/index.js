@@ -4186,6 +4186,43 @@ function listDepartments() {
   `).all();
 }
 
+function listBudgetHolders() {
+  return db.prepare(`
+    SELECT
+      bh.id,
+      bh.canonical_name AS name,
+      bh.linked_user_id AS linkedUserId,
+      bh.status,
+      bh.source,
+      bh.notes,
+
+      CASE
+        WHEN u.id IS NULL THEN NULL
+        ELSE TRIM(
+          u.first_name || ' ' ||
+          u.last_name
+        )
+      END AS linkedUserName,
+
+      bh.created_at AS createdAt,
+      bh.updated_at AS updatedAt
+
+    FROM budget_holders bh
+
+    LEFT JOIN users u
+      ON u.id = bh.linked_user_id
+
+    ORDER BY
+      CASE bh.status
+        WHEN 'active' THEN 0
+        ELSE 1
+      END,
+      bh.canonical_name COLLATE NOCASE,
+      bh.id
+  `).all();
+}
+
+
 function listBudgets() {
   return db.prepare(`
     SELECT
@@ -4197,58 +4234,180 @@ function listBudgets() {
       d.name AS department,
 
       (
+        SELECT bh.id
+        FROM budget_holder_assignments bha
+        JOIN budget_holders bh
+          ON bh.id = bha.holder_id
+        WHERE bha.budget_id = b.id
+          AND bha.assignment_type =
+            'primary_holder'
+          AND bha.is_active = 1
+          AND (
+            bha.valid_from IS NULL OR
+            bha.valid_from <= date('now')
+          )
+          AND (
+            bha.valid_to IS NULL OR
+            bha.valid_to >= date('now')
+          )
+          AND bh.status = 'active'
+        ORDER BY bha.id DESC
+        LIMIT 1
+      ) AS holderId,
+
+      (
         SELECT u.id
         FROM budget_assignments ba
-        JOIN users u ON u.id = ba.user_id
+        JOIN users u
+          ON u.id = ba.user_id
         WHERE ba.budget_id = b.id
-          AND ba.assignment_type = 'primary_holder'
+          AND ba.assignment_type =
+            'primary_holder'
           AND ba.is_active = 1
-          AND (ba.valid_to IS NULL OR ba.valid_to >= date('now'))
+          AND (
+            ba.valid_to IS NULL OR
+            ba.valid_to >= date('now')
+          )
         ORDER BY ba.id DESC
         LIMIT 1
       ) AS holderUserId,
 
-      (
-        SELECT u.first_name || ' ' || u.last_name
-        FROM budget_assignments ba
-        JOIN users u ON u.id = ba.user_id
-        WHERE ba.budget_id = b.id
-          AND ba.assignment_type = 'primary_holder'
-          AND ba.is_active = 1
-          AND (ba.valid_to IS NULL OR ba.valid_to >= date('now'))
-        ORDER BY ba.id DESC
-        LIMIT 1
+      COALESCE(
+        (
+          SELECT bh.canonical_name
+          FROM budget_holder_assignments bha
+          JOIN budget_holders bh
+            ON bh.id = bha.holder_id
+          WHERE bha.budget_id = b.id
+            AND bha.assignment_type =
+              'primary_holder'
+            AND bha.is_active = 1
+            AND (
+              bha.valid_from IS NULL OR
+              bha.valid_from <= date('now')
+            )
+            AND (
+              bha.valid_to IS NULL OR
+              bha.valid_to >= date('now')
+            )
+            AND bh.status = 'active'
+          ORDER BY bha.id DESC
+          LIMIT 1
+        ),
+        (
+          SELECT
+            TRIM(
+              u.first_name || ' ' ||
+              u.last_name
+            )
+          FROM budget_assignments ba
+          JOIN users u
+            ON u.id = ba.user_id
+          WHERE ba.budget_id = b.id
+            AND ba.assignment_type =
+              'primary_holder'
+            AND ba.is_active = 1
+            AND (
+              ba.valid_to IS NULL OR
+              ba.valid_to >= date('now')
+            )
+          ORDER BY ba.id DESC
+          LIMIT 1
+        )
       ) AS budgetHolder,
+
+      (
+        SELECT bh.id
+        FROM budget_holder_assignments bha
+        JOIN budget_holders bh
+          ON bh.id = bha.holder_id
+        WHERE bha.budget_id = b.id
+          AND bha.assignment_type =
+            'deputy_holder'
+          AND bha.is_active = 1
+          AND (
+            bha.valid_from IS NULL OR
+            bha.valid_from <= date('now')
+          )
+          AND (
+            bha.valid_to IS NULL OR
+            bha.valid_to >= date('now')
+          )
+          AND bh.status = 'active'
+        ORDER BY bha.id DESC
+        LIMIT 1
+      ) AS deputyHolderId,
 
       (
         SELECT u.id
         FROM budget_assignments ba
-        JOIN users u ON u.id = ba.user_id
+        JOIN users u
+          ON u.id = ba.user_id
         WHERE ba.budget_id = b.id
-          AND ba.assignment_type = 'deputy_holder'
+          AND ba.assignment_type =
+            'deputy_holder'
           AND ba.is_active = 1
-          AND (ba.valid_to IS NULL OR ba.valid_to >= date('now'))
+          AND (
+            ba.valid_to IS NULL OR
+            ba.valid_to >= date('now')
+          )
         ORDER BY ba.id DESC
         LIMIT 1
       ) AS deputyUserId,
 
-      (
-        SELECT u.first_name || ' ' || u.last_name
-        FROM budget_assignments ba
-        JOIN users u ON u.id = ba.user_id
-        WHERE ba.budget_id = b.id
-          AND ba.assignment_type = 'deputy_holder'
-          AND ba.is_active = 1
-          AND (ba.valid_to IS NULL OR ba.valid_to >= date('now'))
-        ORDER BY ba.id DESC
-        LIMIT 1
+      COALESCE(
+        (
+          SELECT bh.canonical_name
+          FROM budget_holder_assignments bha
+          JOIN budget_holders bh
+            ON bh.id = bha.holder_id
+          WHERE bha.budget_id = b.id
+            AND bha.assignment_type =
+              'deputy_holder'
+            AND bha.is_active = 1
+            AND (
+              bha.valid_from IS NULL OR
+              bha.valid_from <= date('now')
+            )
+            AND (
+              bha.valid_to IS NULL OR
+              bha.valid_to >= date('now')
+            )
+            AND bh.status = 'active'
+          ORDER BY bha.id DESC
+          LIMIT 1
+        ),
+        (
+          SELECT
+            TRIM(
+              u.first_name || ' ' ||
+              u.last_name
+            )
+          FROM budget_assignments ba
+          JOIN users u
+            ON u.id = ba.user_id
+          WHERE ba.budget_id = b.id
+            AND ba.assignment_type =
+              'deputy_holder'
+            AND ba.is_active = 1
+            AND (
+              ba.valid_to IS NULL OR
+              ba.valid_to >= date('now')
+            )
+          ORDER BY ba.id DESC
+          LIMIT 1
+        )
       ) AS deputyHolder
 
     FROM budgets b
-    LEFT JOIN departments d ON d.id = b.department_id
+
+    LEFT JOIN departments d
+      ON d.id = b.department_id
+
     ORDER BY b.budget_number
   `).all();
 }
+
 
 function listLocations() {
   return db.prepare(`
@@ -5320,241 +5479,383 @@ function getBudgetById(budgetId) {
   `).get(budgetId);
 }
 
-function createBudget(payload) {
-  const budgetNumber = String(payload.budgetNumber || '').trim();
-  const name = String(payload.name || '').trim();
-  const departmentId = Number(payload.departmentId);
-  const holderUserId = payload.holderUserId
-    ? Number(payload.holderUserId)
-    : null;
-  const deputyUserId = payload.deputyUserId
-    ? Number(payload.deputyUserId)
-    : null;
+function validateIndependentBudgetHolder(
+  holderId,
+  label
+) {
+  if (!holderId) {
+    return null;
+  }
 
-  if (!budgetNumber || !name || !departmentId) {
-    const error = new Error(
-      'Budget number, budget name and department are required'
-    );
+  if (
+    !Number.isInteger(holderId) ||
+    holderId < 1
+  ) {
+    const error =
+      new Error(
+        `Selected ${label} is not valid`
+      );
+
     error.statusCode = 400;
     throw error;
   }
 
-  validateUhpBudgetNumber(budgetNumber);
+  const holder =
+    db.prepare(`
+      SELECT
+        id,
+        canonical_name AS name,
+        linked_user_id AS linkedUserId,
+        status
+      FROM budget_holders
+      WHERE id = ?
+        AND status = 'active'
+    `).get(holderId);
 
-  const duplicate = db.prepare(`
-    SELECT id
-    FROM budgets
-    WHERE budget_number = ?
-  `).get(budgetNumber);
+  if (!holder) {
+    const error =
+      new Error(
+        `Selected ${label} is not valid`
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return holder;
+}
+
+
+function assignIndependentBudgetHolder(
+  budgetId,
+  holderId,
+  assignmentType
+) {
+  if (!holderId) {
+    return;
+  }
+
+  db.prepare(`
+    INSERT INTO budget_holder_assignments (
+      budget_id,
+      holder_id,
+      assignment_type,
+      valid_from,
+      valid_to,
+      is_active,
+      source,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      ?,
+      ?,
+      ?,
+      date('now'),
+      NULL,
+      1,
+      'portal_master',
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP
+    )
+
+    ON CONFLICT (
+      budget_id,
+      holder_id,
+      assignment_type
+    )
+    DO UPDATE SET
+      valid_from = date('now'),
+      valid_to = NULL,
+      is_active = 1,
+      source = 'portal_master',
+      updated_at = CURRENT_TIMESTAMP
+  `).run(
+    budgetId,
+    holderId,
+    assignmentType
+  );
+}
+
+
+function createBudget(payload) {
+  const budgetNumber =
+    String(
+      payload.budgetNumber || ''
+    ).trim();
+
+  const name =
+    String(
+      payload.name || ''
+    ).trim();
+
+  const departmentId =
+    Number(payload.departmentId);
+
+  const holderId =
+    payload.holderId
+      ? Number(payload.holderId)
+      : null;
+
+  const deputyHolderId =
+    payload.deputyHolderId
+      ? Number(payload.deputyHolderId)
+      : null;
+
+  if (
+    !budgetNumber ||
+    !name ||
+    !departmentId
+  ) {
+    const error =
+      new Error(
+        'Budget number, budget name and department are required'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  validateUhpBudgetNumber(
+    budgetNumber
+  );
+
+  const duplicate =
+    db.prepare(`
+      SELECT id
+      FROM budgets
+      WHERE budget_number = ?
+    `).get(
+      budgetNumber
+    );
 
   if (duplicate) {
-    const error = new Error('This budget number already exists');
+    const error =
+      new Error(
+        'This budget number already exists'
+      );
+
     error.statusCode = 409;
     throw error;
   }
 
-  const department = db.prepare(`
-    SELECT id
-    FROM departments
-    WHERE id = ?
-      AND status = 'active'
-  `).get(departmentId);
+  const department =
+    db.prepare(`
+      SELECT id
+      FROM departments
+      WHERE id = ?
+        AND status = 'active'
+    `).get(
+      departmentId
+    );
 
   if (!department) {
-    const error = new Error('Selected department is not valid');
+    const error =
+      new Error(
+        'Selected department is not valid'
+      );
+
     error.statusCode = 400;
     throw error;
   }
 
   if (
-    holderUserId &&
-    deputyUserId &&
-    holderUserId === deputyUserId
+    holderId &&
+    deputyHolderId &&
+    holderId === deputyHolderId
   ) {
-    const error = new Error(
-      'Primary and deputy budget holder must be different users'
-    );
+    const error =
+      new Error(
+        'Primary and deputy budget holder must be different holders'
+      );
+
     error.statusCode = 400;
     throw error;
   }
 
-  for (const [label, userId] of [
-    ['budget holder', holderUserId],
-    ['deputy budget holder', deputyUserId]
-  ]) {
-    if (!userId) continue;
+  validateIndependentBudgetHolder(
+    holderId,
+    'budget holder'
+  );
 
-    const user = db.prepare(`
-      SELECT id
-      FROM users
-      WHERE id = ?
-        AND status IN ('active','invited')
-    `).get(userId);
-
-    if (!user) {
-      const error = new Error(`Selected ${label} is not valid`);
-      error.statusCode = 400;
-      throw error;
-    }
-  }
+  validateIndependentBudgetHolder(
+    deputyHolderId,
+    'deputy budget holder'
+  );
 
   db.exec('BEGIN');
 
   try {
-    const result = db.prepare(`
-      INSERT INTO budgets
-        (
+    const result =
+      db.prepare(`
+        INSERT INTO budgets (
           budget_number,
           name,
           department_id,
           status,
           effective_from
         )
-      VALUES (?, ?, ?, 'active', date('now'))
-    `).run(
-      budgetNumber,
-      name,
-      departmentId
+        VALUES (
+          ?,
+          ?,
+          ?,
+          'active',
+          date('now')
+        )
+      `).run(
+        budgetNumber,
+        name,
+        departmentId
+      );
+
+    const budgetId =
+      Number(
+        result.lastInsertRowid
+      );
+
+    assignIndependentBudgetHolder(
+      budgetId,
+      holderId,
+      'primary_holder'
     );
 
-    const budgetId = Number(result.lastInsertRowid);
-
-    const assignHolder = db.prepare(`
-      INSERT INTO budget_assignments
-        (
-          budget_id,
-          user_id,
-          assignment_type,
-          valid_from,
-          is_active
-        )
-      VALUES (?, ?, ?, date('now'), 1)
-    `);
-
-    if (holderUserId) {
-      assignHolder.run(
-        budgetId,
-        holderUserId,
-        'primary_holder'
-      );
-
-      grantBudgetHolderAccess(
-        holderUserId,
-        budgetId
-      );
-    }
-
-    if (deputyUserId && deputyUserId !== holderUserId) {
-      assignHolder.run(
-        budgetId,
-        deputyUserId,
-        'deputy_holder'
-      );
-
-      grantBudgetHolderAccess(
-        deputyUserId,
-        budgetId
-      );
-    }
+    assignIndependentBudgetHolder(
+      budgetId,
+      deputyHolderId,
+      'deputy_holder'
+    );
 
     writeAudit({
       action: 'CREATE',
       entityType: 'budget',
       entityId: budgetId,
-      newValue: JSON.stringify({
-        budgetNumber,
-        name,
-        departmentId,
-        holderUserId,
-        deputyUserId,
-        status: 'active'
-      })
+
+      newValue:
+        JSON.stringify({
+          budgetNumber,
+          name,
+          departmentId,
+          holderId,
+          deputyHolderId,
+          status: 'active'
+        })
     });
 
     db.exec('COMMIT');
 
-    return getBudgetById(budgetId);
+    return getBudgetById(
+      budgetId
+    );
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
   }
 }
 
-function updateBudget(budgetId, payload) {
-  const existing = getBudgetById(budgetId);
+
+function updateBudget(
+  budgetId,
+  payload
+) {
+  const existing =
+    getBudgetById(
+      budgetId
+    );
 
   if (!existing) {
-    const error = new Error('Budget not found');
+    const error =
+      new Error(
+        'Budget not found'
+      );
+
     error.statusCode = 404;
     throw error;
   }
 
-  const name = String(payload.name || existing.name).trim();
-  const departmentId = Number(
-    payload.departmentId || existing.departmentId
-  );
-  const holderUserId =
-    payload.holderUserId === null || payload.holderUserId === ''
-      ? null
-      : Number(payload.holderUserId);
+  const name =
+    String(
+      payload.name ||
+      existing.name
+    ).trim();
 
-  const deputyUserId =
-    payload.deputyUserId === null || payload.deputyUserId === ''
-      ? null
-      : Number(payload.deputyUserId);
-
-  if (!name || !departmentId) {
-    const error = new Error(
-      'Budget name and department are required'
+  const departmentId =
+    Number(
+      payload.departmentId ||
+      existing.departmentId
     );
+
+  const holderId =
+    payload.holderId === null ||
+    payload.holderId === ''
+      ? null
+      : Number(
+          payload.holderId
+        );
+
+  const deputyHolderId =
+    payload.deputyHolderId === null ||
+    payload.deputyHolderId === ''
+      ? null
+      : Number(
+          payload.deputyHolderId
+        );
+
+  if (
+    !name ||
+    !departmentId
+  ) {
+    const error =
+      new Error(
+        'Budget name and department are required'
+      );
+
     error.statusCode = 400;
     throw error;
   }
 
-  const department = db.prepare(`
-    SELECT id
-    FROM departments
-    WHERE id = ?
-      AND status = 'active'
-  `).get(departmentId);
+  const department =
+    db.prepare(`
+      SELECT id
+      FROM departments
+      WHERE id = ?
+        AND status = 'active'
+    `).get(
+      departmentId
+    );
 
   if (!department) {
-    const error = new Error('Selected department is not valid');
+    const error =
+      new Error(
+        'Selected department is not valid'
+      );
+
     error.statusCode = 400;
     throw error;
   }
 
   if (
-    holderUserId &&
-    deputyUserId &&
-    holderUserId === deputyUserId
+    holderId &&
+    deputyHolderId &&
+    holderId === deputyHolderId
   ) {
-    const error = new Error(
-      'Primary and deputy budget holder must be different users'
-    );
+    const error =
+      new Error(
+        'Primary and deputy budget holder must be different holders'
+      );
+
     error.statusCode = 400;
     throw error;
   }
 
-  for (const [label, userId] of [
-    ['budget holder', holderUserId],
-    ['deputy budget holder', deputyUserId]
-  ]) {
-    if (!userId) continue;
+  validateIndependentBudgetHolder(
+    holderId,
+    'budget holder'
+  );
 
-    const user = db.prepare(`
-      SELECT id
-      FROM users
-      WHERE id = ?
-        AND status IN ('active','invited')
-    `).get(userId);
-
-    if (!user) {
-      const error = new Error(`Selected ${label} is not valid`);
-      error.statusCode = 400;
-      throw error;
-    }
-  }
+  validateIndependentBudgetHolder(
+    deputyHolderId,
+    'deputy budget holder'
+  );
 
   db.exec('BEGIN');
 
@@ -5564,7 +5865,8 @@ function updateBudget(budgetId, payload) {
       SET
         name = ?,
         department_id = ?,
-        updated_at = CURRENT_TIMESTAMP
+        updated_at =
+          CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
       name,
@@ -5572,76 +5874,95 @@ function updateBudget(budgetId, payload) {
       budgetId
     );
 
+    /*
+      Retire current independent
+      accounting-holder assignments.
+    */
+    db.prepare(`
+      UPDATE budget_holder_assignments
+      SET
+        is_active = 0,
+        valid_to = date('now'),
+        updated_at =
+          CURRENT_TIMESTAMP
+      WHERE budget_id = ?
+        AND assignment_type IN (
+          'primary_holder',
+          'deputy_holder'
+        )
+        AND is_active = 1
+    `).run(
+      budgetId
+    );
+
+    /*
+      This is an explicit administrator
+      edit of the holder master.
+
+      Retire legacy holder responsibility
+      records so clearing/replacing a holder
+      does not fall back to the old identity.
+
+      This does NOT alter user_budget_access.
+    */
     db.prepare(`
       UPDATE budget_assignments
       SET
         is_active = 0,
         valid_to = date('now')
       WHERE budget_id = ?
-        AND assignment_type IN ('primary_holder','deputy_holder')
-        AND is_active = 1
-    `).run(budgetId);
-
-    const assignHolder = db.prepare(`
-      INSERT INTO budget_assignments
-        (
-          budget_id,
-          user_id,
-          assignment_type,
-          valid_from,
-          is_active
+        AND assignment_type IN (
+          'primary_holder',
+          'deputy_holder'
         )
-      VALUES (?, ?, ?, date('now'), 1)
-    `);
+        AND is_active = 1
+    `).run(
+      budgetId
+    );
 
-    if (holderUserId) {
-      assignHolder.run(
-        budgetId,
-        holderUserId,
-        'primary_holder'
-      );
+    assignIndependentBudgetHolder(
+      budgetId,
+      holderId,
+      'primary_holder'
+    );
 
-      grantBudgetHolderAccess(
-        holderUserId,
-        budgetId
-      );
-    }
-
-    if (deputyUserId && deputyUserId !== holderUserId) {
-      assignHolder.run(
-        budgetId,
-        deputyUserId,
-        'deputy_holder'
-      );
-
-      grantBudgetHolderAccess(
-        deputyUserId,
-        budgetId
-      );
-    }
+    assignIndependentBudgetHolder(
+      budgetId,
+      deputyHolderId,
+      'deputy_holder'
+    );
 
     writeAudit({
       action: 'UPDATE',
       entityType: 'budget',
       entityId: budgetId,
-      oldValue: JSON.stringify(existing),
-      newValue: JSON.stringify({
-        ...existing,
-        name,
-        departmentId,
-        holderUserId,
-        deputyUserId
-      })
+
+      oldValue:
+        JSON.stringify(
+          existing
+        ),
+
+      newValue:
+        JSON.stringify({
+          ...existing,
+          name,
+          departmentId,
+          holderId,
+          deputyHolderId
+        })
     });
 
     db.exec('COMMIT');
 
-    return getBudgetById(budgetId);
+    return getBudgetById(
+      budgetId
+    );
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
   }
 }
+
 
 function setBudgetStatus(budgetId, nextStatus) {
   if (!['active', 'inactive'].includes(nextStatus)) {
@@ -5991,16 +6312,23 @@ function approveBudgetCandidate(
       candidate.suggestedDepartmentId
     );
 
-  const holderUserIdRaw =
-    payload.holderUserId ??
-    candidate.suggestedHolderUserId ??
-    null;
-
-  const holderUserId =
-    holderUserIdRaw === null ||
-    holderUserIdRaw === ''
+  const holderId =
+    payload.holderId === null ||
+    payload.holderId === '' ||
+    payload.holderId === undefined
       ? null
-      : Number(holderUserIdRaw);
+      : Number(
+          payload.holderId
+        );
+
+  const deputyHolderId =
+    payload.deputyHolderId === null ||
+    payload.deputyHolderId === '' ||
+    payload.deputyHolderId === undefined
+      ? null
+      : Number(
+          payload.deputyHolderId
+        );
 
   const reviewNotes =
     String(
@@ -6021,8 +6349,28 @@ function approveBudgetCandidate(
     departmentId
   );
 
-  validateCandidateHolder(
-    holderUserId
+  if (
+    holderId &&
+    deputyHolderId &&
+    holderId === deputyHolderId
+  ) {
+    const error =
+      new Error(
+        'Primary and deputy budget holder must be different holders'
+      );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  validateIndependentBudgetHolder(
+    holderId,
+    'budget holder'
+  );
+
+  validateIndependentBudgetHolder(
+    deputyHolderId,
+    'deputy budget holder'
   );
 
   const duplicate =
@@ -6053,14 +6401,13 @@ function approveBudgetCandidate(
   try {
     const result =
       db.prepare(`
-        INSERT INTO budgets
-          (
-            budget_number,
-            name,
-            department_id,
-            status,
-            effective_from
-          )
+        INSERT INTO budgets (
+          budget_number,
+          name,
+          department_id,
+          status,
+          effective_from
+        )
         VALUES (
           ?,
           ?,
@@ -6079,44 +6426,31 @@ function approveBudgetCandidate(
         result.lastInsertRowid
       );
 
-    if (holderUserId) {
-      db.prepare(`
-        INSERT INTO budget_assignments
-          (
-            budget_id,
-            user_id,
-            assignment_type,
-            valid_from,
-            is_active
-          )
-        VALUES (
-          ?,
-          ?,
-          'primary_holder',
-          date('now'),
-          1
-        )
-      `).run(
-        budgetId,
-        holderUserId
-      );
+    assignIndependentBudgetHolder(
+      budgetId,
+      holderId,
+      'primary_holder'
+    );
 
-      /*
-        Holder responsibility does not
-        automatically grant can_book.
-      */
-      grantBudgetHolderAccess(
-        holderUserId,
-        budgetId
-      );
-    }
+    assignIndependentBudgetHolder(
+      budgetId,
+      deputyHolderId,
+      'deputy_holder'
+    );
 
+    /*
+      The imported holder remains historical
+      evidence only.
+
+      Do not carry a legacy portal-user
+      suggestion into the approved budget.
+    */
     db.prepare(`
       UPDATE budget_candidates
       SET
         suggested_name = ?,
         suggested_department_id = ?,
-        suggested_holder_user_id = ?,
+        suggested_holder_user_id = NULL,
 
         status = 'approved',
         resolved_budget_id = ?,
@@ -6132,7 +6466,6 @@ function approveBudgetCandidate(
     `).run(
       name,
       departmentId,
-      holderUserId,
       budgetId,
       reviewerUserId,
       reviewNotes,
@@ -6143,8 +6476,12 @@ function approveBudgetCandidate(
       action: 'APPROVE',
       entityType: 'budget_candidate',
       entityId: candidateId,
+
       oldValue:
-        JSON.stringify(candidate),
+        JSON.stringify(
+          candidate
+        ),
+
       newValue:
         JSON.stringify({
           status: 'approved',
@@ -6153,9 +6490,14 @@ function approveBudgetCandidate(
           budgetNumber,
           name,
           departmentId,
-          holderUserId,
+          holderId,
+          deputyHolderId,
+          importedHolderName:
+            candidate.importedHolderName ||
+            null,
           reviewNotes
         }),
+
       source: 'uhp_admin',
       actorUserId:
         reviewerUserId
@@ -6165,16 +6507,19 @@ function approveBudgetCandidate(
       action: 'CREATE',
       entityType: 'budget',
       entityId: budgetId,
+
       newValue:
         JSON.stringify({
           budgetNumber,
           name,
           departmentId,
-          holderUserId,
+          holderId,
+          deputyHolderId,
           sourceCandidateId:
             candidateId,
           status: 'active'
         }),
+
       source: 'uhp_admin',
       actorUserId:
         reviewerUserId
@@ -6190,11 +6535,18 @@ function approveBudgetCandidate(
 
     return {
       codingReevaluation,
+
       candidate:
         getBudgetCandidateById(
           candidateId
         ),
+
       budget:
+        listBudgets().find(
+          (budget) =>
+            Number(budget.id) ===
+            budgetId
+        ) ||
         getBudgetById(
           budgetId
         )
@@ -36280,6 +36632,27 @@ const server = http.createServer(async (req, res) => {
         200,
         {
           location
+        }
+      );
+    }
+
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/budget-holders'
+    ) {
+      requireAnyRole(
+        req,
+        ['uhp_admin']
+      );
+
+      return sendJson(
+        res,
+        200,
+        {
+          holders:
+            listBudgetHolders()
         }
       );
     }

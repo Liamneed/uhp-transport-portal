@@ -28933,6 +28933,7 @@ function BudgetsPage() {
   const [budgets, setBudgets] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
+  const [budgetHolders, setBudgetHolders] = useState([]);
   const [budgetCandidates, setBudgetCandidates] = useState([]);
 
   const [loading, setLoading] = useState(true);
@@ -28954,7 +28955,8 @@ function BudgetsPage() {
     useState({
       name: '',
       departmentId: '',
-      holderUserId: '',
+      holderId: '',
+      deputyHolderId: '',
       existingBudgetId: ''
     });
 
@@ -28962,8 +28964,8 @@ function BudgetsPage() {
     budgetNumber: '',
     name: '',
     departmentId: '',
-    holderUserId: '',
-    deputyUserId: ''
+    holderId: '',
+    deputyHolderId: ''
   };
 
   const [form, setForm] = useState(emptyForm);
@@ -28977,11 +28979,13 @@ function BudgetsPage() {
         budgetsResponse,
         departmentsResponse,
         usersResponse,
+        holdersResponse,
         candidatesResponse
       ] = await Promise.all([
         apiFetch(`${API_BASE}/api/budgets`),
         apiFetch(`${API_BASE}/api/departments`),
         apiFetch(`${API_BASE}/api/users`),
+        apiFetch(`${API_BASE}/api/budget-holders`),
         apiFetch(`${API_BASE}/api/budget-candidates`)
       ]);
 
@@ -28989,6 +28993,7 @@ function BudgetsPage() {
         !budgetsResponse.ok ||
         !departmentsResponse.ok ||
         !usersResponse.ok ||
+        !holdersResponse.ok ||
         !candidatesResponse.ok
       ) {
         throw new Error('Unable to load budget administration data');
@@ -28997,11 +29002,15 @@ function BudgetsPage() {
       const budgetData = await budgetsResponse.json();
       const departmentData = await departmentsResponse.json();
       const userData = await usersResponse.json();
+      const holderData = await holdersResponse.json();
       const candidateData = await candidatesResponse.json();
 
       setBudgets(budgetData.budgets ?? []);
       setDepartments(departmentData.departments ?? []);
       setUsers(userData.users ?? []);
+      setBudgetHolders(
+        holderData.holders ?? []
+      );
       setBudgetCandidates(
         candidateData.candidates ?? []
       );
@@ -29052,11 +29061,22 @@ function BudgetsPage() {
     );
 
   const stats = useMemo(() => ({
-    active: budgets.filter((b) => b.status === 'active').length,
-    inactive: budgets.filter((b) => b.status === 'inactive').length,
-    missingHolder: budgets.filter(
-      (b) => b.status === 'active' && !b.holderUserId
-    ).length
+    active:
+      budgets.filter(
+        (b) => b.status === 'active'
+      ).length,
+
+    inactive:
+      budgets.filter(
+        (b) => b.status === 'inactive'
+      ).length,
+
+    missingHolder:
+      budgets.filter(
+        (b) =>
+          b.status === 'active' &&
+          !b.budgetHolder
+      ).length
   }), [budgets]);
 
   const eligibleUsers = users.filter(
@@ -29077,11 +29097,26 @@ function BudgetsPage() {
     setEditingBudget(budget);
 
     setForm({
-      budgetNumber: budget.budgetNumber,
-      name: budget.name,
-      departmentId: String(budget.departmentId ?? ''),
-      holderUserId: String(budget.holderUserId ?? ''),
-      deputyUserId: String(budget.deputyUserId ?? '')
+      budgetNumber:
+        budget.budgetNumber,
+
+      name:
+        budget.name,
+
+      departmentId:
+        String(
+          budget.departmentId ?? ''
+        ),
+
+      holderId:
+        String(
+          budget.holderId ?? ''
+        ),
+
+      deputyHolderId:
+        String(
+          budget.deputyHolderId ?? ''
+        )
     });
 
     setError('');
@@ -29103,15 +29138,30 @@ function BudgetsPage() {
         : `${API_BASE}/api/budgets`;
 
       const payload = {
-        budgetNumber: form.budgetNumber,
-        name: form.name,
-        departmentId: Number(form.departmentId),
-        holderUserId: form.holderUserId
-          ? Number(form.holderUserId)
-          : null,
-        deputyUserId: form.deputyUserId
-          ? Number(form.deputyUserId)
-          : null
+        budgetNumber:
+          form.budgetNumber,
+
+        name:
+          form.name,
+
+        departmentId:
+          Number(
+            form.departmentId
+          ),
+
+        holderId:
+          form.holderId
+            ? Number(
+                form.holderId
+              )
+            : null,
+
+        deputyHolderId:
+          form.deputyHolderId
+            ? Number(
+                form.deputyHolderId
+              )
+            : null
       };
 
       const response = await apiFetch(url, {
@@ -29157,18 +29207,16 @@ function BudgetsPage() {
     setCandidateForm({
       name:
         candidate.suggestedName || '',
+
       departmentId:
         candidate.suggestedDepartmentId
           ? String(
               candidate.suggestedDepartmentId
             )
           : '',
-      holderUserId:
-        candidate.suggestedHolderUserId
-          ? String(
-              candidate.suggestedHolderUserId
-            )
-          : '',
+
+      holderId: '',
+      deputyHolderId: '',
       existingBudgetId: ''
     });
 
@@ -29186,7 +29234,8 @@ function BudgetsPage() {
     setCandidateForm({
       name: '',
       departmentId: '',
-      holderUserId: '',
+      holderId: '',
+      deputyHolderId: '',
       existingBudgetId: ''
     });
 
@@ -29242,10 +29291,17 @@ function BudgetsPage() {
                         Number(
                           candidateForm.departmentId
                         ),
-                      holderUserId:
-                        candidateForm.holderUserId
+                      holderId:
+                        candidateForm.holderId
                           ? Number(
-                              candidateForm.holderUserId
+                              candidateForm.holderId
+                            )
+                          : null,
+
+                      deputyHolderId:
+                        candidateForm.deputyHolderId
+                          ? Number(
+                              candidateForm.deputyHolderId
                             )
                           : null
                     }
@@ -29800,17 +29856,29 @@ function BudgetsPage() {
                   </select>
                 </label>
 
+                <div className="inline-warning">
+                  Imported holder evidence:{' '}
+                  <strong>
+                    {candidateModal
+                      .candidate
+                      .importedHolderName ||
+                      'Not supplied'}
+                  </strong>
+                  . This is historical evidence
+                  only. Select the current
+                  accounting holder below.
+                </div>
+
                 <label>
-                  Budget Holder
+                  Primary Budget Holder
                   <select
                     value={
-                      candidateForm
-                        .holderUserId
+                      candidateForm.holderId
                     }
                     onChange={(event) =>
                       setCandidateForm({
                         ...candidateForm,
-                        holderUserId:
+                        holderId:
                           event.target.value
                       })
                     }
@@ -29819,30 +29887,77 @@ function BudgetsPage() {
                       Not assigned
                     </option>
 
-                    {eligibleUsers.map(
-                      (user) => (
-                        <option
-                          key={user.id}
-                          value={user.id}
-                        >
-                          {user.firstName}{' '}
-                          {user.lastName}
-                          {user.department
-                            ? ` — ${user.department}`
-                            : ''}
-                        </option>
+                    {budgetHolders
+                      .filter(
+                        (holder) =>
+                          holder.status ===
+                          'active'
                       )
-                    )}
+                      .map((holder) => (
+                        <option
+                          key={holder.id}
+                          value={holder.id}
+                        >
+                          {holder.name}
+                          {' — '}
+                          Holder #{holder.id}
+                        </option>
+                      ))}
                   </select>
                 </label>
 
+                <label>
+                  Deputy Budget Holder
+                  <select
+                    value={
+                      candidateForm
+                        .deputyHolderId
+                    }
+                    onChange={(event) =>
+                      setCandidateForm({
+                        ...candidateForm,
+                        deputyHolderId:
+                          event.target.value
+                      })
+                    }
+                  >
+                    <option value="">
+                      Not assigned
+                    </option>
+
+                    {budgetHolders
+                      .filter(
+                        (holder) =>
+                          holder.status ===
+                          'active'
+                      )
+                      .map((holder) => (
+                        <option
+                          key={holder.id}
+                          value={holder.id}
+                        >
+                          {holder.name}
+                          {' — '}
+                          Holder #{holder.id}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+
+                {candidateForm.holderId &&
+                  candidateForm.holderId ===
+                    candidateForm.deputyHolderId && (
+                    <div className="inline-warning">
+                      Primary and deputy cannot
+                      be the same holder.
+                    </div>
+                  )}
+
                 <div className="inline-warning">
-                  Assigning a budget holder
-                  gives oversight access only.
-                  It does not automatically
-                  authorise them to book
-                  transport against this
-                  budget.
+                  Accounting-holder assignment
+                  does not create a portal user
+                  and does not grant permission
+                  to book against this budget.
                 </div>
               </>
             ) : (
@@ -30048,11 +30163,12 @@ function BudgetsPage() {
               <label>
                 Primary Budget Holder
                 <select
-                  value={form.holderUserId}
+                  value={form.holderId}
                   onChange={(e) =>
                     setForm({
                       ...form,
-                      holderUserId: e.target.value
+                      holderId:
+                        e.target.value
                     })
                   }
                 >
@@ -30060,28 +30176,36 @@ function BudgetsPage() {
                     Not assigned
                   </option>
 
-                  {eligibleUsers.map((user) => (
-                    <option
-                      key={user.id}
-                      value={user.id}
-                    >
-                      {user.firstName} {user.lastName}
-                      {user.department
-                        ? ` — ${user.department}`
-                        : ''}
-                    </option>
-                  ))}
+                  {budgetHolders
+                    .filter(
+                      (holder) =>
+                        holder.status ===
+                        'active'
+                    )
+                    .map((holder) => (
+                      <option
+                        key={holder.id}
+                        value={holder.id}
+                      >
+                        {holder.name}
+                        {' — '}
+                        Holder #{holder.id}
+                      </option>
+                    ))}
                 </select>
               </label>
 
               <label>
                 Deputy Budget Holder
                 <select
-                  value={form.deputyUserId}
+                  value={
+                    form.deputyHolderId
+                  }
                   onChange={(e) =>
                     setForm({
                       ...form,
-                      deputyUserId: e.target.value
+                      deputyHolderId:
+                        e.target.value
                     })
                   }
                 >
@@ -30089,26 +30213,51 @@ function BudgetsPage() {
                     Not assigned
                   </option>
 
-                  {eligibleUsers.map((user) => (
-                    <option
-                      key={user.id}
-                      value={user.id}
-                    >
-                      {user.firstName} {user.lastName}
-                      {user.department
-                        ? ` — ${user.department}`
-                        : ''}
-                    </option>
-                  ))}
+                  {budgetHolders
+                    .filter(
+                      (holder) =>
+                        holder.status ===
+                        'active'
+                    )
+                    .map((holder) => (
+                      <option
+                        key={holder.id}
+                        value={holder.id}
+                      >
+                        {holder.name}
+                        {' — '}
+                        Holder #{holder.id}
+                      </option>
+                    ))}
                 </select>
               </label>
             </div>
 
-            {form.holderUserId &&
-              form.holderUserId === form.deputyUserId && (
+            {form.holderId &&
+              form.holderId ===
+                form.deputyHolderId && (
                 <div className="inline-warning">
-                  Primary and deputy cannot be the same person.
-                  The deputy assignment will be ignored.
+                  Primary and deputy cannot
+                  be the same holder.
+                </div>
+              )}
+
+            {editingBudget &&
+              !editingBudget.holderId &&
+              editingBudget.holderUserId && (
+                <div className="inline-warning">
+                  This budget currently uses
+                  the legacy portal-user holder
+                  {editingBudget.budgetHolder
+                    ? ` (${editingBudget.budgetHolder})`
+                    : ''}.
+                  {' '}
+                  Saving this budget will move
+                  holder responsibility to the
+                  independent accounting-holder
+                  model. Select the current
+                  primary holder above if one
+                  should remain assigned.
                 </div>
               )}
 
