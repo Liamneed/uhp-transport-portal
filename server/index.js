@@ -17773,10 +17773,44 @@ function listCodingReviewOptions() {
       ORDER BY b.budget_number
     `).all();
 
-  const holdersStatement =
+  const independentHoldersStatement =
     db.prepare(`
       SELECT
-        u.id,
+        bh.id AS budgetHolderId,
+        bh.canonical_name AS name,
+        bh.linked_user_id AS linkedUserId,
+        bha.assignment_type AS assignmentType
+      FROM budget_holder_assignments bha
+      JOIN budget_holders bh
+        ON bh.id = bha.holder_id
+      WHERE bha.budget_id = ?
+        AND bha.assignment_type IN (
+          'primary_holder',
+          'deputy_holder'
+        )
+        AND bha.is_active = 1
+        AND (
+          bha.valid_from IS NULL OR
+          bha.valid_from <= date('now')
+        )
+        AND (
+          bha.valid_to IS NULL OR
+          bha.valid_to >= date('now')
+        )
+        AND bh.status = 'active'
+      ORDER BY
+        CASE bha.assignment_type
+          WHEN 'primary_holder' THEN 0
+          ELSE 1
+        END,
+        bh.canonical_name,
+        bha.id
+    `);
+
+  const legacyHoldersStatement =
+    db.prepare(`
+      SELECT
+        u.id AS budgetHolderUserId,
         u.first_name AS firstName,
         u.last_name AS lastName,
         ba.assignment_type AS assignmentType
@@ -17811,19 +17845,63 @@ function listCodingReviewOptions() {
     reasonCodes,
     budgets:
       budgets.map(
-        (budget) => ({
-          ...budget,
-          holders:
-            holdersStatement.all(
+        (budget) => {
+          const independentHolders =
+            independentHoldersStatement.all(
               budget.id
             ).map(
               (holder) => ({
                 ...holder,
-                name:
-                  `${holder.firstName} ${holder.lastName}`
+                identityType:
+                  'independent_holder',
+                selectionKey:
+                  `independent:${holder.budgetHolderId}`
               })
+            );
+
+          const linkedUserIds =
+            new Set(
+              independentHolders
+                .map(
+                  (holder) =>
+                    holder.linkedUserId
+                )
+                .filter(Boolean)
+                .map(Number)
+            );
+
+          const legacyHolders =
+            legacyHoldersStatement.all(
+              budget.id
             )
-        })
+              .filter(
+                (holder) =>
+                  !linkedUserIds.has(
+                    Number(
+                      holder.budgetHolderUserId
+                    )
+                  )
+              )
+              .map(
+                (holder) => ({
+                  ...holder,
+                  name:
+                    `${holder.firstName} ${holder.lastName}`,
+                  identityType:
+                    'portal_user',
+                  selectionKey:
+                    `portal_user:${holder.budgetHolderUserId}`
+                })
+              );
+
+          return {
+            ...budget,
+            holders: [
+              ...independentHolders,
+              ...legacyHolders
+            ]
+          };
+        }
       )
   };
 }
@@ -17853,18 +17931,37 @@ function approveBookingCoding(
   const reasonCodeId =
     Number(payload.reasonCodeId);
 
-  const budgetHolderUserId =
+  const requestedBudgetHolderId =
+    Number(payload.budgetHolderId);
+
+  const requestedBudgetHolderUserId =
     Number(payload.budgetHolderUserId);
+
+  const hasIndependentHolder =
+    Number.isInteger(
+      requestedBudgetHolderId
+    ) &&
+    requestedBudgetHolderId > 0;
+
+  const hasLegacyHolder =
+    Number.isInteger(
+      requestedBudgetHolderUserId
+    ) &&
+    requestedBudgetHolderUserId > 0;
 
   if (
     !Number.isInteger(budgetId) ||
     budgetId < 1 ||
     !Number.isInteger(reasonCodeId) ||
     reasonCodeId < 1 ||
-    !Number.isInteger(
-      budgetHolderUserId
+    (
+      !hasIndependentHolder &&
+      !hasLegacyHolder
     ) ||
-    budgetHolderUserId < 1
+    (
+      hasIndependentHolder &&
+      hasLegacyHolder
+    )
   ) {
     const error =
       new Error(
@@ -17985,44 +18082,99 @@ function approveBookingCoding(
     throw error;
   }
 
-  const holder =
-    db.prepare(`
-      SELECT
-        u.id,
-        u.first_name AS firstName,
-        u.last_name AS lastName,
-        ba.assignment_type
-          AS assignmentType
-      FROM budget_assignments ba
-      JOIN users u
-        ON u.id = ba.user_id
-      WHERE ba.budget_id = ?
-        AND ba.user_id = ?
-        AND ba.assignment_type IN (
-          'primary_holder',
-          'deputy_holder'
-        )
-        AND ba.is_active = 1
-        AND (
-          ba.valid_from IS NULL OR
-          ba.valid_from <= date('now')
-        )
-        AND (
-          ba.valid_to IS NULL OR
-          ba.valid_to >= date('now')
-        )
-        AND u.status = 'active'
-      ORDER BY
-        CASE ba.assignment_type
-          WHEN 'primary_holder' THEN 0
-          ELSE 1
-        END,
-        ba.id DESC
-      LIMIT 1
-    `).get(
-      budgetId,
-      budgetHolderUserId
-    );
+  let holder = null;
+
+  if (hasIndependentHolder) {
+    holder =
+      db.prepare(`
+        SELECT
+          bh.id AS budgetHolderId,
+          bh.canonical_name
+            AS canonicalName,
+          bh.linked_user_id
+            AS linkedUserId,
+          bha.assignment_type
+            AS assignmentType
+        FROM budget_holder_assignments bha
+        JOIN budget_holders bh
+          ON bh.id = bha.holder_id
+        WHERE bha.budget_id = ?
+          AND bha.holder_id = ?
+          AND bha.assignment_type IN (
+            'primary_holder',
+            'deputy_holder'
+          )
+          AND bha.is_active = 1
+          AND (
+            bha.valid_from IS NULL OR
+            bha.valid_from <= date('now')
+          )
+          AND (
+            bha.valid_to IS NULL OR
+            bha.valid_to >= date('now')
+          )
+          AND bh.status = 'active'
+        ORDER BY
+          CASE bha.assignment_type
+            WHEN 'primary_holder' THEN 0
+            ELSE 1
+          END,
+          bha.id DESC
+        LIMIT 1
+      `).get(
+        budgetId,
+        requestedBudgetHolderId
+      ) || null;
+
+    if (holder) {
+      holder.identityType =
+        'independent_holder';
+    }
+  } else {
+    holder =
+      db.prepare(`
+        SELECT
+          u.id AS budgetHolderUserId,
+          u.first_name AS firstName,
+          u.last_name AS lastName,
+          ba.assignment_type
+            AS assignmentType
+        FROM budget_assignments ba
+        JOIN users u
+          ON u.id = ba.user_id
+        WHERE ba.budget_id = ?
+          AND ba.user_id = ?
+          AND ba.assignment_type IN (
+            'primary_holder',
+            'deputy_holder'
+          )
+          AND ba.is_active = 1
+          AND (
+            ba.valid_from IS NULL OR
+            ba.valid_from <= date('now')
+          )
+          AND (
+            ba.valid_to IS NULL OR
+            ba.valid_to >= date('now')
+          )
+          AND u.status = 'active'
+        ORDER BY
+          CASE ba.assignment_type
+            WHEN 'primary_holder' THEN 0
+            ELSE 1
+          END,
+          ba.id DESC
+        LIMIT 1
+      `).get(
+        budgetId,
+        requestedBudgetHolderUserId
+      ) || null;
+
+    if (holder) {
+      holder.identityType =
+        'portal_user';
+    }
+  }
 
   if (!holder) {
     const error =
@@ -18064,7 +18216,32 @@ function approveBookingCoding(
     `).get();
 
   const holderName =
-    `${holder.firstName} ${holder.lastName}`;
+    holder.identityType ===
+      'independent_holder'
+      ? holder.canonicalName
+      : `${holder.firstName} ${holder.lastName}`;
+
+  const persistedBudgetHolderId =
+    holder.identityType ===
+      'independent_holder'
+      ? Number(
+          holder.budgetHolderId
+        )
+      : null;
+
+  const persistedBudgetHolderUserId =
+    holder.identityType ===
+      'independent_holder'
+      ? (
+          holder.linkedUserId
+            ? Number(
+                holder.linkedUserId
+              )
+            : null
+        )
+      : Number(
+          holder.budgetHolderUserId
+        );
 
   const oldState = {
     financialStatus:
@@ -18083,8 +18260,12 @@ function approveBookingCoding(
       reasonCode.id,
     reasonCode:
       reasonCode.code,
+    budgetHolderId:
+      persistedBudgetHolderId,
     budgetHolderUserId:
-      holder.id,
+      persistedBudgetHolderUserId,
+    budgetHolderIdentityType:
+      holder.identityType,
     budgetHolder:
       holderName,
     departmentId:
@@ -18101,6 +18282,7 @@ function approveBookingCoding(
           budget_id = ?,
           reason_code_id = ?,
           budget_holder_user_id = ?,
+          budget_holder_id = ?,
           department_id = ?,
           financial_status =
             'authorised',
@@ -18112,7 +18294,8 @@ function approveBookingCoding(
       `).run(
         budget.id,
         reasonCode.id,
-        holder.id,
+        persistedBudgetHolderUserId,
+        persistedBudgetHolderId,
         budget.departmentId || null,
         bookingId
       );
@@ -18139,13 +18322,14 @@ function approveBookingCoding(
           reason_code,
           reason_description,
           budget_holder_user_id,
+          budget_holder_id,
           budget_holder_name,
           department_id,
           department_name,
           captured_at
         )
       VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         CURRENT_TIMESTAMP
       )
 
@@ -18167,6 +18351,8 @@ function approveBookingCoding(
           excluded.reason_description,
         budget_holder_user_id =
           excluded.budget_holder_user_id,
+        budget_holder_id =
+          excluded.budget_holder_id,
         budget_holder_name =
           excluded.budget_holder_name,
         department_id =
@@ -18185,7 +18371,8 @@ function approveBookingCoding(
       reasonCode.id,
       reasonCode.code,
       reasonCode.description,
-      holder.id,
+      persistedBudgetHolderUserId,
+      persistedBudgetHolderId,
       holderName,
       budget.departmentId || null,
       budget.departmentName || null
@@ -18319,7 +18506,14 @@ function listOperationalBookings() {
       rc.description AS reasonDescription,
 
       b.budget_holder_user_id AS budgetHolderUserId,
-      holder.first_name || ' ' || holder.last_name AS budgetHolder,
+      b.budget_holder_id AS budgetHolderId,
+      COALESCE(
+        independent_holder.canonical_name,
+        TRIM(
+          holder.first_name || ' ' ||
+          holder.last_name
+        )
+      ) AS budgetHolder,
 
       b.created_by_user_id AS createdByUserId,
       creator.first_name || ' ' || creator.last_name AS createdBy,
@@ -18355,6 +18549,10 @@ function listOperationalBookings() {
 
     LEFT JOIN users holder
       ON holder.id = b.budget_holder_user_id
+
+    LEFT JOIN budget_holders independent_holder
+      ON independent_holder.id =
+        b.budget_holder_id
 
     LEFT JOIN users creator
       ON creator.id = b.created_by_user_id
@@ -19448,7 +19646,15 @@ function listBookingsForUser(userId) {
       rc.code AS reasonCode,
       rc.description AS reasonDescription,
 
-      holder.first_name || ' ' || holder.last_name AS budgetHolder
+      b.budget_holder_user_id AS budgetHolderUserId,
+      b.budget_holder_id AS budgetHolderId,
+      COALESCE(
+        independent_holder.canonical_name,
+        TRIM(
+          holder.first_name || ' ' ||
+          holder.last_name
+        )
+      ) AS budgetHolder
 
     FROM bookings b
 
@@ -19458,8 +19664,12 @@ function listBookingsForUser(userId) {
     JOIN reason_codes rc
       ON rc.id = b.reason_code_id
 
-    JOIN users holder
+    LEFT JOIN users holder
       ON holder.id = b.budget_holder_user_id
+
+    LEFT JOIN budget_holders independent_holder
+      ON independent_holder.id =
+        b.budget_holder_id
 
     WHERE b.created_by_user_id = ?
 
@@ -19545,8 +19755,14 @@ function listBudgetVisibleBookings(userId) {
       rc.description AS reasonDescription,
 
       b.budget_holder_user_id AS budgetHolderUserId,
-      holder.first_name || ' ' ||
-        holder.last_name AS budgetHolder,
+      b.budget_holder_id AS budgetHolderId,
+      COALESCE(
+        independent_holder.canonical_name,
+        TRIM(
+          holder.first_name || ' ' ||
+          holder.last_name
+        )
+      ) AS budgetHolder,
 
       b.created_by_user_id AS createdByUserId,
       creator.first_name || ' ' ||
@@ -19579,8 +19795,12 @@ function listBudgetVisibleBookings(userId) {
     JOIN reason_codes rc
       ON rc.id = b.reason_code_id
 
-    JOIN users holder
+    LEFT JOIN users holder
       ON holder.id = b.budget_holder_user_id
+
+    LEFT JOIN budget_holders independent_holder
+      ON independent_holder.id =
+        b.budget_holder_id
 
     JOIN users creator
       ON creator.id = b.created_by_user_id
@@ -20131,7 +20351,14 @@ function getBookingById(bookingId) {
       rc.code AS reasonCode,
       rc.description AS reasonDescription,
       b.budget_holder_user_id AS budgetHolderUserId,
-      holder.first_name || ' ' || holder.last_name AS budgetHolder,
+      b.budget_holder_id AS budgetHolderId,
+      COALESCE(
+        independent_holder.canonical_name,
+        TRIM(
+          holder.first_name || ' ' ||
+          holder.last_name
+        )
+      ) AS budgetHolder,
       b.created_by_user_id AS createdByUserId,
       creator.first_name || ' ' || creator.last_name AS createdBy,
       b.department_id AS departmentId,
@@ -20142,7 +20369,11 @@ function getBookingById(bookingId) {
     FROM bookings b
     LEFT JOIN budgets bu ON bu.id = b.budget_id
     LEFT JOIN reason_codes rc ON rc.id = b.reason_code_id
-    LEFT JOIN users holder ON holder.id = b.budget_holder_user_id
+    LEFT JOIN users holder
+      ON holder.id = b.budget_holder_user_id
+    LEFT JOIN budget_holders independent_holder
+      ON independent_holder.id =
+        b.budget_holder_id
     LEFT JOIN users creator ON creator.id = b.created_by_user_id
     LEFT JOIN departments d ON d.id = b.department_id
     WHERE b.id = ?

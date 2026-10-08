@@ -13031,7 +13031,7 @@ function CodingReviewPage() {
     useState({
       reasonCodeId: '',
       budgetId: '',
-      budgetHolderUserId: ''
+      budgetHolderSelection: ''
     });
 
   const [loading, setLoading] =
@@ -13105,7 +13105,7 @@ function CodingReviewPage() {
       setForm({
         reasonCodeId: '',
         budgetId: '',
-        budgetHolderUserId: ''
+        budgetHolderSelection: ''
       });
     } catch (err) {
       setError(
@@ -13198,7 +13198,7 @@ function CodingReviewPage() {
       ...current,
       budgetId:
         String(recommendation.id),
-      budgetHolderUserId: ''
+      budgetHolderSelection: ''
     }));
 
     setError('');
@@ -13215,10 +13215,10 @@ function CodingReviewPage() {
         String(
           recommendation.budgetId
         ),
-      budgetHolderUserId:
-        String(
-          recommendation.userId
-        )
+      budgetHolderSelection:
+        recommendation.budgetHolderId
+          ? `independent:${recommendation.budgetHolderId}`
+          : `portal_user:${recommendation.userId}`
     }));
 
     setError('');
@@ -13234,7 +13234,7 @@ function CodingReviewPage() {
     setForm({
       reasonCodeId: '',
       budgetId: '',
-      budgetHolderUserId: ''
+      budgetHolderSelection: ''
     });
 
     setError('');
@@ -13275,7 +13275,7 @@ function CodingReviewPage() {
       !selectedBooking ||
       !form.reasonCodeId ||
       !form.budgetId ||
-      !form.budgetHolderUserId
+      !form.budgetHolderSelection
     ) {
       setError(
         'Select a reason code, budget and budget holder before approving.'
@@ -13312,10 +13312,26 @@ function CodingReviewPage() {
                     form.budgetId
                   ),
 
-                budgetHolderUserId:
-                  Number(
-                    form.budgetHolderUserId
-                  )
+                ...(
+                  form.budgetHolderSelection
+                    .startsWith(
+                      'independent:'
+                    )
+                    ? {
+                        budgetHolderId:
+                          Number(
+                            form.budgetHolderSelection
+                              .split(':')[1]
+                          )
+                      }
+                    : {
+                        budgetHolderUserId:
+                          Number(
+                            form.budgetHolderSelection
+                              .split(':')[1]
+                          )
+                      }
+                )
               })
           }
         );
@@ -13992,11 +14008,11 @@ function CodingReviewPage() {
                                       )
                                     }
                                   >
-                                    {String(
-                                      form.budgetHolderUserId
-                                    ) ===
-                                      String(
-                                        recommendation.userId
+                                    {form.budgetHolderSelection ===
+                                      (
+                                        recommendation.budgetHolderId
+                                          ? `independent:${recommendation.budgetHolderId}`
+                                          : `portal_user:${recommendation.userId}`
                                       ) &&
                                     String(form.budgetId) ===
                                       String(
@@ -14138,12 +14154,12 @@ function CodingReviewPage() {
                         !availableHolders.length
                       }
                       value={
-                        form.budgetHolderUserId
+                        form.budgetHolderSelection
                       }
                       onChange={(event) =>
                         setForm({
                           ...form,
-                          budgetHolderUserId:
+                          budgetHolderSelection:
                             event.target.value
                         })
                       }
@@ -14160,9 +14176,11 @@ function CodingReviewPage() {
                         (holder) => (
                           <option
                             key={
-                              `${selectedBudget.id}-${holder.id}-${holder.assignmentType}`
+                              `${selectedBudget.id}-${holder.selectionKey}-${holder.assignmentType}`
                             }
-                            value={holder.id}
+                            value={
+                              holder.selectionKey
+                            }
                           >
                             {holder.name}
                             {' — '}
@@ -14210,7 +14228,7 @@ function CodingReviewPage() {
                       saving ||
                       !form.reasonCodeId ||
                       !form.budgetId ||
-                      !form.budgetHolderUserId
+                      !form.budgetHolderSelection
                     }
                   >
                     <CheckCircle2 size={17}/>
