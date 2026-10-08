@@ -16869,6 +16869,614 @@ function getBookingOptions(userId) {
 
 
 
+function historicalBudgetEvidenceDryRun() {
+  const budgetRows =
+    db.prepare(`
+      SELECT
+        r.parsed_budget_number
+          AS importedBudget,
+
+        COUNT(DISTINCT b.id)
+          AS bookingCount,
+
+        COUNT(
+          DISTINCT r.parsed_budget_holder
+        ) AS holderCount,
+
+        SUM(
+          CASE
+            WHEN r.reason_status = 'valid'
+            THEN 1
+            ELSE 0
+          END
+        ) AS validReasonCount
+
+      FROM bookings b
+
+      JOIN booking_coding_reconciliation r
+        ON r.booking_id = b.id
+
+      WHERE b.source = 'import'
+        AND b.financial_status =
+          'coding_required'
+        AND r.parsed_budget_number
+          IS NOT NULL
+        AND trim(
+          r.parsed_budget_number
+        ) <> ''
+
+      GROUP BY
+        r.parsed_budget_number
+
+      ORDER BY
+        COUNT(DISTINCT b.id) DESC,
+        r.parsed_budget_number
+    `).all();
+
+  const holderStatement =
+    db.prepare(`
+      SELECT
+        r.parsed_budget_holder
+          AS importedHolder,
+
+        COUNT(DISTINCT b.id)
+          AS bookingCount
+
+      FROM bookings b
+
+      JOIN booking_coding_reconciliation r
+        ON r.booking_id = b.id
+
+      WHERE b.source = 'import'
+        AND b.financial_status =
+          'coding_required'
+        AND r.parsed_budget_number = ?
+          COLLATE NOCASE
+        AND r.parsed_budget_holder
+          IS NOT NULL
+        AND trim(
+          r.parsed_budget_holder
+        ) <> ''
+
+      GROUP BY
+        r.parsed_budget_holder
+
+      ORDER BY
+        COUNT(DISTINCT b.id) DESC,
+        r.parsed_budget_holder
+    `);
+
+  const directBudgetStatement =
+    db.prepare(`
+      SELECT
+        b.id,
+        b.budget_number
+          AS budgetNumber,
+        b.name,
+        b.status,
+        b.department_id
+          AS departmentId,
+        d.name
+          AS department
+
+      FROM budgets b
+
+      LEFT JOIN departments d
+        ON d.id = b.department_id
+
+      WHERE b.budget_number = ?
+        COLLATE NOCASE
+
+      LIMIT 1
+    `);
+
+  const candidateStatement =
+    db.prepare(`
+      SELECT
+        bc.id,
+        bc.budget_number
+          AS budgetNumber,
+        bc.imported_holder_name
+          AS importedHolderName,
+        bc.suggested_name
+          AS suggestedName,
+        bc.suggested_department_id
+          AS suggestedDepartmentId,
+        d.name
+          AS suggestedDepartment,
+        bc.suggested_holder_user_id
+          AS suggestedHolderUserId,
+
+        CASE
+          WHEN suggested_holder.id IS NULL
+          THEN NULL
+          ELSE
+            suggested_holder.first_name ||
+            ' ' ||
+            suggested_holder.last_name
+        END
+          AS suggestedHolder,
+
+        bc.status,
+
+        bc.resolved_budget_id
+          AS resolvedBudgetId,
+
+        resolved.budget_number
+          AS resolvedBudgetNumber,
+
+        resolved.name
+          AS resolvedBudgetName,
+
+        bc.occurrence_count
+          AS occurrenceCount,
+
+        bc.first_seen_at
+          AS firstSeenAt,
+
+        bc.last_seen_at
+          AS lastSeenAt,
+
+        bc.reviewed_at
+          AS reviewedAt,
+
+        bc.review_notes
+          AS reviewNotes
+
+      FROM budget_candidates bc
+
+      LEFT JOIN departments d
+        ON d.id =
+          bc.suggested_department_id
+
+      LEFT JOIN users suggested_holder
+        ON suggested_holder.id =
+          bc.suggested_holder_user_id
+
+      LEFT JOIN budgets resolved
+        ON resolved.id =
+          bc.resolved_budget_id
+
+      WHERE bc.budget_number = ?
+        COLLATE NOCASE
+
+      LIMIT 1
+    `);
+
+  const aliasStatement =
+    db.prepare(`
+      SELECT
+        alias_name
+          AS aliasName,
+        canonical_holder_name
+          AS canonicalHolderName,
+        source
+
+      FROM budget_holder_aliases
+
+      WHERE budget_number = ?
+        COLLATE NOCASE
+        AND status = 'active'
+        AND lower(
+          trim(alias_name)
+        ) = lower(
+          trim(?)
+        )
+
+      LIMIT 1
+    `);
+
+  const exactUserStatement =
+    db.prepare(`
+      SELECT
+        id,
+        first_name
+          AS firstName,
+        last_name
+          AS lastName,
+        status
+
+      FROM users
+
+      WHERE lower(
+        trim(
+          first_name ||
+          ' ' ||
+          last_name
+        )
+      ) = lower(
+        trim(?)
+      )
+
+      ORDER BY
+        CASE status
+          WHEN 'active' THEN 0
+          ELSE 1
+        END,
+        id
+
+      LIMIT 1
+    `);
+
+  const assignmentsStatement =
+    db.prepare(`
+      SELECT
+        ba.budget_id
+          AS budgetId,
+
+        b.budget_number
+          AS budgetNumber,
+
+        b.name
+          AS budgetName,
+
+        ba.assignment_type
+          AS assignmentType,
+
+        ba.is_active
+          AS isActive
+
+      FROM budget_assignments ba
+
+      JOIN budgets b
+        ON b.id = ba.budget_id
+
+      WHERE ba.user_id = ?
+
+      ORDER BY
+        ba.is_active DESC,
+        b.budget_number
+    `);
+
+  const results =
+    budgetRows.map(
+      (budgetRow) => {
+        const importedBudget =
+          budgetRow.importedBudget;
+
+        const directBudget =
+          directBudgetStatement.get(
+            importedBudget
+          ) || null;
+
+        const candidate =
+          candidateStatement.get(
+            importedBudget
+          ) || null;
+
+        const holders =
+          holderStatement.all(
+            importedBudget
+          ).map(
+            (holderRow) => {
+              const importedHolder =
+                holderRow.importedHolder;
+
+              const alias =
+                aliasStatement.get(
+                  importedBudget,
+                  importedHolder
+                ) || null;
+
+              const exactUser =
+                exactUserStatement.get(
+                  importedHolder
+                ) || null;
+
+              const canonicalUser =
+                alias
+                  ? exactUserStatement.get(
+                      alias.canonicalHolderName
+                    ) || null
+                  : null;
+
+              const matchedUser =
+                canonicalUser ||
+                exactUser ||
+                null;
+
+              const assignments =
+                matchedUser
+                  ? assignmentsStatement.all(
+                      matchedUser.id
+                    )
+                  : [];
+
+              return {
+                importedHolder,
+                bookingCount:
+                  Number(
+                    holderRow.bookingCount
+                  ),
+
+                verifiedAlias:
+                  alias
+                    ? {
+                        aliasName:
+                          alias.aliasName,
+                        canonicalHolder:
+                          alias.canonicalHolderName,
+                        source:
+                          alias.source
+                      }
+                    : null,
+
+                exactPortalUser:
+                  exactUser
+                    ? {
+                        id:
+                          exactUser.id,
+                        name:
+                          `${exactUser.firstName} ${exactUser.lastName}`,
+                        status:
+                          exactUser.status
+                      }
+                    : null,
+
+                canonicalPortalUser:
+                  canonicalUser
+                    ? {
+                        id:
+                          canonicalUser.id,
+                        name:
+                          `${canonicalUser.firstName} ${canonicalUser.lastName}`,
+                        status:
+                          canonicalUser.status
+                      }
+                    : null,
+
+                existingAssignments:
+                  assignments.map(
+                    (assignment) => ({
+                      budgetId:
+                        assignment.budgetId,
+                      budgetNumber:
+                        assignment.budgetNumber,
+                      budgetName:
+                        assignment.budgetName,
+                      assignmentType:
+                        assignment.assignmentType,
+                      isActive:
+                        Boolean(
+                          assignment.isActive
+                        )
+                    })
+                  )
+              };
+            }
+          );
+
+        const masterBudgetExists =
+          Boolean(
+            directBudget
+          );
+
+        const candidateExists =
+          Boolean(
+            candidate
+          );
+
+        const candidateLinked =
+          candidate?.status ===
+            'linked' &&
+          Boolean(
+            candidate.resolvedBudgetId
+          );
+
+        const verifiedAliasHolders =
+          holders.filter(
+            (holder) =>
+              holder.verifiedAlias
+          ).length;
+
+        const portalUserHolders =
+          holders.filter(
+            (holder) =>
+              holder.exactPortalUser ||
+              holder.canonicalPortalUser
+          ).length;
+
+        let budgetState =
+          'missing_master';
+
+        if (masterBudgetExists) {
+          budgetState =
+            'master_exists';
+        } else if (candidateLinked) {
+          budgetState =
+            'candidate_linked';
+        } else if (
+          candidate?.status ===
+            'pending'
+        ) {
+          budgetState =
+            'candidate_pending';
+        } else if (
+          candidate?.status ===
+            'approved'
+        ) {
+          budgetState =
+            'candidate_approved';
+        } else if (
+          candidate?.status ===
+            'rejected'
+        ) {
+          budgetState =
+            'candidate_rejected';
+        } else if (candidateExists) {
+          budgetState =
+            `candidate_${candidate.status}`;
+        }
+
+        return {
+          importedBudget,
+
+          bookingCount:
+            Number(
+              budgetRow.bookingCount
+            ),
+
+          holderCount:
+            Number(
+              budgetRow.holderCount
+            ),
+
+          validReasonCount:
+            Number(
+              budgetRow.validReasonCount
+            ),
+
+          budgetState,
+
+          masterBudget:
+            directBudget
+              ? {
+                  id:
+                    directBudget.id,
+                  budgetNumber:
+                    directBudget.budgetNumber,
+                  name:
+                    directBudget.name,
+                  status:
+                    directBudget.status,
+                  departmentId:
+                    directBudget.departmentId,
+                  department:
+                    directBudget.department
+                }
+              : null,
+
+          candidate:
+            candidate
+              ? {
+                  id:
+                    candidate.id,
+                  status:
+                    candidate.status,
+                  importedHolderName:
+                    candidate.importedHolderName,
+                  suggestedName:
+                    candidate.suggestedName,
+                  suggestedDepartmentId:
+                    candidate.suggestedDepartmentId,
+                  suggestedDepartment:
+                    candidate.suggestedDepartment,
+                  suggestedHolderUserId:
+                    candidate.suggestedHolderUserId,
+                  suggestedHolder:
+                    candidate.suggestedHolder,
+                  resolvedBudgetId:
+                    candidate.resolvedBudgetId,
+                  resolvedBudgetNumber:
+                    candidate.resolvedBudgetNumber,
+                  resolvedBudgetName:
+                    candidate.resolvedBudgetName,
+                  occurrenceCount:
+                    candidate.occurrenceCount,
+                  firstSeenAt:
+                    candidate.firstSeenAt,
+                  lastSeenAt:
+                    candidate.lastSeenAt,
+                  reviewedAt:
+                    candidate.reviewedAt,
+                  reviewNotes:
+                    candidate.reviewNotes
+                }
+              : null,
+
+          verifiedAliasHolders,
+          portalUserHolders,
+
+          holders
+        };
+      }
+    );
+
+  const codingRequired =
+    Number(
+      db.prepare(`
+        SELECT
+          COUNT(*) AS total
+        FROM bookings
+        WHERE source = 'import'
+          AND financial_status =
+            'coding_required'
+      `).get()?.total || 0
+    );
+
+  const totalBookingsRepresented =
+    results.reduce(
+      (total, row) =>
+        total +
+        row.bookingCount,
+      0
+    );
+
+  const missingMaster =
+    results.filter(
+      (row) =>
+        row.budgetState ===
+          'missing_master' ||
+        row.budgetState ===
+          'candidate_pending'
+    );
+
+  const masterExists =
+    results.filter(
+      (row) =>
+        row.budgetState ===
+          'master_exists' ||
+        row.budgetState ===
+          'candidate_linked'
+    );
+
+  return {
+    summary: {
+      codingRequired,
+      distinctImportedBudgets:
+        results.length,
+      bookingsRepresented:
+        totalBookingsRepresented,
+
+      missingOrPendingBudgets:
+        missingMaster.length,
+
+      bookingsOnMissingOrPendingBudgets:
+        missingMaster.reduce(
+          (total, row) =>
+            total +
+            row.bookingCount,
+          0
+        ),
+
+      existingOrLinkedBudgets:
+        masterExists.length,
+
+      budgetsWithVerifiedAliasEvidence:
+        results.filter(
+          (row) =>
+            row.verifiedAliasHolders > 0
+        ).length,
+
+      budgetsWithKnownPortalUsers:
+        results.filter(
+          (row) =>
+            row.portalUserHolders > 0
+        ).length
+    },
+
+    budgets:
+      results,
+
+    readOnly:
+      true,
+
+    autocabCalls:
+      0
+  };
+}
+
+
 function historicalHolderAliasDryRun() {
   const bookings =
     db.prepare(`
@@ -34315,6 +34923,36 @@ const server = http.createServer(async (req, res) => {
           )
       });
     }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/coding-review/budget-evidence-dry-run'
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          [
+            'uhp_admin',
+            'nac_admin'
+          ]
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          ...historicalBudgetEvidenceDryRun(),
+          user: {
+            id:
+              auth.user.id,
+            email:
+              auth.user.email
+          }
+        }
+      );
+    }
+
 
     if (
       req.method === 'GET' &&
