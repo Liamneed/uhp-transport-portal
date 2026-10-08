@@ -21614,12 +21614,25 @@ function evaluateAutocabBookingCoding(
 
     reasonCodeId: null,
     budgetId: null,
+
+    /*
+      Legacy portal-user holder identity.
+      Retained for backwards compatibility.
+    */
     budgetHolderUserId: null,
+
+    /*
+      Independent accounting holder identity.
+      Does not imply portal access.
+    */
+    budgetHolderId: null,
+
     departmentId: null,
 
     budget: null,
     reasonCodeRecord: null,
-    budgetHolderRecord: null
+    budgetHolderRecord: null,
+    budgetHolderIdentityType: null
   };
 
   if (!parsed.formatValid) {
@@ -21748,154 +21761,343 @@ function evaluateAutocabBookingCoding(
   }
 
   if (budget) {
-    const assignedHolders =
-      db.prepare(`
-        SELECT
-          u.id,
-          u.first_name AS firstName,
-          u.last_name AS lastName,
-          u.status,
-          ba.assignment_type AS assignmentType
-
-        FROM budget_assignments ba
-
-        JOIN users u
-          ON u.id = ba.user_id
-
-        WHERE ba.budget_id = ?
-          AND ba.assignment_type IN (
-            'primary_holder',
-            'deputy_holder'
-          )
-          AND ba.is_active = 1
-          AND (
-            ba.valid_from IS NULL OR
-            ba.valid_from <= date('now')
-          )
-          AND (
-            ba.valid_to IS NULL OR
-            ba.valid_to >= date('now')
-          )
-          AND u.status = 'active'
-
-        ORDER BY
-          CASE ba.assignment_type
-            WHEN 'primary_holder' THEN 0
-            ELSE 1
-          END,
-          ba.id DESC
-      `).all(
-        budget.id
-      );
-
     const wantedName =
       normaliseCodingName(
         parsed.budgetHolder
       );
 
-    const assignedMatch =
-      assignedHolders.find(
+    /*
+      Preferred model:
+      independent accounting holders.
+
+      These records are deliberately separate
+      from portal users and booking access.
+    */
+    const independentHolders =
+      db.prepare(`
+        SELECT
+          bh.id,
+          bh.canonical_name
+            AS canonicalName,
+          bh.linked_user_id
+            AS linkedUserId,
+          bh.status,
+          bha.assignment_type
+            AS assignmentType
+
+        FROM budget_holder_assignments bha
+
+        JOIN budget_holders bh
+          ON bh.id = bha.holder_id
+
+        WHERE bha.budget_id = ?
+          AND bha.assignment_type IN (
+            'primary_holder',
+            'deputy_holder'
+          )
+          AND bha.is_active = 1
+          AND (
+            bha.valid_from IS NULL OR
+            bha.valid_from <= date('now')
+          )
+          AND (
+            bha.valid_to IS NULL OR
+            bha.valid_to >= date('now')
+          )
+          AND bh.status = 'active'
+
+        ORDER BY
+          CASE bha.assignment_type
+            WHEN 'primary_holder' THEN 0
+            ELSE 1
+          END,
+          bha.id DESC
+      `).all(
+        budget.id
+      );
+
+    const independentExactMatch =
+      independentHolders.find(
         (holder) =>
           normaliseCodingName(
-            `${holder.firstName} ${holder.lastName}`
+            holder.canonicalName
           ) === wantedName
       );
 
-    if (assignedMatch) {
-      result.holderStatus = 'valid';
-      result.budgetHolderUserId =
-        Number(assignedMatch.id);
-      result.budgetHolderRecord =
-        assignedMatch;
+    let independentAliasMatch =
+      null;
 
-      result.holderResolution =
-        'exact_assignment';
-    } else {
-      const matchingUser =
+    let independentAlias =
+      null;
+
+    if (!independentExactMatch) {
+      independentAlias =
         db.prepare(`
           SELECT
-            id,
-            first_name AS firstName,
-            last_name AS lastName,
-            status
-          FROM users
-          WHERE lower(
-            trim(
-              first_name || ' ' || last_name
+            a.alias_name
+              AS aliasName,
+            a.canonical_holder_name
+              AS canonicalHolderName,
+            a.holder_id
+              AS holderId,
+            a.source
+
+          FROM budget_holder_aliases a
+
+          WHERE a.status = 'active'
+            AND a.budget_number = ?
+              COLLATE NOCASE
+            AND lower(
+              trim(a.alias_name)
+            ) = lower(
+              trim(?)
             )
-          ) = lower(?)
-            AND status = 'active'
-          ORDER BY id
+            AND a.holder_id IS NOT NULL
+
           LIMIT 1
         `).get(
+          parsed.budgetNumber,
           parsed.budgetHolder
+        ) || null;
+
+      if (independentAlias) {
+        independentAliasMatch =
+          independentHolders.find(
+            (holder) =>
+              Number(holder.id) ===
+              Number(
+                independentAlias.holderId
+              )
+          ) || null;
+      }
+    }
+
+    const independentMatch =
+      independentExactMatch ||
+      independentAliasMatch ||
+      null;
+
+    if (independentMatch) {
+      result.holderStatus =
+        'valid';
+
+      result.budgetHolderId =
+        Number(
+          independentMatch.id
         );
 
-      if (matchingUser) {
+      result.budgetHolderUserId =
+        independentMatch.linkedUserId
+          ? Number(
+              independentMatch.linkedUserId
+            )
+          : null;
+
+      result.budgetHolderRecord = {
+        id:
+          Number(
+            independentMatch.id
+          ),
+
+        canonicalName:
+          independentMatch.canonicalName,
+
+        linkedUserId:
+          independentMatch.linkedUserId
+            ? Number(
+                independentMatch.linkedUserId
+              )
+            : null,
+
+        assignmentType:
+          independentMatch.assignmentType
+      };
+
+      result.budgetHolderIdentityType =
+        'independent_holder';
+
+      result.holderResolution =
+        independentExactMatch
+          ? 'independent_exact_assignment'
+          : 'independent_historical_alias';
+
+      if (
+        independentAliasMatch &&
+        independentAlias
+      ) {
+        result.holderAlias = {
+          aliasName:
+            independentAlias.aliasName,
+          canonicalHolderName:
+            independentAlias.canonicalHolderName,
+          source:
+            independentAlias.source
+        };
+      }
+    } else {
+      /*
+        Legacy compatibility path.
+
+        Existing portal-user-backed budget
+        holders continue to work exactly as
+        before.
+      */
+      const assignedHolders =
+        db.prepare(`
+          SELECT
+            u.id,
+            u.first_name AS firstName,
+            u.last_name AS lastName,
+            u.status,
+            ba.assignment_type
+              AS assignmentType
+
+          FROM budget_assignments ba
+
+          JOIN users u
+            ON u.id = ba.user_id
+
+          WHERE ba.budget_id = ?
+            AND ba.assignment_type IN (
+              'primary_holder',
+              'deputy_holder'
+            )
+            AND ba.is_active = 1
+            AND (
+              ba.valid_from IS NULL OR
+              ba.valid_from <= date('now')
+            )
+            AND (
+              ba.valid_to IS NULL OR
+              ba.valid_to >= date('now')
+            )
+            AND u.status = 'active'
+
+          ORDER BY
+            CASE ba.assignment_type
+              WHEN 'primary_holder' THEN 0
+              ELSE 1
+            END,
+            ba.id DESC
+        `).all(
+          budget.id
+        );
+
+      const assignedMatch =
+        assignedHolders.find(
+          (holder) =>
+            normaliseCodingName(
+              `${holder.firstName} ${holder.lastName}`
+            ) === wantedName
+        );
+
+      if (assignedMatch) {
         result.holderStatus =
-          'budget_mismatch';
+          'valid';
+
+        result.budgetHolderUserId =
+          Number(
+            assignedMatch.id
+          );
+
+        result.budgetHolderRecord =
+          assignedMatch;
+
+        result.budgetHolderIdentityType =
+          'portal_user';
+
+        result.holderResolution =
+          'exact_assignment';
       } else {
-        const alias =
+        const matchingUser =
           db.prepare(`
             SELECT
-              alias_name AS aliasName,
-              canonical_holder_name
-                AS canonicalHolderName,
-              source
-            FROM budget_holder_aliases
-            WHERE status = 'active'
-              AND budget_number = ?
-                COLLATE NOCASE
-              AND lower(
-                trim(alias_name)
-              ) = lower(
-                trim(?)
+              id,
+              first_name AS firstName,
+              last_name AS lastName,
+              status
+            FROM users
+            WHERE lower(
+              trim(
+                first_name || ' ' || last_name
               )
+            ) = lower(?)
+              AND status = 'active'
+            ORDER BY id
             LIMIT 1
           `).get(
-            parsed.budgetNumber,
             parsed.budgetHolder
           );
 
-        const aliasAssignedMatch =
-          alias
-            ? assignedHolders.find(
-                (holder) =>
-                  normaliseCodingName(
-                    `${holder.firstName} ${holder.lastName}`
-                  ) ===
-                  normaliseCodingName(
-                    alias.canonicalHolderName
-                  )
-              )
-            : null;
-
-        if (aliasAssignedMatch) {
+        if (matchingUser) {
           result.holderStatus =
-            'valid';
-
-          result.budgetHolderUserId =
-            Number(
-              aliasAssignedMatch.id
+            'budget_mismatch';
+        } else {
+          const alias =
+            db.prepare(`
+              SELECT
+                alias_name AS aliasName,
+                canonical_holder_name
+                  AS canonicalHolderName,
+                source
+              FROM budget_holder_aliases
+              WHERE status = 'active'
+                AND budget_number = ?
+                  COLLATE NOCASE
+                AND lower(
+                  trim(alias_name)
+                ) = lower(
+                  trim(?)
+                )
+              LIMIT 1
+            `).get(
+              parsed.budgetNumber,
+              parsed.budgetHolder
             );
 
-          result.budgetHolderRecord =
-            aliasAssignedMatch;
+          const aliasAssignedMatch =
+            alias
+              ? assignedHolders.find(
+                  (holder) =>
+                    normaliseCodingName(
+                      `${holder.firstName} ${holder.lastName}`
+                    ) ===
+                    normaliseCodingName(
+                      alias.canonicalHolderName
+                    )
+                )
+              : null;
 
-          result.holderResolution =
-            'historical_alias';
+          if (aliasAssignedMatch) {
+            result.holderStatus =
+              'valid';
 
-          result.holderAlias = {
-            aliasName:
-              alias.aliasName,
-            canonicalHolderName:
-              alias.canonicalHolderName,
-            source:
-              alias.source
-          };
-        } else {
-          result.holderStatus =
-            'invalid';
+            result.budgetHolderUserId =
+              Number(
+                aliasAssignedMatch.id
+              );
+
+            result.budgetHolderRecord =
+              aliasAssignedMatch;
+
+            result.budgetHolderIdentityType =
+              'portal_user';
+
+            result.holderResolution =
+              'historical_alias';
+
+            result.holderAlias = {
+              aliasName:
+                alias.aliasName,
+              canonicalHolderName:
+                alias.canonicalHolderName,
+              source:
+                alias.source
+            };
+          } else {
+            result.holderStatus =
+              'invalid';
+          }
         }
       }
     }
