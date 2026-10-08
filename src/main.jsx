@@ -29145,9 +29145,11 @@ function BudgetsPage() {
           form.name,
 
         departmentId:
-          Number(
-            form.departmentId
-          ),
+          form.departmentId
+            ? Number(
+                form.departmentId
+              )
+            : null,
 
         holderId:
           form.holderId
@@ -29208,12 +29210,7 @@ function BudgetsPage() {
       name:
         candidate.suggestedName || '',
 
-      departmentId:
-        candidate.suggestedDepartmentId
-          ? String(
-              candidate.suggestedDepartmentId
-            )
-          : '',
+      departmentId: '',
 
       holderId: '',
       deputyHolderId: '',
@@ -29288,9 +29285,11 @@ function BudgetsPage() {
                       name:
                         candidateForm.name,
                       departmentId:
-                        Number(
-                          candidateForm.departmentId
-                        ),
+                        candidateForm.departmentId
+                          ? Number(
+                              candidateForm.departmentId
+                            )
+                          : null,
                       holderId:
                         candidateForm.holderId
                           ? Number(
@@ -29814,7 +29813,6 @@ function BudgetsPage() {
                 <label>
                   Department
                   <select
-                    required
                     value={
                       candidateForm
                         .departmentId
@@ -29828,7 +29826,7 @@ function BudgetsPage() {
                     }
                   >
                     <option value="">
-                      Select department...
+                      Unassigned
                     </option>
 
                     {departments
@@ -30115,7 +30113,6 @@ function BudgetsPage() {
               <label>
                 Department
                 <select
-                  required
                   value={form.departmentId}
                   onChange={(e) =>
                     setForm({
@@ -30125,7 +30122,7 @@ function BudgetsPage() {
                   }
                 >
                   <option value="">
-                    Select department...
+                    Unassigned
                   </option>
 
                   {departments

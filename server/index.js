@@ -5590,7 +5590,13 @@ function createBudget(payload) {
     ).trim();
 
   const departmentId =
-    Number(payload.departmentId);
+    payload.departmentId === null ||
+    payload.departmentId === '' ||
+    payload.departmentId === undefined
+      ? null
+      : Number(
+          payload.departmentId
+        );
 
   const holderId =
     payload.holderId
@@ -5604,12 +5610,11 @@ function createBudget(payload) {
 
   if (
     !budgetNumber ||
-    !name ||
-    !departmentId
+    !name
   ) {
     const error =
       new Error(
-        'Budget number, budget name and department are required'
+        'Budget number and budget name are required'
       );
 
     error.statusCode = 400;
@@ -5639,24 +5644,26 @@ function createBudget(payload) {
     throw error;
   }
 
-  const department =
-    db.prepare(`
-      SELECT id
-      FROM departments
-      WHERE id = ?
-        AND status = 'active'
-    `).get(
-      departmentId
-    );
-
-  if (!department) {
-    const error =
-      new Error(
-        'Selected department is not valid'
+  if (departmentId !== null) {
+    const department =
+      db.prepare(`
+        SELECT id
+        FROM departments
+        WHERE id = ?
+          AND status = 'active'
+      `).get(
+        departmentId
       );
 
-    error.statusCode = 400;
-    throw error;
+    if (!department) {
+      const error =
+        new Error(
+          'Selected department is not valid'
+        );
+
+      error.statusCode = 400;
+      throw error;
+    }
   }
 
   if (
@@ -5779,10 +5786,16 @@ function updateBudget(
     ).trim();
 
   const departmentId =
-    Number(
-      payload.departmentId ||
-      existing.departmentId
-    );
+    payload.departmentId === undefined
+      ? existing.departmentId ?? null
+      : (
+          payload.departmentId === null ||
+          payload.departmentId === ''
+            ? null
+            : Number(
+                payload.departmentId
+              )
+        );
 
   const holderId =
     payload.holderId === null ||
@@ -5800,37 +5813,36 @@ function updateBudget(
           payload.deputyHolderId
         );
 
-  if (
-    !name ||
-    !departmentId
-  ) {
+  if (!name) {
     const error =
       new Error(
-        'Budget name and department are required'
+        'Budget name is required'
       );
 
     error.statusCode = 400;
     throw error;
   }
 
-  const department =
-    db.prepare(`
-      SELECT id
-      FROM departments
-      WHERE id = ?
-        AND status = 'active'
-    `).get(
-      departmentId
-    );
-
-  if (!department) {
-    const error =
-      new Error(
-        'Selected department is not valid'
+  if (departmentId !== null) {
+    const department =
+      db.prepare(`
+        SELECT id
+        FROM departments
+        WHERE id = ?
+          AND status = 'active'
+      `).get(
+        departmentId
       );
 
-    error.statusCode = 400;
-    throw error;
+    if (!department) {
+      const error =
+        new Error(
+          'Selected department is not valid'
+        );
+
+      error.statusCode = 400;
+      throw error;
+    }
   }
 
   if (
@@ -6307,10 +6319,13 @@ function approveBudgetCandidate(
     ).trim();
 
   const departmentId =
-    Number(
-      payload.departmentId ??
-      candidate.suggestedDepartmentId
-    );
+    payload.departmentId === null ||
+    payload.departmentId === '' ||
+    payload.departmentId === undefined
+      ? null
+      : Number(
+          payload.departmentId
+        );
 
   const holderId =
     payload.holderId === null ||
@@ -6345,9 +6360,11 @@ function approveBudgetCandidate(
     throw error;
   }
 
-  validateCandidateDepartment(
-    departmentId
-  );
+  if (departmentId !== null) {
+    validateCandidateDepartment(
+      departmentId
+    );
+  }
 
   if (
     holderId &&
