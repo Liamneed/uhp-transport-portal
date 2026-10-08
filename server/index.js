@@ -22672,6 +22672,37 @@ function getImportedBookingCustomerId(
 }
 
 
+function resolvedCodingHolderName(
+  coding
+) {
+  if (
+    coding?.budgetHolderRecord
+      ?.canonicalName
+  ) {
+    return String(
+      coding.budgetHolderRecord
+        .canonicalName
+    ).trim();
+  }
+
+  const firstName =
+    coding?.budgetHolderRecord
+      ?.firstName;
+
+  const lastName =
+    coding?.budgetHolderRecord
+      ?.lastName;
+
+  const legacyName =
+    [firstName, lastName]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+  return legacyName || null;
+}
+
+
 function insertResolvedCodingSnapshot(
   bookingId,
   coding
@@ -22702,12 +22733,13 @@ function insertResolvedCodingSnapshot(
         reason_code,
         reason_description,
         budget_holder_user_id,
+        budget_holder_id,
         budget_holder_name,
         department_id,
         department_name
       )
     VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `).run(
     bookingId,
@@ -22721,7 +22753,10 @@ function insertResolvedCodingSnapshot(
     coding.reasonCodeRecord.code,
     coding.reasonCodeRecord.description,
     coding.budgetHolderUserId,
-    `${coding.budgetHolderRecord.firstName} ${coding.budgetHolderRecord.lastName}`,
+    coding.budgetHolderId,
+    resolvedCodingHolderName(
+      coding
+    ),
     coding.departmentId,
     coding.budget.departmentName || null
   );
@@ -22800,6 +22835,7 @@ function reEvaluateImportedBookingsForBudgetCandidate(
           budget_id = ?,
           reason_code_id = ?,
           budget_holder_user_id = ?,
+          budget_holder_id = ?,
           department_id = ?,
           updated_at =
             CURRENT_TIMESTAMP
@@ -22811,6 +22847,7 @@ function reEvaluateImportedBookingsForBudgetCandidate(
         coding.budgetId,
         coding.reasonCodeId,
         coding.budgetHolderUserId,
+        coding.budgetHolderId,
         coding.departmentId,
         booking.id
       );
@@ -22867,6 +22904,11 @@ function reEvaluateImportedBookingsForBudgetCandidate(
             coding.reasonCodeId,
           budgetHolderUserId:
             coding.budgetHolderUserId,
+          budgetHolderId:
+            coding.budgetHolderId,
+          budgetHolderIdentityType:
+            coding.budgetHolderIdentityType ||
+            null,
           departmentId:
             coding.departmentId,
           codingStatus:
@@ -23422,6 +23464,7 @@ function importAutocabCreatedBooking(
             budget_id,
             reason_code_id,
             budget_holder_user_id,
+            budget_holder_id,
             created_by_user_id,
             department_id,
             submitted_at
@@ -23432,7 +23475,7 @@ function importAutocabCreatedBooking(
           'booked',
           ?,
           ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, ?, ?,
+          ?, ?, ?, ?,
           NULL,
           ?,
           ?
@@ -23460,6 +23503,9 @@ function importAutocabCreatedBooking(
           : null,
         coding.status === 'valid'
           ? coding.budgetHolderUserId
+          : null,
+        coding.status === 'valid'
+          ? coding.budgetHolderId
           : null,
         coding.status === 'valid'
           ? coding.departmentId
@@ -23540,12 +23586,13 @@ function importAutocabCreatedBooking(
             reason_code,
             reason_description,
             budget_holder_user_id,
+            budget_holder_id,
             budget_holder_name,
             department_id,
             department_name
           )
         VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
       `).run(
         bookingId,
@@ -23557,7 +23604,10 @@ function importAutocabCreatedBooking(
         coding.reasonCodeRecord.code,
         coding.reasonCodeRecord.description,
         coding.budgetHolderUserId,
-        `${coding.budgetHolderRecord.firstName} ${coding.budgetHolderRecord.lastName}`,
+        coding.budgetHolderId,
+        resolvedCodingHolderName(
+          coding
+        ),
         coding.departmentId,
         coding.budget.departmentName || null
       );
@@ -35125,6 +35175,435 @@ const server = http.createServer(async (req, res) => {
           )
       });
     }
+
+    if (
+      process.env.NODE_ENV === 'development' &&
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/dev/independent-holder-persistence-test'
+    ) {
+      const testBudgetNumber =
+        '129999';
+
+      const settings =
+        db.prepare(`
+          SELECT
+            autocab_customer_id
+              AS customerId,
+            booking_scope
+              AS bookingScope
+          FROM portal_settings
+          WHERE id = 1
+        `).get();
+
+      if (
+        !settings?.customerId ||
+        settings.bookingScope !==
+          'uhp_account_only'
+      ) {
+        return sendJson(
+          res,
+          500,
+          {
+            error:
+              'Temporary test requires configured UHP account'
+          }
+        );
+      }
+
+      const department =
+        db.prepare(`
+          SELECT id
+          FROM departments
+          WHERE status = 'active'
+          ORDER BY id
+          LIMIT 1
+        `).get();
+
+      if (!department) {
+        return sendJson(
+          res,
+          500,
+          {
+            error:
+              'No active department available'
+          }
+        );
+      }
+
+      const kate =
+        db.prepare(`
+          SELECT id
+          FROM budget_holders
+          WHERE canonical_name =
+            'Kate Starrs'
+            COLLATE NOCASE
+            AND status = 'active'
+          LIMIT 1
+        `).get();
+
+      const keith =
+        db.prepare(`
+          SELECT id
+          FROM budget_holders
+          WHERE canonical_name =
+            'Keith Bell'
+            COLLATE NOCASE
+            AND status = 'active'
+          LIMIT 1
+        `).get();
+
+      if (!kate || !keith) {
+        return sendJson(
+          res,
+          500,
+          {
+            error:
+              'Seeded independent holders missing'
+          }
+        );
+      }
+
+      db.prepare(`
+        INSERT OR IGNORE INTO
+          budget_holder_aliases (
+            budget_number,
+            alias_name,
+            canonical_holder_name,
+            holder_id,
+            source
+          )
+        VALUES (
+          ?,
+          'KAITE TEST',
+          'Kate Starrs',
+          ?,
+          'temporary_test'
+        )
+      `).run(
+        testBudgetNumber,
+        kate.id
+      );
+
+      db.prepare(`
+        INSERT OR IGNORE INTO
+          budget_holder_aliases (
+            budget_number,
+            alias_name,
+            canonical_holder_name,
+            holder_id,
+            source
+          )
+        VALUES (
+          ?,
+          'KEATH TEST',
+          'Keith Bell',
+          ?,
+          'temporary_test'
+        )
+      `).run(
+        testBudgetNumber,
+        keith.id
+      );
+
+      const firstImport =
+        importAutocabCreatedBooking({
+          Id:
+            '990000001',
+
+          OurReference:
+            'P1/129999/KAITE TEST',
+
+          Account: {
+            Id:
+              String(
+                settings.customerId
+              )
+          },
+
+          PickupDueTime:
+            '2026-10-20T10:00:00',
+
+          BookedAtTime:
+            '2026-10-08T08:30:00',
+
+          BookedBy:
+            'Persistence Test',
+
+          BookingSource:
+            'Temporary Test',
+
+          Name:
+            'Persistence Test One',
+
+          TelephoneNumber:
+            '07000000001',
+
+          Passengers:
+            1,
+
+          Pickup: {
+            Address:
+              'Temporary Pickup'
+          },
+
+          Destination: {
+            Address:
+              'Temporary Destination'
+          }
+        });
+
+      const beforeResolution =
+        db.prepare(`
+          SELECT
+            id,
+            financial_status
+              AS financialStatus,
+            budget_id
+              AS budgetId,
+            reason_code_id
+              AS reasonCodeId,
+            budget_holder_user_id
+              AS budgetHolderUserId,
+            budget_holder_id
+              AS budgetHolderId
+          FROM bookings
+          WHERE id = ?
+        `).get(
+          firstImport.bookingId
+        );
+
+      db.prepare(`
+        INSERT INTO budgets (
+          budget_number,
+          name,
+          department_id,
+          status,
+          notes
+        )
+        VALUES (
+          ?,
+          'TEMP PERSISTENCE TEST',
+          ?,
+          'active',
+          'Temporary independent-holder persistence test'
+        )
+      `).run(
+        testBudgetNumber,
+        department.id
+      );
+
+      const budget =
+        db.prepare(`
+          SELECT id
+          FROM budgets
+          WHERE budget_number = ?
+          LIMIT 1
+        `).get(
+          testBudgetNumber
+        );
+
+      const assign =
+        db.prepare(`
+          INSERT INTO
+            budget_holder_assignments (
+              budget_id,
+              holder_id,
+              assignment_type,
+              is_active,
+              source
+            )
+          VALUES (
+            ?,
+            ?,
+            'deputy_holder',
+            1,
+            'temporary_test'
+          )
+      `);
+
+      assign.run(
+        budget.id,
+        kate.id
+      );
+
+      assign.run(
+        budget.id,
+        keith.id
+      );
+
+      const reEvaluation =
+        reEvaluateImportedBookingsForBudgetCandidate(
+          testBudgetNumber,
+          null
+        );
+
+      const afterResolution =
+        db.prepare(`
+          SELECT
+            id,
+            financial_status
+              AS financialStatus,
+            budget_id
+              AS budgetId,
+            reason_code_id
+              AS reasonCodeId,
+            budget_holder_user_id
+              AS budgetHolderUserId,
+            budget_holder_id
+              AS budgetHolderId
+          FROM bookings
+          WHERE id = ?
+        `).get(
+          firstImport.bookingId
+        );
+
+      const firstSnapshot =
+        db.prepare(`
+          SELECT
+            booking_id
+              AS bookingId,
+            budget_number
+              AS budgetNumber,
+            reason_code
+              AS reasonCode,
+            budget_holder_user_id
+              AS budgetHolderUserId,
+            budget_holder_id
+              AS budgetHolderId,
+            budget_holder_name
+              AS budgetHolderName
+          FROM booking_account_snapshot
+          WHERE booking_id = ?
+        `).get(
+          firstImport.bookingId
+        );
+
+      const secondImport =
+        importAutocabCreatedBooking({
+          Id:
+            '990000002',
+
+          OurReference:
+            'P1/129999/KEATH TEST',
+
+          Account: {
+            Id:
+              String(
+                settings.customerId
+              )
+          },
+
+          PickupDueTime:
+            '2026-10-20T11:00:00',
+
+          BookedAtTime:
+            '2026-10-08T08:31:00',
+
+          BookedBy:
+            'Persistence Test',
+
+          BookingSource:
+            'Temporary Test',
+
+          Name:
+            'Persistence Test Two',
+
+          TelephoneNumber:
+            '07000000002',
+
+          Passengers:
+            1,
+
+          Pickup: {
+            Address:
+              'Temporary Pickup'
+          },
+
+          Destination: {
+            Address:
+              'Temporary Destination'
+          }
+        });
+
+      const secondBooking =
+        db.prepare(`
+          SELECT
+            id,
+            financial_status
+              AS financialStatus,
+            budget_id
+              AS budgetId,
+            reason_code_id
+              AS reasonCodeId,
+            budget_holder_user_id
+              AS budgetHolderUserId,
+            budget_holder_id
+              AS budgetHolderId
+          FROM bookings
+          WHERE id = ?
+        `).get(
+          secondImport.bookingId
+        );
+
+      const secondSnapshot =
+        db.prepare(`
+          SELECT
+            booking_id
+              AS bookingId,
+            budget_number
+              AS budgetNumber,
+            reason_code
+              AS reasonCode,
+            budget_holder_user_id
+              AS budgetHolderUserId,
+            budget_holder_id
+              AS budgetHolderId,
+            budget_holder_name
+              AS budgetHolderName
+          FROM booking_account_snapshot
+          WHERE booking_id = ?
+        `).get(
+          secondImport.bookingId
+        );
+
+      const fk =
+        db.prepare(
+          'PRAGMA foreign_key_check'
+        ).all();
+
+      const integrity =
+        db.prepare(
+          'PRAGMA integrity_check'
+        ).get();
+
+      return sendJson(
+        res,
+        200,
+        {
+          firstImport,
+          beforeResolution,
+          reEvaluation,
+          afterResolution,
+          firstSnapshot,
+
+          secondImport,
+          secondBooking,
+          secondSnapshot,
+
+          integrity,
+          foreignKeyViolations:
+            fk.length,
+
+          autocabCalls:
+            0,
+
+          temporaryTest:
+            true
+        }
+      );
+    }
+
 
     if (
       req.method === 'GET' &&
