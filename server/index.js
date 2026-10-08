@@ -16869,6 +16869,178 @@ function getBookingOptions(userId) {
 
 
 
+function historicalHolderAliasDryRun() {
+  const bookings =
+    db.prepare(`
+      SELECT DISTINCT
+        b.id,
+        b.public_reference
+          AS publicReference,
+        b.autocab_booking_id
+          AS autocabBookingId,
+        b.financial_status
+          AS financialStatus,
+
+        r.raw_reference
+          AS rawReference,
+        r.parsed_reason_code
+          AS parsedReasonCode,
+        r.parsed_budget_number
+          AS parsedBudgetNumber,
+        r.parsed_budget_holder
+          AS parsedBudgetHolder,
+
+        a.alias_name
+          AS aliasName,
+        a.canonical_holder_name
+          AS canonicalHolderName,
+        a.source
+          AS aliasSource
+
+      FROM bookings b
+
+      JOIN booking_coding_reconciliation r
+        ON r.booking_id = b.id
+
+      JOIN budget_holder_aliases a
+        ON a.status = 'active'
+       AND a.budget_number =
+         r.parsed_budget_number
+         COLLATE NOCASE
+       AND lower(
+         trim(a.alias_name)
+       ) = lower(
+         trim(r.parsed_budget_holder)
+       )
+
+      WHERE b.source = 'import'
+        AND b.financial_status =
+          'coding_required'
+
+      ORDER BY
+        b.id
+    `).all();
+
+  const results =
+    bookings.map(
+      (booking) => {
+        const coding =
+          evaluateAutocabBookingCoding(
+            booking.rawReference
+          );
+
+        return {
+          bookingId:
+            booking.id,
+
+          publicReference:
+            booking.publicReference,
+
+          autocabBookingId:
+            booking.autocabBookingId,
+
+          importedReason:
+            booking.parsedReasonCode,
+
+          importedBudget:
+            booking.parsedBudgetNumber,
+
+          importedHolder:
+            booking.parsedBudgetHolder,
+
+          aliasName:
+            booking.aliasName,
+
+          canonicalHolder:
+            booking.canonicalHolderName,
+
+          aliasSource:
+            booking.aliasSource,
+
+          reasonStatus:
+            coding.reasonStatus,
+
+          budgetStatus:
+            coding.budgetStatus,
+
+          holderStatus:
+            coding.holderStatus,
+
+          codingStatus:
+            coding.status,
+
+          resolvedReason:
+            coding.reasonCodeRecord
+              ?.code || null,
+
+          resolvedBudget:
+            coding.budget
+              ?.budgetNumber || null,
+
+          resolvedHolder:
+            coding.budgetHolderRecord
+              ? `${coding.budgetHolderRecord.firstName} ${coding.budgetHolderRecord.lastName}`
+              : null,
+
+          holderResolution:
+            coding.holderResolution ||
+            null,
+
+          wouldResolve:
+            coding.status === 'valid' &&
+            coding.holderResolution ===
+              'historical_alias'
+        };
+      }
+    );
+
+  const wouldResolve =
+    results.filter(
+      (row) =>
+        row.wouldResolve
+    );
+
+  const wouldRemain =
+    results.filter(
+      (row) =>
+        !row.wouldResolve
+    );
+
+  const codingRequired =
+    Number(
+      db.prepare(`
+        SELECT
+          COUNT(*) AS total
+        FROM bookings
+        WHERE source = 'import'
+          AND financial_status =
+            'coding_required'
+      `).get()?.total || 0
+    );
+
+  return {
+    summary: {
+      codingRequired,
+      aliasCandidates:
+        results.length,
+      wouldResolve:
+        wouldResolve.length,
+      wouldRemain:
+        wouldRemain.length,
+      projectedCodingRequired:
+        codingRequired -
+        wouldResolve.length
+    },
+
+    wouldResolve,
+    wouldRemain,
+
+    readOnly: true,
+    autocabCalls: 0
+  };
+}
+
+
 function listCodingReviewBookings() {
   const bookings =
     db.prepare(`
@@ -21027,6 +21199,9 @@ function evaluateAutocabBookingCoding(
         Number(assignedMatch.id);
       result.budgetHolderRecord =
         assignedMatch;
+
+      result.holderResolution =
+        'exact_assignment';
     } else {
       const matchingUser =
         db.prepare(`
@@ -21048,10 +21223,73 @@ function evaluateAutocabBookingCoding(
           parsed.budgetHolder
         );
 
-      result.holderStatus =
-        matchingUser
-          ? 'budget_mismatch'
-          : 'invalid';
+      if (matchingUser) {
+        result.holderStatus =
+          'budget_mismatch';
+      } else {
+        const alias =
+          db.prepare(`
+            SELECT
+              alias_name AS aliasName,
+              canonical_holder_name
+                AS canonicalHolderName,
+              source
+            FROM budget_holder_aliases
+            WHERE status = 'active'
+              AND budget_number = ?
+                COLLATE NOCASE
+              AND lower(
+                trim(alias_name)
+              ) = lower(
+                trim(?)
+              )
+            LIMIT 1
+          `).get(
+            parsed.budgetNumber,
+            parsed.budgetHolder
+          );
+
+        const aliasAssignedMatch =
+          alias
+            ? assignedHolders.find(
+                (holder) =>
+                  normaliseCodingName(
+                    `${holder.firstName} ${holder.lastName}`
+                  ) ===
+                  normaliseCodingName(
+                    alias.canonicalHolderName
+                  )
+              )
+            : null;
+
+        if (aliasAssignedMatch) {
+          result.holderStatus =
+            'valid';
+
+          result.budgetHolderUserId =
+            Number(
+              aliasAssignedMatch.id
+            );
+
+          result.budgetHolderRecord =
+            aliasAssignedMatch;
+
+          result.holderResolution =
+            'historical_alias';
+
+          result.holderAlias = {
+            aliasName:
+              alias.aliasName,
+            canonicalHolderName:
+              alias.canonicalHolderName,
+            source:
+              alias.source
+          };
+        } else {
+          result.holderStatus =
+            'invalid';
+        }
+      }
     }
   } else {
     result.holderStatus =
@@ -34077,6 +34315,36 @@ const server = http.createServer(async (req, res) => {
           )
       });
     }
+
+    if (
+      req.method === 'GET' &&
+      url.pathname ===
+        '/api/coding-review/historical-alias-dry-run'
+    ) {
+      const auth =
+        requireAnyRole(
+          req,
+          [
+            'uhp_admin',
+            'nac_admin'
+          ]
+        );
+
+      return sendJson(
+        res,
+        200,
+        {
+          ...historicalHolderAliasDryRun(),
+          user: {
+            id:
+              auth.user.id,
+            email:
+              auth.user.email
+          }
+        }
+      );
+    }
+
 
     if (
       req.method === 'GET' &&
